@@ -10,10 +10,16 @@ function configure({ sessionHistoryIndex: index } = {}) {
   sessionHistoryIndex = index || null;
 }
 
-function getSessionHistoryIndex() {
+function getSessionHistoryIndex(options = {}) {
   if (!sessionHistoryIndex) {
     const { getDefaultDependencies } = require('../../../platforms/runtime');
     sessionHistoryIndex = getDefaultDependencies().sessionHistoryIndex;
+    if (!sessionHistoryIndex) {
+      const indexModule = require('../../../server/services/session-history-index');
+      sessionHistoryIndex = Object.keys(options).length > 0
+        ? indexModule.createSessionHistoryIndex({ config: options })
+        : indexModule;
+    }
   }
   return sessionHistoryIndex;
 }
@@ -708,6 +714,7 @@ function deleteSession(sessionId) {
 
   try {
     fs.unlinkSync(session.filePath);
+    getSessionHistoryIndex().invalidateSource('gemini');
     return { success: true, sessionId };
   } catch (err) {
     throw new Error('Failed to delete session: ' + err.message);
@@ -730,6 +737,7 @@ function deleteProject(projectHash) {
 
   try {
     fs.rmSync(projectDir, { recursive: true, force: true });
+    getSessionHistoryIndex().invalidateSource('gemini', { projectName: projectHash });
     return { success: true, projectHash };
   } catch (err) {
     throw new Error('Failed to delete project: ' + err.message);
@@ -895,6 +903,7 @@ function forkSession(sessionId, options = {}) {
       setAlias(newSessionId, options.alias);
     }
 
+    getSessionHistoryIndex(options).invalidateSource('gemini');
     return {
       success: true,
       sessionId: newSessionId,
@@ -911,22 +920,12 @@ function forkSession(sessionId, options = {}) {
 /**
  * 获取 Gemini 项目与会话数量（仪表盘轻量统计）
  */
-function getProjectAndSessionCounts() {
-  try {
-    const projectEntries = scanProjectEntries();
-    let sessionCount = 0;
-    const projectHashes = new Set();
-    projectEntries.forEach((entry) => {
-      projectHashes.add(resolveProjectHashForEntry(entry));
-      sessionCount += scanEntrySessionFiles(entry).length;
-    });
-    return {
-      projectCount: Array.from(projectHashes).filter(Boolean).length,
-      sessionCount
-    };
-  } catch (err) {
-    return { projectCount: 0, sessionCount: 0 };
-  }
+async function getProjectAndSessionCounts(options = {}) {
+  const projects = await getSessionHistoryIndex().listProjects('gemini', options);
+  return {
+    projectCount: projects.length,
+    sessionCount: projects.reduce((sum, project) => sum + (project.sessionCount || 0), 0)
+  };
 }
 
 module.exports = {

@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { loadConfig } = require('../../config/loader');
 const { DEFAULT_ENABLED_CLI_PLATFORMS } = require('../../shared/platforms');
-const { getPlatformRegistry, getPlatformRuntime } = require('../../platforms/runtime');
+const { getPlatformContext } = require('../platform-context');
 
 // Services
 const { loadUIConfig } = require('../services/ui-config');
@@ -44,7 +44,7 @@ function safeCode(value) {
 }
 
 
-function resolveEnabledSources(uiConfig = {}, registry = getPlatformRegistry()) {
+function resolveEnabledSources(uiConfig = {}, registry = getPlatformContext().registry) {
   const definitions = registry?.list?.() || [];
   const knownKeys = new Set(
     definitions
@@ -217,8 +217,7 @@ router.get('/init', async (req, res) => {
     const force = req.query?.fresh === '1' || req.query?.force === '1';
     const uiConfig = safeRead('uiConfig', () => loadUIConfig(), {});
     const favorites = safeRead('favorites', () => loadFavorites(), {});
-    const registry = getPlatformRegistry();
-    const runtime = getPlatformRuntime();
+    const { registry, runtime } = getPlatformContext();
     const sources = resolveEnabledSources(uiConfig, registry);
     const sourceFallbackPayload = source => sourceFallback(source, runtime);
     const proxyStatusEntries = await Promise.all(sources.map(async source => [

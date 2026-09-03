@@ -10,7 +10,7 @@ const path = require('path');
 const { randomUUID } = require('crypto');
 const yaml = require('js-yaml');
 const { PATHS } = require('../../config/paths');
-const platformRuntime = require('../../platforms/runtime');
+const { getPlatformContext } = require('../platform-context');
 const TEMPLATES_FILE = path.join(PATHS.config, 'config-templates.json');
 const { AgentsService } = require('../../platforms/agents-service');
 const { CommandsService } = require('../../platforms/commands-service');
@@ -22,7 +22,7 @@ const mcpService = require('./mcp-service');
 const promptsService = require('./prompts-service');
 const pluginsService = new PluginsService();
 
-function getAiConfigMap(registry = platformRuntime.getPlatformRegistry()) {
+function getAiConfigMap(registry = getPlatformContext().registry) {
   if (!registry || typeof registry.list !== 'function') return {};
   return Object.fromEntries(
     registry.list({ enabledOnly: true })

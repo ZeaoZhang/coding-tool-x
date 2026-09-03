@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const platformRuntime = require('../../platforms/runtime');
+const { getPlatformContext } = require('../platform-context');
 const { PATHS } = require('../../config/paths');
 const { ControlManifestStore } = require('./control-manifest-store');
 const { EffectiveControlService, deriveMcpPolicy } = require('./effective-control-service');
@@ -199,8 +199,8 @@ function unsupportedResource(pathname = null) {
 
 class ProjectConfigService {
   constructor({
-    registry = platformRuntime.getPlatformRegistry(),
-    runtime = platformRuntime.getPlatformRuntime(),
+    registry = getPlatformContext().registry,
+    runtime = getPlatformContext().runtime,
     adapters = null,
     validateProjectPath = validateKnownProjectCwd,
     skillServiceFactory = null,

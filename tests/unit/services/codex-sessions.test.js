@@ -237,19 +237,19 @@ describe('codex-sessions', () => {
   // -------------------------------------------------------------------------
 
   describe('getProjectAndSessionCounts', () => {
-    it('returns { projectCount: 0, sessionCount: 0 } when sessions dir does not exist', () => {
+    it('returns { projectCount: 0, sessionCount: 0 } when sessions dir does not exist', async () => {
       const { getProjectAndSessionCounts } = require(MODULE_PATH);
-      const result = getProjectAndSessionCounts();
+      const result = await getProjectAndSessionCounts();
       expect(result).toEqual({ projectCount: 0, sessionCount: 0 });
     });
 
-    it('returns numeric counts when session files are present', () => {
+    it('returns numeric counts when session files are present', async () => {
       createRolloutFile('project-a', 'rollout-2024-01-01T00-00-00-s1aaaa.jsonl');
       createRolloutFile('project-a', 'rollout-2024-01-02T00-00-00-s2bbbb.jsonl');
       createRolloutFile('project-b', 'rollout-2024-01-03T00-00-00-s3cccc.jsonl');
 
       const { getProjectAndSessionCounts } = require(MODULE_PATH);
-      const result = getProjectAndSessionCounts();
+      const result = await getProjectAndSessionCounts();
       expect(typeof result.projectCount).toBe('number');
       expect(typeof result.sessionCount).toBe('number');
       // At least the 3 files are scanned

@@ -35,6 +35,11 @@ function createDriver(context = {}) {
           : null;
         return session?.messages || [];
       }
+    },
+    onSuccess: operation => {
+      if (['delete', 'fork', 'saveSessionOrder'].includes(operation)) {
+        context.sessionHistoryIndex?.invalidateSource('opencode');
+      }
     }
   });
 }

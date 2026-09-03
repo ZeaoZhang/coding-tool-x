@@ -189,7 +189,7 @@ describe('gemini-sessions project discovery and querying', () => {
       projectPath
     );
 
-    expect(geminiSessions.getProjectAndSessionCounts()).toEqual({ projectCount: 1, sessionCount: 1 });
+    expect(await geminiSessions.getProjectAndSessionCounts()).toEqual({ projectCount: 1, sessionCount: 1 });
     expect(geminiSessions.getProjectPath(projectHash)).toBe(projectPath);
     expect(await geminiSessions.getProjects()).toEqual([
       expect.objectContaining({
@@ -361,7 +361,7 @@ describe('gemini-sessions project discovery and querying', () => {
     ]);
   });
 
-  test('forks, deletes, and counts sessions and projects', () => {
+  test('forks, deletes, and counts sessions and projects', async () => {
     const projectPath = path.join(homeDir, 'workspace', 'fork-app');
     fs.mkdirSync(projectPath, { recursive: true });
     const projectHash = hashPath(projectPath);
@@ -383,13 +383,13 @@ describe('gemini-sessions project discovery and querying', () => {
     vi.spyOn(require('crypto'), 'randomUUID').mockReturnValue('forked-session-id');
     vi.spyOn(require('crypto'), 'randomBytes').mockReturnValue(Buffer.from('abcd1234', 'hex'));
 
-    const beforeCounts = geminiSessions.getProjectAndSessionCounts();
+    const beforeCounts = await geminiSessions.getProjectAndSessionCounts();
     const forked = geminiSessions.forkSession('source-session');
     const forkedSession = JSON.parse(fs.readFileSync(forked.filePath, 'utf8'));
     const deleted = geminiSessions.deleteSession('source-session');
-    const afterDeleteCounts = geminiSessions.getProjectAndSessionCounts();
+    const afterDeleteCounts = await geminiSessions.getProjectAndSessionCounts();
     const removedProject = geminiSessions.deleteProject(projectHash);
-    const finalCounts = geminiSessions.getProjectAndSessionCounts();
+    const finalCounts = await geminiSessions.getProjectAndSessionCounts();
 
     expect(beforeCounts).toEqual({ projectCount: 1, sessionCount: 1 });
     expect(forked).toEqual({

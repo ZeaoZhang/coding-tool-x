@@ -1,63 +1,17 @@
 'use strict';
 
-const STATUS_CODES = Object.freeze({
-  ok: 200,
-  unsupported: 404,
-  unavailable: 503,
-  invalid: 400,
-  failed: 500
-});
+const { applyRequestCodec, applyResponseCodec, emptyPayload } = require('./platform-api-config');
 
-const OPERATION_CANDIDATES = Object.freeze({
-  projects: Object.freeze(['listProjects', 'getProjects', 'list']),
-  sessions: Object.freeze(['listSessions', 'getSessions', 'list']),
-  channels: Object.freeze(['list', 'getChannels']),
-  proxy: Object.freeze(['status', 'getStatus'])
-});
+const STATUS_CODES = Object.freeze({ ok: 200, invalid: 400, unsupported: 404, unavailable: 503, failed: 500 });
 
-const ROUTES = Object.freeze([
-  Object.freeze({
-    path: '/:platform/projects',
-    capability: 'projects',
-    params: (req) => [{ force: req.query?.fresh === '1' }]
-  }),
-  Object.freeze({
-    path: '/:platform/sessions/:projectName',
-    capability: 'sessions',
-    params: (req) => [req.params.projectName, { force: req.query?.fresh === '1' }]
-  }),
-  Object.freeze({
-    method: 'get',
-    path: '/:platform/channels',
-    capability: 'channels',
-    params: (req) => [{ force: req.query?.fresh === '1' }]
-  }),
-  Object.freeze({
-    method: 'post',
-    path: '/:platform/channels',
-    capability: 'channels',
-    operation: 'create',
-    params: (req) => [req.body || {}]
-  }),
-  Object.freeze({
-    method: 'put',
-    path: '/:platform/channels/:channelId',
-    capability: 'channels',
-    operation: 'update',
-    params: (req) => [req.params.channelId, req.body || {}]
-  }),
-  Object.freeze({
-    method: 'delete',
-    path: '/:platform/channels/:channelId',
-    capability: 'channels',
-    operation: 'remove',
-    params: (req) => [req.params.channelId]
-  }),
-  Object.freeze({
-    path: '/:platform/proxy/status',
-    capability: 'proxy',
-    params: (req) => [{ force: req.query?.fresh === '1' }]
-  })
+const DEFAULT_ROUTES = Object.freeze([
+  { method: 'GET', path: '/projects', capability: 'projects', operation: 'listProjects', request: 'projects-list', response: 'projects-list' },
+  { method: 'GET', path: '/sessions/:projectName', capability: 'sessions', operation: 'listSessions', request: 'sessions-list', response: 'sessions-list' },
+  { method: 'GET', path: '/channels', capability: 'channels', operation: 'list', request: 'default', response: 'default' },
+  { method: 'POST', path: '/channels', capability: 'channels', operation: 'create', request: 'default', response: 'default' },
+  { method: 'PUT', path: '/channels/:channelId', capability: 'channels', operation: 'update', request: 'default', response: 'default' },
+  { method: 'DELETE', path: '/channels/:channelId', capability: 'channels', operation: 'remove', request: 'default', response: 'default' },
+  { method: 'GET', path: '/proxy/status', capability: 'proxy', operation: 'status', request: 'default', response: 'default' }
 ]);
 
 function isObject(value) {
@@ -69,10 +23,6 @@ function safeText(value, fallback) {
   return String(value).slice(0, 4096);
 }
 
-function getStatus(value) {
-  return isObject(value) && typeof value.status === 'string' ? value.status : null;
-}
-
 function addContext(value, { platform, capability, operation }) {
   const result = isObject(value) ? { ...value } : {};
   if (result.platform == null) result.platform = platform;
@@ -80,19 +30,6 @@ function addContext(value, { platform, capability, operation }) {
   if (result.operation == null) result.operation = operation;
   if (result.code == null && result.status && result.status !== 'ok') result.code = result.status;
   return result;
-}
-
-function stateResponse(res, value, context) {
-  const status = getStatus(value);
-  if (!status || !Object.prototype.hasOwnProperty.call(STATUS_CODES, status)) {
-    return false;
-  }
-
-  const result = addContext(value, context);
-  if (status === 'ok') {
-    return res.status(200).json(Object.prototype.hasOwnProperty.call(result, 'data') ? result.data : result);
-  }
-  return res.status(STATUS_CODES[status]).json({ error: result });
 }
 
 function makeFailure(context, error) {
@@ -112,121 +49,163 @@ function makeFailure(context, error) {
 function makeUnsupported(context) {
   return {
     status: 'unsupported',
+
     code: 'unsupported',
     platform: context.platform,
     capability: context.capability,
     operation: context.operation
   };
 }
+function legacyArguments(route, request) {
+  if (route.capability === 'projects' && route.operation === 'listProjects') return [{ force: request.query?.fresh === '1' }];
+  if (route.capability === 'sessions' && route.operation === 'listSessions') {
+    return [request.params.projectName, { force: request.query?.fresh === '1' }];
+  }
+  if (route.capability === 'channels') {
+    if (route.method === 'POST') return [request.body || {}];
+    if (route.method === 'PUT') return [request.params.channelId, request.body || {}];
+    if (route.method === 'DELETE') return [request.params.channelId];
+    return [{ force: request.query?.fresh === '1' }];
+  }
+  if (route.capability === 'proxy') return [{ force: request.query?.fresh === '1' }];
+  return [];
+}
+
+function makeSuccess(context, data) {
+  return { status: 'ok', platform: context.platform, capability: context.capability, operation: context.operation, data };
+}
 
 function resolvePlatform(registry, key) {
-  if (!registry || typeof registry.resolve !== 'function') return null;
-  return registry.resolve(key);
+  return registry && typeof registry.resolve === 'function' ? registry.resolve(key) : null;
 }
 
 function getDeclaredCapability(registry, platform, definition, capability) {
-  if (registry && typeof registry.getCapability === 'function') {
-    return registry.getCapability(platform, capability);
-  }
-  if (definition && definition.capabilities && Object.prototype.hasOwnProperty.call(definition.capabilities, capability)) {
-    return definition.capabilities[capability];
-  }
-  return undefined;
+  if (registry && typeof registry.getCapability === 'function') return registry.getCapability(platform, capability);
+  return definition?.capabilities?.[capability];
 }
 
-function findOperation(driver, capability, requestedOperation) {
-  if (requestedOperation && typeof driver?.[requestedOperation] === 'function') {
-    return requestedOperation;
-  }
-  const names = OPERATION_CANDIDATES[capability] || [];
-  for (const name of names) {
-    if (typeof driver?.[name] === 'function') return name;
-  }
-  return null;
+function normalizeResult(value, context) {
+  if (isObject(value) && typeof value.status === 'string') return addContext(value, context);
+  return makeSuccess(context, value);
 }
 
-async function invokeCapability({ registry, runtime, request, response, route }) {
-  const platform = String(request.params.platform || '').trim().toLowerCase();
-  const operation = route.operation || OPERATION_CANDIDATES[route.capability]?.[0] || 'invoke';
-  const context = { platform, capability: route.capability, operation };
-  const definition = resolvePlatform(registry, platform);
+function sendDriverResult(response, value, route, context) {
+  const result = normalizeResult(value, context);
+  const statusCode = STATUS_CODES[result.status];
+  if (!statusCode) return response.status(500).json({ error: makeFailure(context, new Error('Invalid Driver result status')) });
+  if (result.status === 'ok') {
+    const payload = applyResponseCodec(Object.prototype.hasOwnProperty.call(result, 'data') ? result.data : result, context.manifest, route, context);
+    return response.status(200).json(payload);
+  }
+  return response.status(statusCode).json({ error: result });
+}
 
-  if (!definition) {
-    return response.status(404).json({
-      error: {
-        status: 'invalid',
-        code: 'not_found',
-        platform,
-        capability: route.capability,
-        operation,
-        error: `Unknown platform: ${platform}`
-      }
-    });
+function routePlatform(request, manifest) {
+  return String(request.params.platform || manifest.key || '').trim().toLowerCase();
+}
+
+function sendLegacyResult(response, value, route, context) {
+  if (isObject(value) && typeof value.status === 'string') {
+    return sendDriverResult(response, value, route, context);
+  }
+  return response.status(200).json(value);
+}
+
+async function invokeRoute({ registry, runtime, config, request, response, manifest: suppliedManifest, route }) {
+  const platform = routePlatform(request, suppliedManifest || {});
+  const manifest = suppliedManifest || resolvePlatform(registry, platform);
+  const operation = route.operation;
+  const context = { platform, manifest, config, capability: route.capability, operation };
+
+  if (!manifest) {
+    return response.status(404).json({ error: { status: 'invalid', code: 'not_found', platform, capability: route.capability, operation, error: `Unknown platform: ${platform}` } });
   }
 
-  const declaredCapability = getDeclaredCapability(registry, platform, definition, route.capability);
-  if (declaredCapability === null || declaredCapability === 'unsupported') {
-    return stateResponse(response, makeUnsupported(context), context);
+  const legacyRoute = !manifest.api?.routes;
+  const declaredCapability = getDeclaredCapability(registry, platform, manifest, route.capability);
+  const absentCapability = declaredCapability === null || declaredCapability === undefined || declaredCapability === 'unsupported';
+  if (absentCapability) {
+    return !legacyRoute && route.method === 'GET'
+      ? sendDriverResult(response, makeSuccess(context, emptyPayload(route)), route, context)
+      : sendDriverResult(response, makeUnsupported(context), route, context);
   }
 
   let driver;
+  const isDescriptorRoute = Boolean(manifest.api?.routes);
   try {
-    driver = runtime && typeof runtime.getDriver === 'function'
-      ? runtime.getDriver(platform, route.capability)
-      : null;
+    driver = runtime?.getDriver?.(
+      platform,
+      route.capability,
+      { config, manifest, route, apiRoute: isDescriptorRoute }
+    );
   } catch (error) {
-    return stateResponse(response, makeFailure({ ...context, operation: 'resolve-driver' }, error), {
-      ...context,
-      operation: 'resolve-driver'
-    });
+    return sendDriverResult(response, makeFailure(context, error), route, context);
+  }
+  if (!driver || typeof driver[operation] !== 'function') {
+    return !legacyRoute && route.method === 'GET'
+      ? sendDriverResult(response, makeSuccess(context, emptyPayload(route)), route, context)
+      : sendDriverResult(response, makeUnsupported(context), route, context);
   }
 
-  const driverStatus = getStatus(driver);
-  if (driverStatus) {
-    return stateResponse(response, driver, context);
-  }
-  if (!driver) {
-    return stateResponse(response, makeUnsupported(context), context);
-  }
-
-  const methodName = findOperation(driver, route.capability, route.operation);
-  if (!methodName) {
-    return stateResponse(response, makeUnsupported({ ...context, operation: operation }), context);
-  }
-
-  const invocationContext = { ...context, operation: methodName };
   try {
-    const value = await driver[methodName](...route.params(request));
-    if (stateResponse(response, value, invocationContext)) return response;
-    return response.status(200).json(value);
+    const invocation = isDescriptorRoute
+      ? applyRequestCodec(request, manifest, route, config)
+      : legacyArguments(route, request);
+    const value = isDescriptorRoute
+      ? await driver[operation](invocation)
+      : await driver[operation](...invocation);
+    return isDescriptorRoute
+      ? sendDriverResult(response, value, route, { ...context, ...invocation })
+      : sendLegacyResult(response, value, route, context);
   } catch (error) {
-    return stateResponse(response, makeFailure(invocationContext, error), invocationContext);
+    return sendDriverResult(response, makeFailure(context, error), route, context);
   }
 }
 
-function createPlatformRouteFactory({ registry, runtime } = {}) {
+function normalizeRoute(route) {
+  return { method: 'GET', ...route, method: String(route.method || 'GET').toUpperCase() };
+}
+
+function joinPath(prefix, routePath) {
+  const left = String(prefix || '').replace(/\/$/, '');
+  const right = String(routePath || '/');
+  return `${left}${right.startsWith('/') ? right : `/${right}`}` || '/';
+}
+
+function createPlatformRouteFactory({ registry, runtime, config } = {}) {
+  function routesFor(manifest) {
+    return (manifest?.api?.routes || DEFAULT_ROUTES).map(normalizeRoute);
+  }
+
+  function createHandler(manifest, route) {
+    return (request, response) => invokeRoute({ registry, runtime, config, request, response, manifest, route });
+  }
+
   return {
-    mount(router) {
-      for (const route of ROUTES) {
-        router[route.method || 'get'](route.path, (request, response) => invokeCapability({
-          registry,
-          runtime,
-          request,
-          response,
-          route
-        }));
+    routesFor,
+    createHandler,
+    mount(router, { manifest, basePath = '/:platform', aliases = false } = {}) {
+      const definitions = manifest
+        ? [manifest]
+        : (registry?.list?.({ enabledOnly: true }) || []);
+      const manifests = definitions.length > 0 || !basePath.includes(':platform')
+        ? definitions
+        : [null];
+      for (const definition of manifests) {
+        for (const route of routesFor(definition)) {
+          if (aliases && !definition?.api?.rootAlias) continue;
+          const firstSegment = route.path.split('/').filter(Boolean)[0];
+          if (aliases && !definition.api.rootAliasPaths?.includes(firstSegment)) continue;
+          const path = joinPath(basePath, route.path);
+          router[route.method.toLowerCase()](path, createHandler(definition, route));
+        }
       }
       return router;
     },
-    invokeCapability
+    invokeRoute
   };
 }
 
 module.exports = createPlatformRouteFactory;
 module.exports.createPlatformRouteFactory = createPlatformRouteFactory;
-module.exports._test = {
-  addContext,
-  makeFailure,
-  makeUnsupported,
-  stateResponse
-};
+module.exports._test = { addContext, makeFailure, makeUnsupported, sendDriverResult, invokeRoute, normalizeResult };

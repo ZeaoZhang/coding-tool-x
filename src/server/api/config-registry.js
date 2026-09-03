@@ -14,7 +14,7 @@ const { EffectiveControlService } = require('../services/effective-control-servi
 const { PATHS } = require('../../config/paths');
 const { SkillProjectionService } = require('../services/skill-projection-service');
 const { validateKnownProjectCwd } = require('../services/project-path-validation');
-const { getPlatformRegistry } = require('../../platforms/runtime');
+const { getPlatformContext } = require('../platform-context');
 
 let effectiveControlService;
 
@@ -26,7 +26,7 @@ function getEffectiveControlService() {
         projectPathResolver: ({ projectPath }) => require('path').join(projectPath, '.ctx-control.json')
       }),
       projection: new SkillProjectionService({
-        registry: getPlatformRegistry()
+        registry: getPlatformContext().registry
       })
     });
   }
@@ -55,7 +55,7 @@ const syncManager = new ConfigSyncManager();
 const VALID_TYPES = CONFIG_TYPES;
 
 function getValidPlatforms() {
-  const registry = getPlatformRegistry();
+  const registry = getPlatformContext().registry;
   return (registry?.list?.() || [])
     .map(platform => platform && String(platform.key || '').trim().toLowerCase())
     .filter(Boolean);

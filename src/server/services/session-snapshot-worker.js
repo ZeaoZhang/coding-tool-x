@@ -1,7 +1,36 @@
 'use strict';
 
 const path = require('path');
-const { invokeCapabilityDriver } = require('../api/capability-driver');
+const { getPlatformContext } = require('../platform-context');
+
+function invokeSessionDriver(platform, operation, args = [], runtime = null) {
+  const resolvedRuntime = runtime || getPlatformContext().runtime;
+  const driver = resolvedRuntime?.getDriver?.(platform, 'sessions');
+  if (!driver || typeof driver[operation] !== 'function') {
+    const error = new Error(`平台 ${platform} 未声明 sessions.${operation} capability`);
+    error.status = 404;
+    error.code = 'unsupported';
+    error.platform = platform;
+    error.capability = 'sessions';
+    error.operation = operation;
+    throw error;
+  }
+  const result = driver[operation](...args);
+  const unwrap = value => {
+    if (!value || typeof value !== 'object' || !value.status) return value;
+    if (value.status === 'ok') return value.data;
+    if (value.cause instanceof Error) throw value.cause;
+    const error = new Error(value.error || `平台 ${platform} 的 sessions.${operation} 失败`);
+    Object.assign(error, {
+      status: value.status,
+      platform: value.platform || platform,
+      capability: value.capability || 'sessions',
+      operation: value.operation || operation
+    });
+    throw error;
+  };
+  return result && typeof result.then === 'function' ? result.then(unwrap) : unwrap(result);
+}
 
 function totalSizeOf(sessions) {
   return sessions.reduce((sum, session) => sum + (Number(session.size) || 0), 0);
@@ -13,13 +42,13 @@ function getAliases() {
 }
 
 async function buildClaudePayload(projectName, config, options = {}) {
-  const result = await invokeCapabilityDriver(
+  const result = await invokeSessionDriver(
     'claude',
     'sessions',
     'listSessions',
     [config, projectName, { force: options.force === true }]
   );
-  const { fullPath, projectName: displayName } = invokeCapabilityDriver(
+  const { fullPath, projectName: displayName } = invokeSessionDriver(
     'claude',
     'sessions',
     'parseRealProjectPath',
@@ -39,7 +68,7 @@ async function buildClaudePayload(projectName, config, options = {}) {
 }
 
 async function buildCodexPayload(projectName, options = {}) {
-  const sessions = await invokeCapabilityDriver(
+  const sessions = await invokeSessionDriver(
     'codex',
     'sessions',
     'listSessions',
@@ -60,13 +89,13 @@ async function buildCodexPayload(projectName, options = {}) {
 }
 
 async function buildGeminiPayload(projectHash, options = {}) {
-  const sessions = await invokeCapabilityDriver(
+  const sessions = await invokeSessionDriver(
     'gemini',
     'sessions',
     'listSessions',
     [projectHash, { force: options.force === true }]
   );
-  const realPath = await invokeCapabilityDriver(
+  const realPath = await invokeSessionDriver(
     'gemini',
     'sessions',
     'getProjectPath',
@@ -88,13 +117,13 @@ async function buildGeminiPayload(projectHash, options = {}) {
 }
 
 async function buildOpenCodePayload(projectName, options = {}) {
-  const sessions = await invokeCapabilityDriver(
+  const sessions = await invokeSessionDriver(
     'opencode',
     'sessions',
     'listSessions',
     [projectName, { force: options.force === true }]
   );
-  const projects = await invokeCapabilityDriver('opencode', 'sessions', 'getProjects', [{
+  const projects = await invokeSessionDriver('opencode', 'sessions', 'getProjects', [{
     force: options.force === true
   }]);
   const firstDirectory = sessions.find(session => session.directory)?.directory;
@@ -115,7 +144,7 @@ async function buildOpenCodePayload(projectName, options = {}) {
 }
 
 async function buildOmpPayload(projectName, options = {}) {
-  const sessions = await invokeCapabilityDriver(
+  const sessions = await invokeSessionDriver(
     'omp',
     'sessions',
     'listSessions',
@@ -124,7 +153,7 @@ async function buildOmpPayload(projectName, options = {}) {
   const firstDirectory = sessions.find(session => session.directory)?.directory;
   let project = null;
   try {
-    project = (await invokeCapabilityDriver('omp', 'sessions', 'getProjects', [{
+    project = (await invokeSessionDriver('omp', 'sessions', 'getProjects', [{
       force: options.force === true
     }])).find(p => p.name === projectName) || null;
   } catch {

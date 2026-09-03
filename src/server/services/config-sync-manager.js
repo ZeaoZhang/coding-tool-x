@@ -19,9 +19,9 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { PATHS, NATIVE_PATHS, HOME_DIR, ensureStorageDirMigrated } = require('../../config/paths');
-const platformRuntime = require('../../platforms/runtime');
+const { getPlatformContext } = require('../platform-context');
 const { assertNoSymlinkComponents } = require('../../shared/project-config');
-const { CONFIG_TYPES } = require('../../platforms/drivers/shared/resource-sync');
+const { CONFIG_TYPES } = require('../../shared/driver-factories/resource-sync');
 
 // Paths retained for the compatibility facade and existing consumers.
 const HOME = HOME_DIR || os.homedir();
@@ -36,8 +36,8 @@ const CODEX_CONFIG_PATH = NATIVE_PATHS.codex.config;
 class ConfigSyncManager {
   constructor({ registry, runtime } = {}) {
     ensureStorageDirMigrated();
-    this.registry = registry || platformRuntime.getPlatformRegistry();
-    this.runtime = runtime || platformRuntime.getPlatformRuntime();
+    this.registry = registry || getPlatformContext().registry;
+    this.runtime = runtime || getPlatformContext().runtime;
     this.ccToolConfigs = CC_TOOL_CONFIGS;
     this.claudeDir = CLAUDE_CODE_DIR;
     this.codexDir = CODEX_DIR;

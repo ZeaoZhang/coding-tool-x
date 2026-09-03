@@ -11,9 +11,7 @@ import {
   saveSessionOrder as saveSessionOrderApi
 } from '../api/sessions'
 
-const PROJECTS_CACHE_TTL = 30 * 1000
 const SESSIONS_CACHE_TTL = 20 * 1000
-const projectsCache = new Map()
 const sessionsCache = new Map()
 const projectRefreshTimers = new Map()
 const sessionRefreshTimers = new Map()
@@ -23,37 +21,9 @@ const SNAPSHOT_REFRESH_MAX_WAIT_MS = 185000
 const projectRefreshStartedAt = new Map()
 const sessionRefreshStartedAt = new Map()
 
-function getProjectCacheKey(channel) {
-  return channel
-}
 
 function getSessionCacheKey(channel, projectName) {
   return `${channel}:${projectName}`
-}
-
-function getCachedProjects(channel) {
-  const entry = projectsCache.get(getProjectCacheKey(channel))
-  if (!entry) return null
-  if ((Date.now() - entry.timestamp) > PROJECTS_CACHE_TTL) {
-    projectsCache.delete(getProjectCacheKey(channel))
-    return null
-  }
-  return entry.payload
-}
-
-function setCachedProjects(channel, payload) {
-  projectsCache.set(getProjectCacheKey(channel), {
-    timestamp: Date.now(),
-    payload
-  })
-}
-
-function invalidateProjectsCache(channel) {
-  if (channel) {
-    projectsCache.delete(getProjectCacheKey(channel))
-  } else {
-    projectsCache.clear()
-  }
 }
 
 function getCachedSessions(channel, projectName) {
@@ -172,16 +142,9 @@ export const useSessionsStore = defineStore('sessions', () => {
       .filter(key => key.startsWith(`${previousChannel}:`))
       .forEach(key => clearRefreshCycle(sessionRefreshTimers, sessionRefreshStartedAt, key))
     currentChannel.value = channel
-    const cached = getCachedProjects(channel)
-    if (cached) {
-      projects.value = cached.projects || []
-      currentProject.value = cached.currentProject || (cached.projects?.[0]?.name || null)
-      projectsMeta.value = cached.meta || null
-    } else {
-      projects.value = []
-      currentProject.value = null
-      projectsMeta.value = null
-    }
+    projects.value = []
+    currentProject.value = null
+    projectsMeta.value = null
     sessions.value = []
     aliases.value = {}
     totalSize.value = 0
@@ -246,19 +209,9 @@ export const useSessionsStore = defineStore('sessions', () => {
     if (!silent) loading.value = true
     error.value = null
     try {
-      if (!force) {
-        const cached = getCachedProjects(currentChannel.value)
-        if (cached) {
-          projects.value = cached.projects || []
-          currentProject.value = cached.currentProject || (cached.projects?.[0]?.name || null)
-          projectsMeta.value = cached.meta || null
-          if (!silent) loading.value = false
-          return
-        }
-      }
 
       const channel = currentChannel.value
-      const data = await getProjects(channel, { fresh })
+      const data = await getProjects(channel, { fresh: force || fresh })
       if (currentChannel.value !== channel) return
       const nextProjects = Array.isArray(data.projects) ? data.projects : []
       const shouldApplyProjects = nextProjects.length > 0 || projects.value.length === 0 || data.meta?.fallback !== true
@@ -271,11 +224,6 @@ export const useSessionsStore = defineStore('sessions', () => {
         projects.value = nextProjects
         currentProject.value = data.currentProject || (nextProjects[0]?.name || null)
         if (data.meta?.fallback !== true) {
-          setCachedProjects(channel, {
-            projects: nextProjects,
-            currentProject: currentProject.value,
-            meta: data.meta || null
-          })
           invalidateSessionsCache(channel)
         }
       }
@@ -479,11 +427,6 @@ export const useSessionsStore = defineStore('sessions', () => {
       // Add any new projects not in order
       const remaining = projects.value.filter(p => !order.includes(p.name))
       projects.value = [...orderedProjects, ...remaining]
-      setCachedProjects(currentChannel.value, {
-        projects: projects.value,
-        currentProject: currentProject.value,
-        meta: projectsMeta.value
-      })
     } catch (err) {
       error.value = err.message
       throw err
@@ -497,7 +440,6 @@ export const useSessionsStore = defineStore('sessions', () => {
       if (currentProject.value === projectName) {
         currentProject.value = null
       }
-      invalidateProjectsCache(currentChannel.value)
       invalidateSessionsCache(currentChannel.value, projectName)
     } catch (err) {
       error.value = err.message

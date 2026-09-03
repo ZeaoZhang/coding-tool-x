@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { loadConfig, saveConfig } = require('../../config/loader');
 const DEFAULT_CONFIG = require('../../config/default');
-const { getPlatformRuntime } = require('../../platforms/runtime');
+const { getPlatformContext } = require('../platform-context');
 const { probeModelAvailability } = require('../services/model-detector');
 
 function clampNumber(value, fallback) {
@@ -104,7 +104,7 @@ function parseBooleanQuery(value, defaultValue = false) {
   return ['1', 'true', 'yes', 'on'].includes(normalized);
 }
 function readChannelList(platform) {
-  const driver = getPlatformRuntime().getDriver(platform, 'channels');
+  const driver = getPlatformContext().runtime.getDriver(platform, 'channels');
   const result = typeof driver?.list === 'function' ? driver.list() : null;
   if (result && typeof result.then === 'function') {
     return result.then(value => {
@@ -117,7 +117,7 @@ function readChannelList(platform) {
 }
 
 async function listModelsForChannel(channel, platform, options = {}) {
-  const driver = getPlatformRuntime().getDriver(platform, 'channels');
+  const driver = getPlatformContext().runtime.getDriver(platform, 'channels');
   if (typeof driver?.listModels !== 'function') return [];
   const result = await driver.listModels(channel, options);
   if (result?.status !== 'ok') return [];
@@ -249,7 +249,7 @@ router.get('/default-models', async (req, res) => {
       });
     }
 
-    const runtime = getPlatformRuntime();
+    const runtime = getPlatformContext().runtime;
     const platforms = Object.keys(configuredDefaultModels || {})
       .filter(platform => runtime.getDriver(platform, 'channels'));
     const channelLists = await Promise.all(platforms.map(platform => readChannelList(platform)));

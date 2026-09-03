@@ -134,11 +134,11 @@ function convertOmpEntry(entry = {}, index = 0) {
  * Inventory all OMP session files.
  * @returns {Promise<Array>}
  */
-async function inventory() {
+async function inventory({ projectsDir } = {}) {
   const descriptors = [];
   let sessionsDir;
   try {
-    sessionsDir = getOmpSessionPaths().sessions;
+    sessionsDir = projectsDir || getOmpSessionPaths().sessions;
   } catch (_) {
     return descriptors;
   }
