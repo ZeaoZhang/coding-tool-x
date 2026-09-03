@@ -15,10 +15,10 @@ const { CommandsService } = require('../../platforms/commands-service');
 const { SkillService } = require('./skill-service');
 const { PluginsService } = require('./plugins-service');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
-const platformRuntime = require('../../platforms/runtime');
+const { getPlatformContext } = require('../platform-context');
 
 function getChannelDriver(platform) {
-  return platformRuntime.getPlatformRuntime().getDriver(platform, 'channels');
+  return getPlatformContext().runtime.getDriver(platform, 'channels');
 }
 
 const channelsService = getChannelDriver('claude');
@@ -60,7 +60,7 @@ const CC_SECURITY_PATH = PATHS.security;
 const LEGACY_UI_CONFIG_PATH = PATHS.uiConfig;
 const GEMINI_SETTINGS_PATH = path.join(path.dirname(NATIVE_PATHS.gemini.env), 'settings.json');
 const LEGACY_NOTIFY_HOOK_PATH = PATHS.notifyHook;
-function getPlatformKeysForType(type, registry = platformRuntime.getPlatformRegistry()) {
+function getPlatformKeysForType(type, registry = getPlatformContext().registry) {
   if (!registry || typeof registry.list !== 'function') return [];
   return registry.list({ enabledOnly: true })
     .filter(platform => {
@@ -79,7 +79,7 @@ const COMMAND_PLATFORMS = getPlatformKeysForType('commands');
 const SKILL_PLATFORMS = getPlatformKeysForType('skills');
 const PLUGIN_PLATFORMS = getPlatformKeysForType('plugins');
 
-function exportPlatformSnapshots({ registry = platformRuntime.getPlatformRegistry(), exportByPlatform } = {}) {
+function exportPlatformSnapshots({ registry = getPlatformContext().registry, exportByPlatform } = {}) {
   if (!registry || typeof registry.list !== 'function' || typeof exportByPlatform !== 'function') {
     return {};
   }

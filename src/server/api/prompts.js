@@ -5,7 +5,7 @@
 const express = require('express');
 const router = express.Router();
 const promptsService = require('../services/prompts-service');
-const { getPlatformRegistry } = require('../../platforms/runtime');
+const { getPlatformContext } = require('../platform-context');
 
 function normalizePlatformKey(platform) {
   return String(platform || '').trim().toLowerCase();
@@ -25,7 +25,7 @@ function createCapabilityError(platform, code) {
 
 function resolvePromptPlatform(platform) {
   const key = normalizePlatformKey(platform);
-  const registry = getPlatformRegistry();
+  const registry = getPlatformContext().registry;
   if (!registry.resolve(key)) return { error: createCapabilityError(key, 'not_found') };
   const driverId = registry.getCapability(key, 'prompts');
   if (!driverId || driverId === 'unsupported') {

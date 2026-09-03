@@ -89,29 +89,30 @@ function getClaudeAssistantText(content) {
 /**
  * Parse real project path from encoded name.
  */
-function parseRealProjectPath(encodedName) {
+function parseRealProjectPath(encodedName, config = {}) {
   const { parseRealProjectPath: fn } = require('./sessions-implementation');
-  return fn(encodedName);
+  return fn(encodedName, config);
 }
 
 /**
  * Inventory all Claude session files.
  * @returns {Promise<Array<{filePath: string, size: number, mtimeMs: number, sessionId: string, projectHint: string}>>}
  */
-async function inventory() {
+async function inventory({ projectsDir } = {}) {
   const descriptors = [];
+  const rootDir = projectsDir || CLAUDE_PROJECTS_DIR;
 
   try {
-    await fs.promises.stat(CLAUDE_PROJECTS_DIR);
+    await fs.promises.stat(rootDir);
   } catch (_) {
     return descriptors;
   }
 
-  const projects = await fs.promises.readdir(CLAUDE_PROJECTS_DIR, { withFileTypes: true });
+  const projects = await fs.promises.readdir(rootDir, { withFileTypes: true });
   for (const entry of projects) {
     if (!entry.isDirectory()) continue;
     const projectName = entry.name;
-    const projectPath = path.join(CLAUDE_PROJECTS_DIR, projectName);
+    const projectPath = path.join(rootDir, projectName);
 
     let files;
     try {
@@ -149,7 +150,7 @@ async function inventory() {
  */
 async function parse(descriptor) {
   const { filePath, size, mtimeMs, sessionId, projectHint } = descriptor;
-  const { fullPath, projectName: displayName } = parseRealProjectPath(projectHint);
+  const { fullPath, projectName: displayName } = parseRealProjectPath(projectHint, { projectsDir: descriptor.projectsDir });
 
   const messages = [];
   let firstMessage = null;

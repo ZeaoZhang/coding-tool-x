@@ -9,10 +9,16 @@ function configure({ sessionHistoryIndex: index } = {}) {
   sessionHistoryIndex = index || null;
 }
 
-function getSessionHistoryIndex() {
+function getSessionHistoryIndex(options = {}) {
   if (!sessionHistoryIndex) {
     const { getDefaultDependencies } = require('../../../platforms/runtime');
     sessionHistoryIndex = getDefaultDependencies().sessionHistoryIndex;
+    if (!sessionHistoryIndex) {
+      const indexModule = require('../../../server/services/session-history-index');
+      sessionHistoryIndex = Object.keys(options).length > 0
+        ? indexModule.createSessionHistoryIndex({ config: options })
+        : indexModule;
+    }
   }
   return sessionHistoryIndex;
 }
@@ -242,7 +248,7 @@ function normalizeSession(codexSession) {
  */
 async function getProjects(options = {}) {
   if (!fs.existsSync(getSessionsDir())) return [];
-  const projects = await getSessionHistoryIndex().listProjects('codex', options);
+  const projects = await getSessionHistoryIndex({ ...options, projectsDir: getSessionsDir() }).listProjects('codex', options);
   const savedOrder = getProjectOrder();
   if (savedOrder.length === 0) return projects;
 
@@ -780,51 +786,19 @@ function findSessionFileById(sessionId) {
   return null;
 }
 
-function calculateProjectAndSessionCounts() {
-  const sessions = scanSessionFiles();
-  if (sessions.length === 0) {
-    return EMPTY_COUNTS;
-  }
-
-  const projectNames = new Set();
-  sessions.forEach((session) => {
-    const payload = readSessionMetaPayloadFast(session.filePath);
-    const projectName = extractCodexProjectNameFromMeta(payload || {});
-    if (projectName) {
-      projectNames.add(projectName);
-    }
-  });
-
-  return {
-    projectCount: projectNames.size,
-    sessionCount: sessions.length
-  };
-}
 
 /**
  * 获取 Codex 项目与会话数量（用于仪表盘轻量统计）
  */
-function getProjectAndSessionCounts(options = {}) {
-  const now = Date.now();
-  if (options.force) {
-    countsCache.expiresAt = 0;
-    scanFilesCache.expiresAt = 0;
-    sessionFileIndexCache.expiresAt = 0;
+async function getProjectAndSessionCounts(options = {}) {
+  if (!fs.existsSync(getSessionsDir())) {
+    return { projectCount: 0, sessionCount: 0 };
   }
-  if (!options.force && countsCache.expiresAt > now) {
-    return countsCache.value;
-  }
-
-  try {
-    const counts = calculateProjectAndSessionCounts();
-    countsCache = {
-      value: counts,
-      expiresAt: now + COUNTS_CACHE_TTL_MS
-    };
-    return counts;
-  } catch (err) {
-    return countsCache.value || EMPTY_COUNTS;
-  }
+  const projects = await getSessionHistoryIndex({ ...options, projectsDir: getSessionsDir() }).listProjects('codex', options);
+  return {
+    projectCount: projects.length,
+    sessionCount: projects.reduce((sum, project) => sum + (project.sessionCount || 0), 0)
+  };
 }
 
 module.exports = {

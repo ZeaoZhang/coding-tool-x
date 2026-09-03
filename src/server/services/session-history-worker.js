@@ -156,7 +156,7 @@ function runInventoryWorker(source, indexDbPath, options = {}) {
         CC_TOOL_SESSION_HISTORY_SOURCE: source,
         CC_TOOL_SESSION_HISTORY_DB: indexDbPath,
         CC_TOOL_SESSION_HISTORY_FORCE: options.force === true ? '1' : '0',
-        CC_TOOL_SESSION_HISTORY_CHILD: '1'
+        CC_TOOL_SESSION_HISTORY_PROJECTS_DIR: options.projectsDir || '',
       },
       silent: true,
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
@@ -226,6 +226,7 @@ function runInventoryWorker(source, indexDbPath, options = {}) {
 function attachWorkerHandler() {
   const source = process.env.CC_TOOL_SESSION_HISTORY_SOURCE;
   const dbPath = process.env.CC_TOOL_SESSION_HISTORY_DB;
+  const projectsDir = process.env.CC_TOOL_SESSION_HISTORY_PROJECTS_DIR || undefined;
   const force = process.env.CC_TOOL_SESSION_HISTORY_FORCE === '1';
   if (!source || !dbPath) {
     process.exit(1);
@@ -233,7 +234,7 @@ function attachWorkerHandler() {
   }
 
   const { createSessionHistoryIndex } = require('./session-history-index');
-  const index = createSessionHistoryIndex({ dbPath });
+  const index = createSessionHistoryIndex({ dbPath, projectsDir });
 
   index.ensureSourceIndexed(source, { consistency: 'complete', force })
     .then(() => _sendWorkerMessage({ type: 'done' }, 0))

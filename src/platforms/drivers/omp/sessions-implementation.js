@@ -7,10 +7,16 @@ function configure({ sessionHistoryIndex: index } = {}) {
   sessionHistoryIndex = index || null;
 }
 
-function getSessionHistoryIndex() {
+function getSessionHistoryIndex(options = {}) {
   if (!sessionHistoryIndex) {
     const { getDefaultDependencies } = require('../../../platforms/runtime');
     sessionHistoryIndex = getDefaultDependencies().sessionHistoryIndex;
+    if (!sessionHistoryIndex) {
+      const indexModule = require('../../../server/services/session-history-index');
+      sessionHistoryIndex = Object.keys(options).length > 0
+        ? indexModule.createSessionHistoryIndex({ config: options })
+        : indexModule;
+    }
   }
   return sessionHistoryIndex;
 }
@@ -361,8 +367,8 @@ function loadSessionOrder() {
   return safeReadJson(SESSION_ORDER_FILE, {});
 }
 
-async function getProjects(_options = {}) {
-  const idxProjects = await getSessionHistoryIndex().listProjects('omp');
+async function getProjects(options = {}) {
+  const idxProjects = await getSessionHistoryIndex().listProjects('omp', options);
   const projects = idxProjects.map(p => ({
     name: p.name,
     path: p.fullPath || p.path || '',
@@ -389,8 +395,8 @@ async function getProjects(_options = {}) {
   return projects;
 }
 
-async function getSessionsByProject(projectName, _options = {}) {
-  const idxSessions = await getSessionHistoryIndex().listSessions('omp', projectName);
+async function getSessionsByProject(projectName, options = {}) {
+  const idxSessions = await getSessionHistoryIndex().listSessions('omp', projectName, options);
   const sessions = idxSessions.map(s => ({
     sessionId: s.sessionId,
     filePath: s.filePath,

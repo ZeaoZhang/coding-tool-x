@@ -753,7 +753,7 @@ describe('session-history-index', () => {
     expect(recent[1].sessionId).toBe('s2');
   });
 
-  it('stale-ok waits for a cold source before returning', async () => {
+  it('returns cold stale-ok reads after the bounded wait', async () => {
     vi.useFakeTimers();
     const fixture = setupIndex();
     fixture.writeFixtureFile({
@@ -781,7 +781,7 @@ describe('session-history-index', () => {
     });
     await vi.advanceTimersByTimeAsync(2500);
     await Promise.resolve();
-    expect(settled).toBe(false);
+    expect(settled).toBe(true);
 
     resolveInventory();
     await promise;
@@ -2156,5 +2156,31 @@ describe('session-history-index runtime selection', () => {
     expect(workerRunner).not.toHaveBeenCalled();
     expect(runtimeInventory).not.toHaveBeenCalled();
     expect(runtimeParse).not.toHaveBeenCalled();
+  });
+  it('exposes source freshness metadata without treating successful empty inventory as fallback', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-meta-'));
+    const index = createSessionHistoryIndex({
+      dbPath: path.join(rootDir, 'history.sqlite'),
+      adapterRegistry: {
+        claude: {
+          inventory: vi.fn(async () => []),
+          parse: vi.fn()
+        }
+      },
+      ftsEnabledOverride: false
+    });
+
+    try {
+      await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+      expect(index.getSourceIndexMeta('claude')).toMatchObject({
+        stale: false,
+        refreshing: false,
+        fallback: false,
+        error: null
+      });
+    } finally {
+      index.closeSessionHistoryIndex();
+      fs.rmSync(rootDir, { recursive: true, force: true });
+    }
   });
 });

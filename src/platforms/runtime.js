@@ -6,6 +6,7 @@ const { resolveTemplate } = require('./path-resolver');
 
 let platformRegistry;
 let platformRuntime;
+let defaultDependencies = Object.freeze({});
 
 function getDefaultDriverRegistry() {
   try {
@@ -99,29 +100,21 @@ function isLegacyDriverId(driverId) {
 }
 
 function getDefaultDependencies() {
-  const sessionHistoryIndex = {};
-  for (const method of [
-    'ensureSourceIndexed',
-    'listProjects',
-    'listSessions',
-    'getSessionStatus',
-    'getSessionOutline',
-    'getMessagePage',
-    'getRecentSessions',
-    'searchSessions',
-    'invalidateSource'
-  ]) {
-    sessionHistoryIndex[method] = (...args) => (
-      require('../server/services/session-history-index')[method](...args)
-    );
+  return { ...defaultDependencies };
+}
+
+function configureDefaultDependencies(dependencies = {}) {
+  if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies)) {
+    throw new TypeError('Platform default dependencies must be an object');
   }
-  return { sessionHistoryIndex };
+  defaultDependencies = Object.freeze({ ...dependencies });
+  return getDefaultDependencies();
 }
 
 function createPlatformRuntime({ registry, driverRegistry, dependencies = {} } = {}) {
   const resolvedDependencies = { ...dependencies };
   const resolvedRegistry = registry || createPlatformRegistry();
-  return {
+  const runtime = {
     getDriver(platform, capability, context = {}) {
       const driverId = resolvedRegistry.getCapability(platform, capability);
       if (!driverId) return null;
@@ -134,23 +127,26 @@ function createPlatformRuntime({ registry, driverRegistry, dependencies = {} } =
       const manifest = isLegacyDriverId(driverId)
         ? rawManifest
         : buildResolvedManifest(rawManifest, resolvedPaths, pathOptions, driverId);
-      return driverRegistry.create(driverId, {
+      const driverContext = {
         ...resolvedDependencies,
         platform,
         capability,
         manifest,
         context,
         dependencies: resolvedDependencies
-      });
+      };
+      Object.defineProperty(driverContext, 'runtime', { value: runtime });
+      return driverRegistry.create(driverId, driverContext);
     },
     invoke(platform, capability, operation, args = []) {
-      const driver = this.getDriver(platform, capability);
+      const driver = runtime.getDriver(platform, capability);
       if (!driver || typeof driver[operation] !== 'function') {
         throw new Error(`Unsupported platform capability operation: ${platform}.${capability}.${operation}`);
       }
       return driver[operation](...args);
     }
   };
+  return runtime;
 }
 
 function getPlatformRegistry() {
@@ -160,9 +156,19 @@ function getPlatformRegistry() {
 
 function getPlatformRuntime() {
   if (!platformRuntime) {
-    platformRuntime = createPlatformRuntime({ registry: getPlatformRegistry(), driverRegistry: getDefaultDriverRegistry() });
+    platformRuntime = createPlatformRuntime({
+      registry: getPlatformRegistry(),
+      driverRegistry: getDefaultDriverRegistry(),
+      dependencies: getDefaultDependencies()
+    });
   }
   return platformRuntime;
 }
 
-module.exports = { createPlatformRuntime, getPlatformRegistry, getPlatformRuntime, getDefaultDependencies };
+module.exports = {
+  configureDefaultDependencies,
+  createPlatformRuntime,
+  getPlatformRegistry,
+  getPlatformRuntime,
+  getDefaultDependencies
+};

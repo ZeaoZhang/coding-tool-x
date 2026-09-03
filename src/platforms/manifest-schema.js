@@ -25,6 +25,22 @@ const PATH_RESOLVER_IDS = new Set([
   'omp'
 ]);
 
+const API_ROUTE_DESCRIPTOR_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['path', 'method', 'capability', 'operation', 'request', 'response'],
+  properties: {
+    path: { type: 'string', pattern: '^/(?:[a-zA-Z0-9_-]+|:[a-zA-Z][a-zA-Z0-9_]*)(?:/(?:[a-zA-Z0-9_-]+|:[a-zA-Z][a-zA-Z0-9_]*))*$' },
+    method: { enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] },
+    capability: { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9_-]*$' },
+    operation: { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9_-]*$' },
+    request: { type: ['string', 'object'] },
+    response: { type: ['string', 'object'] }
+  }
+};
+
+const API_ROUTE_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
+
 const schema = {
   type: 'object',
   required: ['key', 'label', 'command', 'capabilities'],
@@ -121,7 +137,7 @@ const schema = {
             format: { enum: ['none', 'claude-json', 'codex-toml', 'gemini-json', 'opencode-json', 'omp-json'] }
           }
         }
-      }
+      },
     },
     api: {
       type: 'object',
@@ -133,6 +149,10 @@ const schema = {
         rootAliasPaths: {
           type: 'array',
           items: { type: 'string', pattern: '^[a-z][a-z0-9_-]*$' }
+        },
+        routes: {
+          type: 'array',
+          items: API_ROUTE_DESCRIPTOR_SCHEMA
         }
       }
     },
@@ -179,6 +199,41 @@ function validateProjectResources(manifest, errors) {
   }
 }
 
+function validateApiRoutes(manifest, errors) {
+  const api = manifest?.api;
+  if (!api?.routes) return;
+
+  const seen = new Set();
+  const firstSegments = new Set();
+  for (const [index, route] of api.routes.entries()) {
+    if (!route || typeof route !== 'object') continue;
+    const key = `${route.method} ${route.path}`;
+    if (seen.has(key)) {
+      errors.push({ instancePath: `/api/routes/${index}`, message: 'must not duplicate method and path' });
+    }
+    seen.add(key);
+
+    const [firstSegment] = String(route.path || '').split('/').filter(Boolean);
+    if (firstSegment && !firstSegment.startsWith(':')) firstSegments.add(firstSegment);
+    if (!API_ROUTE_METHODS.has(route.method)) continue;
+    if (!manifest.capabilities || !Object.prototype.hasOwnProperty.call(manifest.capabilities, route.capability)) {
+      errors.push({
+        instancePath: `/api/routes/${index}/capability`,
+        message: 'must reference a declared capability'
+      });
+    }
+  }
+
+  for (const [index, alias] of (api.rootAliasPaths || []).entries()) {
+    if (!firstSegments.has(alias)) {
+      errors.push({
+        instancePath: `/api/rootAliasPaths/${index}`,
+        message: 'must reference a declared route path'
+      });
+    }
+  }
+}
+
 function validateManifest(manifest) {
   const valid = validate(manifest);
   const errors = valid ? [] : (validate.errors || []).slice();
@@ -216,7 +271,7 @@ function validateManifest(manifest) {
     }
   }
 
-  validateProjectResources(manifest, errors);
+  validateApiRoutes(manifest, errors);
   return { valid: errors.length === 0, errors };
 }
 

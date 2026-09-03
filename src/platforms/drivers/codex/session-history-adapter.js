@@ -9,9 +9,9 @@ const { extractSessionMeta, extractMessages, extractTokenUsage, readJSONL } = re
  * Scan all Codex session files recursively.
  * @returns {Array<{filePath: string, size: number, mtimeMs: number, sessionId: string}>}
  */
-async function scanSessionFiles() {
+async function scanSessionFiles(projectsDir = null) {
   const results = [];
-  const sessionsDir = path.join(getCodexDir(), 'sessions');
+  const sessionsDir = projectsDir || path.join(getCodexDir(), 'sessions');
 
   try {
     await fs.promises.stat(sessionsDir);
@@ -69,8 +69,8 @@ function extractCodexProjectName(meta) {
  * Inventory all Codex session files.
  * @returns {Promise<Array>}
  */
-async function inventory() {
-  const files = await scanSessionFiles();
+async function inventory({ projectsDir } = {}) {
+  const files = await scanSessionFiles(projectsDir);
   return files.map(f => ({
     filePath: f.filePath,
     size: f.size,

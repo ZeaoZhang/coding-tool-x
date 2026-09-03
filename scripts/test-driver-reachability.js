@@ -11,7 +11,7 @@ const DYNAMIC_ENTRIES = new Set([
   'src/platforms/drivers/omp/auth-provider-worker.js'
 ]);
 const COMPANION_FILES = new Set(['channels-implementation.js', 'native-config.js']);
-const DRIVER_FILES = new Set(['channels.js', 'proxy.js', 'projects.js', 'sessions.js', 'statistics.js', 'resource-sync.js', 'prompts.js', 'mcp.js']);
+const DRIVER_FILES = new Set(['api-operations.js', 'channels.js', 'proxy.js', 'projects.js', 'sessions.js', 'statistics.js', 'resource-sync.js', 'prompts.js', 'mcp.js']);
 const PLATFORM_BUSINESS_FILES = new Set([
   'api.js',
   'project-config.js',
@@ -58,18 +58,26 @@ function main() {
       if (driver) reachable.push({ item, driverId });
       else orphan.push(item);
     }
+    for (const route of definition.api?.routes || []) {
+      const routeDriver = runtime.getDriver(definition.key, route.capability, {
+        manifest: definition,
+        route,
+        apiRoute: true
+      });
+      if (!routeDriver || typeof routeDriver[route.operation] !== 'function') {
+        orphan.push(`${definition.key} route ${route.method} ${route.path} -> ${route.capability}.${route.operation}`);
+      }
+    }
   }
 
   for (const file of walk(DRIVER_ROOT)) {
     const relative = path.relative(ROOT, file);
-    const parent = path.basename(path.dirname(file));
     const base = path.basename(file);
-    if (parent === 'shared' || base === 'legacy.js' || base === 'unsupported.js' || base === 'secure-file-driver.js' || base.startsWith('generic-')) continue;
+    if (base === 'legacy.js' || base === 'unsupported.js' || base === 'secure-file-driver.js' || base.startsWith('generic-')) continue;
     if (
       !DRIVER_FILES.has(base)
       && !COMPANION_FILES.has(base)
       && !PLATFORM_BUSINESS_FILES.has(base)
-      && !base.startsWith('api-')
       && !base.endsWith('-implementation.js')
       && !base.endsWith('-adapter.js')
     ) orphan.push(relative);

@@ -17,6 +17,7 @@ const {
   readOmpSkillSettings,
   updateOmpSkillSettings
 } = require('../../platforms/drivers/omp/skill-settings');
+const { getPlatformContext } = require('../platform-context');
 
 const router = express.Router();
 const skillServices = new Map();
@@ -54,7 +55,7 @@ function getSkillService(req) {
 function getControlService() {
   if (routerOptions.controlService) return routerOptions.controlService;
   if (!defaultControlService && PATHS.effectiveControlManifest) {
-    const registry = require('../../platforms/runtime').getPlatformRegistry();
+    const registry = getPlatformContext().registry;
     defaultControlService = new EffectiveControlService({
       store: new ControlManifestStore({
         userPath: PATHS.effectiveControlManifest,

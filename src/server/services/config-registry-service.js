@@ -10,7 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
-const platformRuntime = require('../../platforms/runtime');
+const { getPlatformContext } = require('../platform-context');
 const { ControlManifestStore } = require('./control-manifest-store');
 const { EffectiveControlService } = require('./effective-control-service');
 const { SkillArtifactStore } = require('./skill-artifact-store');
@@ -32,14 +32,14 @@ const CLAUDE_DIRS = {
 // Valid config types
 const CONFIG_TYPES = ['skills', 'commands', 'agents', 'plugins'];
 
-function getSupportedPlatforms(registry = platformRuntime.getPlatformRegistry()) {
+function getSupportedPlatforms(registry = getPlatformContext().registry) {
   if (!registry || typeof registry.list !== 'function') return [];
   return registry.list()
     .map(platform => platform && platform.key)
     .filter(Boolean);
 }
 
-function buildPlatformSupport(registry = platformRuntime.getPlatformRegistry()) {
+function buildPlatformSupport(registry = getPlatformContext().registry) {
   const support = Object.fromEntries(CONFIG_TYPES.map(type => [type, {}]));
   for (const platform of (registry?.list?.() || [])) {
     const key = platform && platform.key;

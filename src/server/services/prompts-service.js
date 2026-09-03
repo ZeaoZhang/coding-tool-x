@@ -17,10 +17,10 @@ function normalizePlatformKey(platform) {
 }
 
 function getPlatformServices() {
-  const { getPlatformRegistry, getPlatformRuntime } = require('../../platforms/runtime');
+  const { registry, runtime } = require('../platform-context').getPlatformContext();
   return {
-    registry: getPlatformRegistry(),
-    runtime: getPlatformRuntime()
+    registry,
+    runtime
   };
 }
 
