@@ -6,8 +6,8 @@ let loadAliasesMock;
 let broadcastLogMock;
 
 function buildApp(config = {}) {
-  delete require.cache[require.resolve('../../../src/server/api/omp-sessions')];
-  const createRouter = require('../../../src/server/api/omp-sessions');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/omp/api-sessions')];
+  const createRouter = require('../../../src/platforms/drivers/omp/api-sessions');
   const app = express();
   app.use(express.json());
   app.use('/', createRouter(config));
@@ -143,7 +143,7 @@ beforeEach(() => {
 
 afterEach(() => {
   [
-    '../../../src/server/api/omp-sessions',
+    '../../../src/platforms/drivers/omp/api-sessions',
     '../../../src/platforms/drivers/omp/sessions-implementation',
     '../../../src/server/services/session-history-index',
     '../../../src/server/services/alias',

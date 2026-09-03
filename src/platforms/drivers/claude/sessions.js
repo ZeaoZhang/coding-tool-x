@@ -1,6 +1,6 @@
 'use strict';
 
-const { createCapabilityDriver } = require('../shared/capability-driver');
+const { createCapabilityDriver } = require('../../../shared/capability-driver');
 
 function createDriver(context = {}) {
   return createCapabilityDriver({
@@ -9,10 +9,23 @@ function createDriver(context = {}) {
     capability: 'sessions',
     preservePayloadUpdatedAt: true,
     servicePath: './claude/sessions-implementation',
-    localServicePath: '../claude/sessions-implementation',
-    adapterLocalPath: '../claude/session-history-adapter',
+    localServicePath: '../platforms/drivers/claude/sessions-implementation',
+    adapterLocalPath: '../platforms/drivers/claude/session-history-adapter',
     adapterMethods: { inventory: 'inventory', parse: 'parse' },
-    methods: {"listSessions":"getSessionsForProject","recent":"getRecentSessions","search":"searchSessions","delete":"deleteSession","fork":"forkSession","status":"getSessionStatus","messages":"getSessionMessages"}
+    methods: {
+      listSessions: 'getSessionsForProject',
+      recent: 'getRecentSessions',
+      search: 'searchSessions',
+      searchAcrossProjects: 'searchSessionsAcrossProjects',
+      delete: 'deleteSession',
+      fork: 'forkSession',
+      saveSessionOrder: 'saveSessionOrder',
+      getSessionOrder: 'getSessionOrder',
+      parseRealProjectPath: 'parseRealProjectPath',
+      hasActualMessages: 'hasActualMessages',
+      status: 'getSessionStatus',
+      messages: 'getSessionMessages'
+    }
   });
 }
 

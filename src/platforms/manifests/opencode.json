@@ -37,6 +37,7 @@
   "statisticsPath": "/api/opencode/statistics",
   "promptFile": ".opencode/AGENTS.md",
   "promptLabel": "OpenCode",
+  "api": { "prefix": "opencode" },
   "capabilities": {
     "projects": "legacy:opencode",
     "sessions": "legacy:opencode",
@@ -45,6 +46,8 @@
     "statistics": "legacy:opencode",
     "resourceSync": "legacy:opencode",
     "nativeConfig": "legacy:opencode",
+    "projectConfig": "legacy:opencode",
+    "api": "legacy:opencode",
     "mcp": "legacy:opencode",
     "prompts": "legacy:opencode"
   }

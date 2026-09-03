@@ -8,13 +8,13 @@ const { resolvePreferredHomeDir, normalizeWindowsHomePath, isWindowsLikePlatform
 const mcpClient = require('../src/server/services/mcp-client');
 const portHelper = require('../src/utils/port-helper');
 const { isWindowsLikeRuntime, parsePidsFromNetstatOutput } = portHelper;
-const claudeHooks = require('../src/server/api/claude-hooks');
-const notificationHooks = require('../src/server/services/notification-hooks');
+const claudeHooks = require('../src/platforms/drivers/claude/api-hooks');
+const notificationHooks = require('../src/platforms/notification-hooks');
 const logsCommand = require('../src/commands/logs');
 const pm2Autostart = require('../src/server/api/pm2-autostart');
 const daemonCommand = require('../src/commands/daemon');
-const codexSettingsManager = require('../src/server/services/codex-settings-manager');
-const ompConfig = require('../src/server/services/omp-config');
+const codexSettingsManager = require('../src/platforms/drivers/codex/native-config-implementation');
+const ompConfig = require('../src/platforms/drivers/omp/config');
 
 function run() {
   const hookTest = claudeHooks._test || {};
@@ -196,7 +196,7 @@ function run() {
       /fork\(__filename,\s*\[\],\s*\{[\s\S]*?windowsHide:\s*true/
     ],
     [
-      'src/server/services/omp-auth-providers.js',
+      'src/platforms/drivers/omp/auth-providers.js',
       /fork\(workerPath,\s*\[\],\s*\{[\s\S]*?windowsHide:\s*true/
     ]
   ];

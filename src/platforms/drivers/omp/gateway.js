@@ -15,7 +15,7 @@ const {
   parseSSEEventText,
   parseSSEUsage,
   splitSSEEvents
-} = require('../../../server/services/base/response-usage-parser');
+} = require('../../../shared/response-usage-parser');
 const {
   publishFailureLog: publishSharedFailureLog,
   publishUsageLog: publishSharedUsageLog

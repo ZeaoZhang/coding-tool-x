@@ -4,8 +4,8 @@ const http = require('http');
 let geminiStatsService;
 
 function buildApp() {
-  delete require.cache[require.resolve('../../../src/server/api/gemini-statistics')];
-  const router = require('../../../src/server/api/gemini-statistics');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/gemini/api-statistics')];
+  const router = require('../../../src/platforms/drivers/gemini/api-statistics');
   const app = express();
   app.use(express.json());
   app.use('/', router);
@@ -62,7 +62,7 @@ beforeEach(() => {
 
 afterEach(() => {
   [
-    '../../../src/server/api/gemini-statistics',
+    '../../../src/platforms/drivers/gemini/api-statistics',
     '../../../src/platforms/drivers/gemini/statistics-implementation'
   ].forEach((mod) => {
     try {

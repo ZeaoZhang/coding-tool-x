@@ -11,8 +11,8 @@ let isCodexInstalledMock;
 let broadcastLogMock;
 
 function buildApp(config = {}) {
-  delete require.cache[require.resolve('../../../src/server/api/codex-sessions')];
-  const createRouter = require('../../../src/server/api/codex-sessions');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/codex/api-sessions')];
+  const createRouter = require('../../../src/platforms/drivers/codex/api-sessions');
   const app = express();
   app.use(express.json());
   app.use('/', createRouter(config));
@@ -160,7 +160,7 @@ beforeEach(() => {
 afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
   [
-    '../../../src/server/api/codex-sessions',
+    '../../../src/platforms/drivers/codex/api-sessions',
     '../../../src/platforms/drivers/codex/sessions-implementation',
     '../../../src/server/services/session-history-index',
     '../../../src/platforms/drivers/codex/config',

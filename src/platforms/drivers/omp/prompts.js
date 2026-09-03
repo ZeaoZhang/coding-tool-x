@@ -1,4 +1,9 @@
 'use strict';
-const { createCapabilityDriver } = require('../shared/capability-driver');
-function createDriver(context = {}) { return createCapabilityDriver({ ...context, platform: 'omp', capability: 'prompts', servicePath: '../../server/services/prompts-service', localServicePath: '../../../server/services/prompts-service', methods: { read: 'readPlatformPrompt', write: 'writePlatformPrompt', remove: 'removePlatformPrompt' }, prependPlatform: true }); }
+
+const { createPromptDriver } = require('../shared/prompts');
+
+function createDriver(context = {}) {
+  return createPromptDriver({ ...context, platform: 'omp' });
+}
+
 module.exports = { createDriver };

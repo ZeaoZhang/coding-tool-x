@@ -319,7 +319,8 @@ function _capabilityInvocationError(source, capability, operation, error) {
 
 async function _invokeCapabilityGetter(source, capability, operation, getter, options) {
   try {
-    return await getter(options);
+    const value = await getter(options);
+    return value && value.status === 'ok' ? value.data : value;
   } catch (error) {
     throw _capabilityInvocationError(source, capability, operation, error);
   }
@@ -432,23 +433,13 @@ function _normalizeProjectPayload(source, projects, config = {}) {
   return projects;
 }
 
-function _normalizeChannelsPayload(source, value) {
-  if (source === 'claude') {
-    if (_isTypedPayload(value)) {
-      return value;
-    }
-    if (Array.isArray(value)) {
-      return value;
-    }
-    if (value && Array.isArray(value.channels)) {
-      return value.channels;
-    }
-    return [];
-  }
+function _normalizeChannelsPayload(driver, value) {
   if (_isTypedPayload(value)) {
     return value;
   }
-
+  if (typeof driver?.normalizeDashboardChannels === 'function') {
+    return driver.normalizeDashboardChannels(value);
+  }
   if (Array.isArray(value)) {
     return { channels: value };
   }
@@ -469,6 +460,9 @@ async function buildProjectsPayload(source, config = {}, options = {}) {
     const driverOptions = { force: options.force === true, config };
     const projects = await _invokeCapabilityGetter(source, 'projects', 'list', getter, driverOptions);
     if (_isTypedPayload(projects)) {
+      if (projects.status === 'failed' && projects.cause instanceof Error) {
+        throw projects.cause;
+      }
       return projects;
     }
     if (source === 'claude') {
@@ -529,7 +523,7 @@ async function buildChannelsPayload(source, config = {}, options = {}) {
   const getter = _getChannelsGetter(driver);
   if (getter) {
     const value = await _invokeCapabilityGetter(source, 'channels', 'list', getter, { force: options.force === true, config });
-    return _normalizeChannelsPayload(source, value);
+    return _normalizeChannelsPayload(driver, value);
   }
 
   if (_isTypedPayload(driver)) {
@@ -539,9 +533,9 @@ async function buildChannelsPayload(source, config = {}, options = {}) {
   return _unsupportedPayload(source, 'channels');
 }
 
-function _sourceCapabilityFallback(source, capability) {
+function _sourceCapabilityFallback(capability) {
   if (capability === 'channels') {
-    return source === 'claude' ? [] : { channels: [] };
+    return { channels: [] };
   }
   if (capability === 'counts') {
     return { projectCount: 0, sessionCount: 0 };
@@ -564,7 +558,7 @@ function _sourceCapabilityFailure(source, capability, operation, error) {
   return failure;
 }
 
-function _settledCapability(result, source, capability, operation) {
+function _settledCapability(result, source, capability, operation, fallbackValue) {
   const value = result.status === 'fulfilled'
     ? result.value
     : _sourceCapabilityFailure(source, capability, operation, result.reason);
@@ -576,7 +570,7 @@ function _settledCapability(result, source, capability, operation) {
       error: 'dashboard capability failed'
     });
     return {
-      value: _sourceCapabilityFallback(source, capability),
+      value: fallbackValue === undefined ? _sourceCapabilityFallback(capability) : fallbackValue,
       failure
     };
   }

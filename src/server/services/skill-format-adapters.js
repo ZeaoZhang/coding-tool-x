@@ -1,7 +1,7 @@
 'use strict';
 
 const { convertSkillToCodex } = require('./format-converter');
-const { normalizeSafeRelativePath } = require('./config-artifact-paths');
+const { normalizeSafeRelativePath } = require('../../shared/config-artifact-paths');
 
 const FORMAT_IDS = Object.freeze({
   claude: 'claude-skill-v1',

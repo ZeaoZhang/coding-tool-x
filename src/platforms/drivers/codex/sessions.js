@@ -1,6 +1,6 @@
 'use strict';
 
-const { createCapabilityDriver } = require('../shared/capability-driver');
+const { createCapabilityDriver } = require('../../../shared/capability-driver');
 
 function createDriver(context = {}) {
   return createCapabilityDriver({
@@ -9,10 +9,22 @@ function createDriver(context = {}) {
     capability: 'sessions',
     preservePayloadUpdatedAt: true,
     servicePath: './codex/sessions-implementation',
-    localServicePath: '../codex/sessions-implementation',
-    adapterLocalPath: '../codex/session-history-adapter',
+    localServicePath: '../platforms/drivers/codex/sessions-implementation',
+    adapterLocalPath: '../platforms/drivers/codex/session-history-adapter',
     adapterMethods: { inventory: 'inventory', parse: 'parse' },
-    methods: {"listSessions":"getSessionsByProject","recent":"getRecentSessions","search":"searchSessions","delete":"deleteSession","fork":"forkSession","status":"getSessionStatus","messages":"getSessionMessages"}
+    methods: {
+      listSessions: 'getSessionsByProject',
+      recent: 'getRecentSessions',
+      search: 'searchSessions',
+      getSessionById: 'getSessionById',
+      delete: 'deleteSession',
+      fork: 'forkSession',
+      saveSessionOrder: 'saveSessionOrder',
+      getSessionOrder: 'getSessionOrder',
+      getProjectOrder: 'getProjectOrder',
+      status: 'getSessionStatus',
+      messages: 'getSessionMessages'
+    }
   });
 }
 

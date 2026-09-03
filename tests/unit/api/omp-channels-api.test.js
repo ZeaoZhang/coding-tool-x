@@ -183,13 +183,13 @@ beforeEach(() => {
     }
   };
 
-  delete require.cache[require.resolve('../../../src/server/api/omp-channels')];
-  routerFactory = require('../../../src/server/api/omp-channels');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/omp/api-channels')];
+  routerFactory = require('../../../src/platforms/drivers/omp/api-channels');
 });
 
 afterEach(() => {
   [
-    '../../../src/server/api/omp-channels',
+    '../../../src/platforms/drivers/omp/api-channels',
     '../../../src/platforms/drivers/omp/channels-implementation',
     '../../../src/platforms/drivers/omp/sessions-implementation',
     '../../../src/server/services/channel-scheduler',
@@ -238,8 +238,8 @@ describe('omp-channels api', () => {
     expect(res._body.channels[0].id).toBe('omp-1');
 
     isOmpInstalled.mockReturnValue(false);
-    delete require.cache[require.resolve('../../../src/server/api/omp-channels')];
-    router = require('../../../src/server/api/omp-channels')({});
+    delete require.cache[require.resolve('../../../src/platforms/drivers/omp/api-channels')];
+    router = require('../../../src/platforms/drivers/omp/api-channels')({});
     handler = findHandler(router, 'get', '/');
     res = makeRes();
     handler({}, res);
@@ -472,8 +472,8 @@ describe('omp-channels api', () => {
     const getOmpCatalogModels = vi.fn(() => [{ id: 'gpt-5.6-sol', contextWindow: 1050000 }]);
     const settingsManagerPath = require.resolve('../../../src/platforms/drivers/omp/native-config-implementation');
     require.cache[settingsManagerPath].exports.getOmpCatalogModels = getOmpCatalogModels;
-    delete require.cache[require.resolve('../../../src/server/api/omp-channels')];
-    const router = require('../../../src/server/api/omp-channels')({});
+    delete require.cache[require.resolve('../../../src/platforms/drivers/omp/api-channels')];
+    const router = require('../../../src/platforms/drivers/omp/api-channels')({});
     const handler = findHandler(router, 'post', '/catalog-metadata');
     const res = makeRes();
 

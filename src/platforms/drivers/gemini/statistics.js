@@ -1,6 +1,6 @@
 'use strict';
 
-const { createCapabilityDriver } = require('../shared/capability-driver');
+const { createCapabilityDriver } = require('../../../shared/capability-driver');
 
 function createDriver(context = {}) {
   return createCapabilityDriver({
@@ -8,7 +8,7 @@ function createDriver(context = {}) {
     platform: 'gemini',
     capability: 'statistics',
     servicePath: './gemini/statistics-implementation',
-    localServicePath: '../gemini/statistics-implementation',
+    localServicePath: '../platforms/drivers/gemini/statistics-implementation',
     methods: {"getStatistics":"getStatistics","getDailyStatistics":"getDailyStatistics","getTodayStatistics":"getTodayStatistics","recordRequest":"recordRequest","resetStatistics":"resetStatistics"}
   });
 }

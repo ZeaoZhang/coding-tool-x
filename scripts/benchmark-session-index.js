@@ -145,8 +145,7 @@ function querySummary() {
 // Clear service modules but keep the synthetic path/config stubs above.
 for (const modulePath of [
   require.resolve(indexPath),
-  require.resolve(path.join(srcDir, 'server', 'services', 'session-history-adapters', 'index.js')),
-  require.resolve(path.join(srcDir, 'server', 'services', 'session-history-adapters', 'claude.js'))
+  require.resolve(path.join(srcDir, 'platforms', 'session-history-adapters.js'))
 ]) {
   delete require.cache[modulePath];
 }

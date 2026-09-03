@@ -5,7 +5,7 @@
  */
 
 const express = require('express');
-const { CommandsService } = require('../services/commands-service');
+const { CommandsService } = require('../../platforms/commands-service');
 const { sendApiError } = require('./validation-errors');
 
 const router = express.Router();

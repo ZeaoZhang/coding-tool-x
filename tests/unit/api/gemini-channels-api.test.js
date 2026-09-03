@@ -120,13 +120,13 @@ beforeEach(() => {
     exports: { getDefaultSpeedTestModelByToolType }
   };
 
-  delete require.cache[require.resolve('../../../src/server/api/gemini-channels')];
-  routerFactory = require('../../../src/server/api/gemini-channels');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/gemini/api-channels')];
+  routerFactory = require('../../../src/platforms/drivers/gemini/api-channels');
 });
 
 afterEach(() => {
   [
-    '../../../src/server/api/gemini-channels',
+    '../../../src/platforms/drivers/gemini/api-channels',
     '../../../src/platforms/drivers/gemini/channels-implementation',
     '../../../src/server/services/channel-scheduler',
     '../../../src/server/services/channel-health',
@@ -151,8 +151,8 @@ describe('gemini-channels api', () => {
     expect(res._body.channels[0].health).toEqual({ id: 'g-1', healthy: true });
 
     isGeminiInstalled.mockReturnValue(false);
-    delete require.cache[require.resolve('../../../src/server/api/gemini-channels')];
-    router = require('../../../src/server/api/gemini-channels')({});
+    delete require.cache[require.resolve('../../../src/platforms/drivers/gemini/api-channels')];
+    router = require('../../../src/platforms/drivers/gemini/api-channels')({});
     handler = findHandler(router, 'get', '/');
     res = makeRes();
     handler({}, res);

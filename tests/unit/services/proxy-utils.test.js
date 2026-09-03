@@ -8,7 +8,7 @@ const {
   normalizeNumber,
   ensureOpenAiStreamUsage,
   logModelRedirect,
-} = require('../../../src/server/services/base/proxy-utils');
+} = require('../../../src/shared/proxy-utils');
 
 describe('proxy-utils', () => {
   describe('detectModelTier', () => {

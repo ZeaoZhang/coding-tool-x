@@ -9,7 +9,7 @@ const {
   readConfig,
   selectConfigPath
 } = require('./native-config-implementation');
-const { normalizeGatewaySourceType } = require('../../../server/services/base/proxy-utils');
+const { normalizeGatewaySourceType } = require('../../../shared/proxy-utils');
 const {
   createSkippedResult,
   isLocalProxyBaseUrl,

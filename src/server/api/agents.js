@@ -7,7 +7,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const { AgentsService } = require('../services/agents-service');
+const { AgentsService } = require('../../platforms/agents-service');
 const { PATHS, HOME_DIR } = require('../../config/paths');
 const { sendApiError } = require('./validation-errors');
 

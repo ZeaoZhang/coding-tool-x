@@ -4,8 +4,8 @@ const http = require('http');
 let opencodeStatsService;
 
 function buildApp() {
-  delete require.cache[require.resolve('../../../src/server/api/opencode-statistics')];
-  const router = require('../../../src/server/api/opencode-statistics');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/opencode/api-statistics')];
+  const router = require('../../../src/platforms/drivers/opencode/api-statistics');
   const app = express();
   app.use(express.json());
   app.use('/', router);
@@ -62,7 +62,7 @@ beforeEach(() => {
 
 afterEach(() => {
   [
-    '../../../src/server/api/opencode-statistics',
+    '../../../src/platforms/drivers/opencode/api-statistics',
     '../../../src/platforms/drivers/opencode/statistics-implementation'
   ].forEach((mod) => {
     try {

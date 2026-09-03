@@ -11,8 +11,8 @@ const SNAPSHOT_CACHE_PATH = require.resolve('../../../src/server/services/snapsh
 const PROJECT_SNAPSHOTS_PATH = require.resolve('../../../src/server/services/project-snapshots');
 
 function buildApp(config = {}) {
-  delete require.cache[require.resolve('../../../src/server/api/codex-projects')];
-  const createRouter = require('../../../src/server/api/codex-projects');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/codex/api-projects')];
+  const createRouter = require('../../../src/platforms/drivers/codex/api-projects');
   const app = express();
   app.use(express.json());
   app.use('/', createRouter(config));
@@ -104,7 +104,7 @@ beforeEach(() => {
 
 afterEach(() => {
   [
-    '../../../src/server/api/codex-projects',
+    '../../../src/platforms/drivers/codex/api-projects',
     '../../../src/platforms/drivers/codex/sessions-implementation',
     '../../../src/platforms/drivers/codex/config',
     '../../../src/config/paths',

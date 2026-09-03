@@ -23,28 +23,28 @@ const CORE_SESSION_ROUTE_KEYS = new Set([
 const CHANNELS = [
   {
     name: 'claude',
-    projectsFactory: require('../src/server/api/projects'),
-    sessionsFactory: require('../src/server/api/sessions')
+    projectsFactory: require('../src/platforms/drivers/claude/api-projects'),
+    sessionsFactory: require('../src/platforms/drivers/claude/api-sessions')
   },
   {
     name: 'codex',
-    projectsFactory: require('../src/server/api/codex-projects'),
-    sessionsFactory: require('../src/server/api/codex-sessions')
+    projectsFactory: require('../src/platforms/drivers/codex/api-projects'),
+    sessionsFactory: require('../src/platforms/drivers/codex/api-sessions')
   },
   {
     name: 'gemini',
-    projectsFactory: require('../src/server/api/gemini-projects'),
-    sessionsFactory: require('../src/server/api/gemini-sessions')
+    projectsFactory: require('../src/platforms/drivers/gemini/api-projects'),
+    sessionsFactory: require('../src/platforms/drivers/gemini/api-sessions')
   },
   {
     name: 'opencode',
-    projectsFactory: require('../src/server/api/opencode-projects'),
-    sessionsFactory: require('../src/server/api/opencode-sessions')
+    projectsFactory: require('../src/platforms/drivers/opencode/api-projects'),
+    sessionsFactory: require('../src/platforms/drivers/opencode/api-sessions')
   },
   {
     name: 'omp',
-    projectsFactory: require('../src/server/api/omp-projects'),
-    sessionsFactory: require('../src/server/api/omp-sessions')
+    projectsFactory: require('../src/platforms/drivers/omp/api-projects'),
+    sessionsFactory: require('../src/platforms/drivers/omp/api-sessions')
   }
 ];
 

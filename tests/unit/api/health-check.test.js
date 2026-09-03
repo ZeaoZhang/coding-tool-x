@@ -1,13 +1,13 @@
 /**
- * Tests for src/server/api/health-check.js
+ * Tests for src/platforms/drivers/claude/api-health-check.js
  *
  * Pattern: inject vi.fn() stubs into require.cache before requiring the module
  * under test. Mirrors the channel-scheduler.test.js pattern used in this project.
  */
 
-const HC_PATH      = require.resolve('../../../src/server/services/health-check');
+const HC_PATH      = require.resolve('../../../src/platforms/drivers/claude/health-check');
 const SESSIONS_PATH = require.resolve('../../../src/platforms/drivers/claude/sessions-implementation');
-const API_PATH     = require.resolve('../../../src/server/api/health-check');
+const API_PATH     = require.resolve('../../../src/platforms/drivers/claude/api-health-check');
 
 let healthCheckAllProjects;
 let getProjects;
@@ -56,7 +56,7 @@ let router;
 beforeEach(() => {
   delete require.cache[API_PATH];
   injectStubs();
-  makeRouter = require('../../../src/server/api/health-check');
+  makeRouter = require('../../../src/platforms/drivers/claude/api-health-check');
   router = makeRouter(config);
 });
 

@@ -13,7 +13,7 @@ function createDriver({ requireImpl, ...context } = {}) {
     syncManagedProviders: (...args) => managed.syncManagedOmpProviders(...args),
     disableManagedProviders: (...args) => managed.disableManagedOmpProviders(...args),
     isManagedModeEnabled: (...args) => managed.isManagedOmpModeEnabled(...args),
-    clearNativeOAuth: () => require('../shared/native-oauth-adapters').clearNativeOAuth('omp')
+    clearNativeOAuth: () => require('../../native-oauth-adapters').clearNativeOAuth('omp')
   };
 }
 

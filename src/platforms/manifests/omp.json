@@ -53,6 +53,7 @@
   },
   "promptFile": null,
   "promptLabel": "OMP command templates",
+  "api": { "prefix": "omp" },
   "capabilities": {
     "projects": "legacy:omp",
     "sessions": "legacy:omp",
@@ -60,6 +61,8 @@
     "proxy": "legacy:omp",
     "statistics": "legacy:omp",
     "nativeConfig": "legacy:omp",
+    "projectConfig": "legacy:omp",
+    "api": "legacy:omp",
     "resourceSync": "legacy:omp",
     "mcp": "legacy:omp"
   }

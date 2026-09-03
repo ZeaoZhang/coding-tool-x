@@ -6,8 +6,8 @@ let isGeminiInstalledMock;
 let loadAliasesMock;
 
 function buildApp(config = {}) {
-  delete require.cache[require.resolve('../../../src/server/api/gemini-sessions')];
-  const createRouter = require('../../../src/server/api/gemini-sessions');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/gemini/api-sessions')];
+  const createRouter = require('../../../src/platforms/drivers/gemini/api-sessions');
   const app = express();
   app.use(express.json());
   app.use('/', createRouter(config));
@@ -133,7 +133,7 @@ beforeEach(() => {
 
 afterEach(() => {
   [
-    '../../../src/server/api/gemini-sessions',
+    '../../../src/platforms/drivers/gemini/api-sessions',
     '../../../src/platforms/drivers/gemini/sessions-implementation',
     '../../../src/server/services/session-history-index',
     '../../../src/platforms/drivers/gemini/config',

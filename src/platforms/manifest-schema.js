@@ -123,6 +123,19 @@ const schema = {
         }
       }
     },
+    api: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['prefix'],
+      properties: {
+        prefix: { type: 'string', pattern: '^[a-z0-9][a-z0-9_-]*$' },
+        rootAlias: { type: 'boolean' },
+        rootAliasPaths: {
+          type: 'array',
+          items: { type: 'string', pattern: '^[a-z][a-z0-9_-]*$' }
+        }
+      }
+    },
     capabilities: { type: 'object', additionalProperties: { enum: [...DRIVER_IDS] } }
   }
 };

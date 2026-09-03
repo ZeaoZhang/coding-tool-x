@@ -183,13 +183,13 @@ beforeEach(() => {
     exports: { getDefaultSpeedTestModelByToolType }
   };
 
-  delete require.cache[require.resolve('../../../src/server/api/codex-channels')];
-  routerFactory = require('../../../src/server/api/codex-channels');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/codex/api-channels')];
+  routerFactory = require('../../../src/platforms/drivers/codex/api-channels');
 });
 
 afterEach(() => {
   [
-    '../../../src/server/api/codex-channels',
+    '../../../src/platforms/drivers/codex/api-channels',
     '../../../src/platforms/drivers/codex/channels-implementation',
     '../../../src/server/services/channel-scheduler',
     '../../../src/server/services/channel-health',
@@ -217,8 +217,8 @@ describe('codex-channels api', () => {
     expect(res._body.channels[0].health).toEqual({ id: 'ch-1', available: true });
 
     isCodexInstalled.mockReturnValue(false);
-    delete require.cache[require.resolve('../../../src/server/api/codex-channels')];
-    router = require('../../../src/server/api/codex-channels')({});
+    delete require.cache[require.resolve('../../../src/platforms/drivers/codex/api-channels')];
+    router = require('../../../src/platforms/drivers/codex/api-channels')({});
     handler = findHandler(router, 'get', '/');
     res = makeRes();
     handler({}, res);

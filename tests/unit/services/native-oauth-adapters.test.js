@@ -262,14 +262,14 @@ beforeEach(() => {
     }
   };
 
-  delete require.cache[require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters')];
-  nativeAdapters = require('../../../src/platforms/drivers/shared/native-oauth-adapters');
+  delete require.cache[require.resolve('../../../src/platforms/native-oauth-adapters')];
+  nativeAdapters = require('../../../src/platforms/native-oauth-adapters');
 });
 
 afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
   [
-    '../../../src/platforms/drivers/shared/native-oauth-adapters',
+    '../../../src/platforms/native-oauth-adapters',
     '../../../src/config/paths',
     '../../../src/platforms/drivers/claude/native-config-implementation',
     '../../../src/platforms/drivers/codex/native-config-implementation',

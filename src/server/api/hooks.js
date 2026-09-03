@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const notificationHooks = require('../services/notification-hooks');
+const notificationHooks = require('../../platforms/notification-hooks');
 const { createSameOriginGuard, isLoopbackRequest } = require('../services/network-access');
 
 router.use(createSameOriginGuard({

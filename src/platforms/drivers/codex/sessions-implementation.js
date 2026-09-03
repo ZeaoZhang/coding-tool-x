@@ -3,7 +3,19 @@ const path = require('path');
 const { getCodexDir } = require('./config');
 const { parseSession, parseSessionMeta, extractSessionMeta, readJSONL } = require('./parser');
 const { globalCache, CacheKeys } = require('../../../server/services/enhanced-cache');
-const { listProjects: idxListProjects, listSessions: idxListSessions, getSessionStatus: idxGetSessionStatus, getRecentSessions: idxGetRecent, searchSessions: idxSearch } = require('../../../server/services/session-history-index');
+let sessionHistoryIndex = null;
+
+function configure({ sessionHistoryIndex: index } = {}) {
+  sessionHistoryIndex = index || null;
+}
+
+function getSessionHistoryIndex() {
+  if (!sessionHistoryIndex) {
+    const { getDefaultDependencies } = require('../../../platforms/runtime');
+    sessionHistoryIndex = getDefaultDependencies().sessionHistoryIndex;
+  }
+  return sessionHistoryIndex;
+}
 
 const COUNTS_CACHE_TTL_MS = 30 * 1000;
 const SCAN_FILES_CACHE_TTL_MS = 15 * 1000;
@@ -230,7 +242,7 @@ function normalizeSession(codexSession) {
  */
 async function getProjects(options = {}) {
   if (!fs.existsSync(getSessionsDir())) return [];
-  const projects = await idxListProjects('codex', options);
+  const projects = await getSessionHistoryIndex().listProjects('codex', options);
   const savedOrder = getProjectOrder();
   if (savedOrder.length === 0) return projects;
 
@@ -246,7 +258,7 @@ async function getProjects(options = {}) {
  * @returns {Array} 归一化的会话数组
  */
 async function getSessionsByProject(projectName, options = {}) {
-  const indexed = await idxListSessions('codex', projectName, options);
+  const indexed = await getSessionHistoryIndex().listSessions('codex', projectName, options);
   const forkRelations = require('../claude/sessions-implementation').getForkRelations();
   const aliases = require('../../../server/services/alias').loadAliases();
   const sessions = indexed.map(session => ({
@@ -270,7 +282,7 @@ async function getSessionsByProject(projectName, options = {}) {
  * @returns {Object|null} 归一化的会话对象
  */
 async function getSessionById(sessionId) {
-  const status = await idxGetSessionStatus('codex', sessionId);
+  const status = await getSessionHistoryIndex().getSessionStatus('codex', sessionId);
   if (!status) return null;
   const session = parseSession(status.filePath);
   if (!session) return null;
@@ -283,7 +295,7 @@ async function getSessionById(sessionId) {
  * @returns {Array} 搜索结果
  */
 async function searchSessions(keyword) {
-  return idxSearch('codex', keyword);
+  return getSessionHistoryIndex().searchSessions('codex', keyword);
 }
 
 /**
@@ -378,7 +390,7 @@ function deleteProject(projectName) {
  * @returns {Array} 最近会话数组
  */
 async function getRecentSessions(limit = 5) {
-  const indexed = await idxGetRecent('codex', limit);
+  const indexed = await getSessionHistoryIndex().getRecentSessions('codex', limit);
   const forkRelations = require('../claude/sessions-implementation').getForkRelations();
   const aliases = require('../../../server/services/alias').loadAliases();
   return indexed.map(session => ({
@@ -816,6 +828,7 @@ function getProjectAndSessionCounts(options = {}) {
 }
 
 module.exports = {
+  configure,
   getSessionsDir,
   scanSessionFiles,
   getAllSessions,

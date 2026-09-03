@@ -127,7 +127,7 @@ function createStubs() {
       publishUsageLog,
       publishFailureLog
     }],
-    ['../../../src/server/services/base/proxy-utils', {
+    ['../../../src/shared/proxy-utils', {
       redirectModel,
       normalizeGatewaySourceType,
       ensureOpenAiStreamUsage
