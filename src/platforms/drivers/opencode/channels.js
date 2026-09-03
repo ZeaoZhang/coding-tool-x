@@ -1,6 +1,6 @@
 'use strict';
 
-const { createChannelDriver } = require('../shared/channel-driver');
+const { createChannelDriver } = require('../../../shared/channel-driver');
 
 function createDriver(context = {}) {
   return createChannelDriver({
@@ -10,7 +10,10 @@ function createDriver(context = {}) {
     localServicePath: '../opencode/channels-implementation',
     syncMethod: 'syncCurrentOpenCodeChannel',
     createArgs: (input, rest) => typeof input === 'object'
-      ? [input.name, input.baseUrl, input.apiKey, input.extra || {}]
+      ? (() => {
+        const { name, baseUrl, apiKey, extra, ...channelExtra } = input;
+        return [name, baseUrl, apiKey, { ...channelExtra, ...extra }];
+      })()
       : [input, ...rest],
     cliMetadata: {
       supportsCliCreate: true,
@@ -30,6 +33,7 @@ function createDriver(context = {}) {
         }
       ]
     },
+    dashboardChannelShape: 'array'
   });
 }
 

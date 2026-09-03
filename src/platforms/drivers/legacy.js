@@ -7,8 +7,8 @@ const MODULE_PATHS = Object.freeze({
     proxy: './claude/proxy-implementation',
     statistics: './claude/statistics-implementation',
     nativeConfig: './claude/native-config-implementation',
-    mcp: '../../server/services/mcp-service',
-    prompts: '../../server/services/prompts-service'
+    api: './claude/api',
+    projectConfig: './claude/project-config',
   }),
   codex: Object.freeze({
     projects: './codex/sessions-implementation',
@@ -16,8 +16,8 @@ const MODULE_PATHS = Object.freeze({
     proxy: './codex/proxy-implementation',
     statistics: './codex/statistics-implementation',
     nativeConfig: './codex/native-config-implementation',
-    mcp: '../../server/services/mcp-service',
-    prompts: '../../server/services/prompts-service'
+    api: './codex/api',
+    projectConfig: './codex/project-config',
   }),
   gemini: Object.freeze({
     projects: './gemini/sessions-implementation',
@@ -25,8 +25,8 @@ const MODULE_PATHS = Object.freeze({
     proxy: './gemini/proxy-implementation',
     statistics: './gemini/statistics-implementation',
     nativeConfig: './gemini/native-config-implementation',
-    mcp: '../../server/services/mcp-service',
-    prompts: '../../server/services/prompts-service'
+    api: './gemini/api',
+    projectConfig: './gemini/project-config',
   }),
   opencode: Object.freeze({
     projects: './opencode/sessions-implementation',
@@ -34,8 +34,8 @@ const MODULE_PATHS = Object.freeze({
     proxy: './opencode/proxy-implementation',
     statistics: './opencode/statistics-implementation',
     nativeConfig: './opencode/native-config-implementation',
-    mcp: '../../server/services/mcp-service',
-    prompts: '../../server/services/prompts-service'
+    api: './opencode/api',
+    projectConfig: './opencode/project-config',
   }),
   omp: Object.freeze({
     projects: './omp/sessions-implementation',
@@ -43,7 +43,8 @@ const MODULE_PATHS = Object.freeze({
     proxy: './omp/proxy-implementation',
     statistics: './omp/statistics-implementation',
     nativeConfig: './omp/native-config-implementation',
-    mcp: '../../server/services/mcp-service'
+    api: './omp/api',
+    projectConfig: './omp/project-config',
   })
 });
 
@@ -217,57 +218,10 @@ const NATIVE_CONFIG_EXPORTS = Object.freeze({
   })
 });
 
-const RESOURCE_SYNC_METHODS = Object.freeze({
-  claude: Object.freeze({ sync: 'syncToClaude', remove: 'removeFromClaude' }),
-  codex: Object.freeze({ sync: 'syncToCodex', remove: 'removeFromCodex' }),
-  gemini: Object.freeze({ sync: 'syncToGemini', remove: 'removeFromGemini' }),
-  opencode: Object.freeze({ sync: 'syncToOpenCode', remove: 'removeFromOpenCode' }),
-  omp: Object.freeze({ sync: 'syncToOmp', remove: 'removeFromOmp' })
-});
-
-const LEGACY_FILE_EXPORTS = Object.freeze({
-  mcp: Object.freeze({
-    read: 'readPlatformMcpConfig',
-    write: 'writePlatformMcpConfig',
-    remove: 'removePlatformMcpServer',
-    sync: 'syncPlatformMcpServer',
-    import: 'importPlatformMcpServers',
-    export: 'exportPlatformMcpServers'
-  }),
-  prompts: Object.freeze({
-    read: 'readLegacyPlatformPrompt',
-    write: 'writeLegacyPlatformPrompt',
-    remove: 'removeLegacyPlatformPrompt'
-  })
-});
-
-function createResourceSyncDriver({ platform, capability, requireImpl }) {
-  let manager;
-  const operations = RESOURCE_SYNC_METHODS[platform];
-  const loadManager = () => {
-    if (!manager) {
-      const service = requireImpl('../../server/services/config-sync-manager');
-      manager = new service.ConfigSyncManager();
-    }
-    return manager;
-  };
-
-  return {
-    platform,
-    capability,
-    sync(type, name, sourcePath = null) {
-      return operations ? loadManager()[operations.sync](type, name, sourcePath) : unsupported(platform, capability, 'sync');
-    },
-    remove(type, name) {
-      return operations ? loadManager()[operations.remove](type, name) : unsupported(platform, capability, 'remove');
-    }
-  };
-}
 
 function unsupported(platform, capability, operation) {
   return { status: 'unsupported', platform, capability, operation };
 }
-
 function createModuleLoader({ platform, capability, requireImpl }) {
   const modulePath = MODULE_PATHS[platform] && MODULE_PATHS[platform][capability];
   let loaded = false;
@@ -483,22 +437,6 @@ function createMappedDriver({ platform, capability, requireImpl, operations }) {
   return driver;
 }
 
-function createLegacyFileDriver({ platform, capability, requireImpl }) {
-  const loadModule = createModuleLoader({ platform, capability, requireImpl });
-  const operations = LEGACY_FILE_EXPORTS[capability];
-  const driver = { platform, capability };
-
-  for (const [operation, exportName] of Object.entries(operations || {})) {
-    driver[operation] = (...args) => invokeExport(
-      loadModule,
-      exportName,
-      [platform, ...args],
-      () => unsupported(platform, capability, operation)
-    );
-  }
-
-  return driver;
-}
 
 function createClaudeSessionDriver({ platform, capability, requireImpl }) {
   const loadModule = createModuleLoader({ platform, capability, requireImpl });
@@ -556,7 +494,8 @@ function createProjectsDriver({ platform, capability, requireImpl }) {
     const normalizedOptions = options || {};
     return invokeProjectOperation(
       'getProjectAndSessionCounts',
-      platform === 'claude' ? [getClaudeConfig(normalizedOptions)] : [normalizedOptions]
+      platform === 'claude' ? [getClaudeConfig(normalizedOptions)] : [normalizedOptions],
+      'getProjectAndSessionCounts'
     );
   };
   driver.counts = driver.getProjectAndSessionCounts;
@@ -568,12 +507,73 @@ function createProjectsDriver({ platform, capability, requireImpl }) {
   return driver;
 }
 
-function createLegacyDriver({ platform, capability, requireImpl = require, manifest = {}, useBuiltInDrivers = false, ...context } = {}) {
-  if (capability === 'resourceSync') {
-    return createResourceSyncDriver({ platform, capability, requireImpl });
+function createBuiltInCompatibilityDriver(capabilityModule, { platform, capability, requireImpl, ...context }) {
+  const builtIn = capabilityModule.createDriver({ ...context, platform, capability, requireImpl });
+  const unwrap = value => {
+    if (!value || typeof value !== 'object' || typeof value.status !== 'string') return value;
+    return value.status === 'ok' ? value.data : value;
+  };
+  const driver = { platform, capability };
+  for (const name of Object.keys(builtIn)) {
+    if (typeof builtIn[name] !== 'function') {
+      driver[name] = builtIn[name];
+      continue;
+    }
+    driver[name] = (...args) => {
+      const value = builtIn[name](...args);
+      return value && typeof value.then === 'function' ? value.then(unwrap) : unwrap(value);
+    };
   }
-  if ((capability === 'mcp' || capability === 'prompts') && MODULE_PATHS[platform]?.[capability]) {
-    return createLegacyFileDriver({ platform, capability, requireImpl });
+  return driver;
+}
+
+function createLegacyDriver({ platform, capability, requireImpl = require, manifest = {}, useBuiltInDrivers = false, ...context } = {}) {
+  if (useBuiltInDrivers && ['resourceSync', 'mcp', 'prompts'].includes(capability)) {
+    const moduleName = capability === 'resourceSync' ? 'resource-sync' : capability;
+    const capabilityModule = requireImpl(`./${platform}/${moduleName}`);
+    if (typeof capabilityModule?.createDriver === 'function') {
+      if (capability === 'resourceSync') {
+        return capabilityModule.createDriver({ ...context, platform, capability, requireImpl });
+      }
+      return createBuiltInCompatibilityDriver(capabilityModule, {
+        ...context,
+        platform,
+        capability,
+        requireImpl
+      });
+    }
+  }
+  if (useBuiltInDrivers && capability === 'projects') {
+    const capabilityModule = requireImpl(`./${platform}/projects`);
+    if (typeof capabilityModule?.createDriver === 'function') {
+      return capabilityModule.createDriver({ ...context, platform, capability, requireImpl });
+    }
+  }
+  if (capability === 'api' && MODULE_PATHS[platform]?.api) {
+    const loadModule = createModuleLoader({ platform, capability, requireImpl });
+    return {
+      platform,
+      capability,
+      createRouter: ({ config, routes } = {}) => {
+        const moduleExports = loadModule();
+        if (typeof moduleExports?.createRouter !== 'function') return null;
+        return moduleExports.createRouter(config, { routes });
+      }
+    };
+  }
+  if (capability === 'projectConfig' && MODULE_PATHS[platform]?.projectConfig) {
+    const loadModule = createModuleLoader({ platform, capability, requireImpl });
+    return {
+      platform,
+      capability,
+      createAdapter: options => {
+        const moduleExports = loadModule();
+        if (typeof moduleExports?.createAdapter !== 'function') {
+          return null;
+        }
+        return moduleExports.createAdapter(options);
+      }
+    };
   }
   if (capability === 'channels') {
     return createChannelsDriver({ ...context, platform, capability, requireImpl, manifest, useBuiltInDrivers });

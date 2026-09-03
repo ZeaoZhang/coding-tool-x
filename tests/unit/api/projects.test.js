@@ -4,7 +4,7 @@ const os   = require('os');
 const path = require('path');
 const fs   = require('fs');
 
-const API_PATH = require.resolve('../../../src/server/api/projects');
+const API_PATH = require.resolve('../../../src/platforms/drivers/claude/api-projects');
 const SESSIONS_PATH = require.resolve('../../../src/platforms/drivers/claude/sessions-implementation');
 const PATHS_PATH = require.resolve('../../../src/config/paths');
 const SNAPSHOT_CACHE_PATH = require.resolve('../../../src/server/services/snapshot-cache');

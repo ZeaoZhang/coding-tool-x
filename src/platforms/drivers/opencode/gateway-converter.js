@@ -11,7 +11,7 @@
  * - OpenAI Chat Completions API (/v1/chat/completions)
  */
 
-const { ensureOpenAiStreamUsage } = require('../../../server/services/base/proxy-utils');
+const { ensureOpenAiStreamUsage } = require('../../../shared/proxy-utils');
 
 const SUPPORTED_SOURCE_TYPES = ['claude', 'codex', 'gemini'];
 const SUPPORTED_TARGET_APIS = ['responses', 'chat.completions'];

@@ -341,7 +341,7 @@ function _adaptRuntimeSessionsDriver(driver) {
 function createSessionHistoryIndex(opts = {}) {
   const dbPath = opts.dbPath || PATHS?.sessionHistoryIndex || path.join(PATHS?.base || process.cwd(), 'session-history.sqlite');
   const explicitAdapters = opts.adapterRegistry || null;
-  const adapters = explicitAdapters || require('./session-history-adapters');
+  const adapters = explicitAdapters || {};
   const runtimeProvided = !explicitAdapters && process.env.NODE_ENV === 'test' && _isUsableRuntime(opts.runtime);
   const runtime = explicitAdapters ? null : (runtimeProvided ? opts.runtime : platformRuntime.getPlatformRuntime());
   const workerRunner = opts.workerRunner || _defaultWorkerRunner;

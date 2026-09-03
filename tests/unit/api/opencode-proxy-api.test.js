@@ -30,8 +30,8 @@ let nativeConfig;
 let nativeConfigPath;
 
 function buildApp() {
-  delete require.cache[require.resolve('../../../src/server/api/opencode-proxy')];
-  const router = require('../../../src/server/api/opencode-proxy');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/opencode/api-proxy')];
+  const router = require('../../../src/platforms/drivers/opencode/api-proxy');
   const app = express();
   app.use(express.json());
   app.use('/', router);
@@ -196,9 +196,9 @@ beforeEach(() => {
     }
   };
 
-  require.cache[require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters')] = {
-    id: require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters'),
-    filename: require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters'),
+  require.cache[require.resolve('../../../src/platforms/native-oauth-adapters')] = {
+    id: require.resolve('../../../src/platforms/native-oauth-adapters'),
+    filename: require.resolve('../../../src/platforms/native-oauth-adapters'),
     loaded: true,
     exports: {
       clearNativeOAuth: clearNativeOAuthMock
@@ -242,11 +242,11 @@ beforeEach(() => {
 afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
   [
-    '../../../src/server/api/opencode-proxy',
+    '../../../src/platforms/drivers/opencode/api-proxy',
     '../../../src/platforms/drivers/opencode/proxy-implementation',
     '../../../src/platforms/drivers/opencode/native-config-implementation',
     '../../../src/platforms/drivers/opencode/channels-implementation',
-    '../../../src/platforms/drivers/shared/native-oauth-adapters',
+    '../../../src/platforms/native-oauth-adapters',
     '../../../src/server/services/channel-scheduler',
     '../../../src/server/websocket-server',
     '../../../src/config/paths'

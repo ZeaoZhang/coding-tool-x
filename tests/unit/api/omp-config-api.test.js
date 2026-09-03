@@ -12,8 +12,8 @@ let readYamlFileMock;
 let getOmpAuthProviderSnapshotMock;
 
 function buildApp() {
-  delete require.cache[require.resolve('../../../src/server/api/omp-config')];
-  const router = require('../../../src/server/api/omp-config');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/omp/api-config')];
+  const router = require('../../../src/platforms/drivers/omp/api-config');
   const app = express();
   app.use(express.json());
   app.use('/', router);
@@ -143,7 +143,7 @@ beforeEach(() => {
 afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
   [
-    '../../../src/server/api/omp-config',
+    '../../../src/platforms/drivers/omp/api-config',
     '../../../src/platforms/drivers/omp/config',
     '../../../src/platforms/drivers/omp/auth-providers'
   ].forEach((mod) => {

@@ -7,7 +7,7 @@ const {
   readOmpSettings
 } = require('./config');
 const { HOME_DIR, NATIVE_PATHS } = require('../../../config/paths');
-const { assertNoSymlinkComponents } = require('../../../server/services/project-config-adapters/shared');
+const { assertNoSymlinkComponents } = require('../../../shared/project-config');
 
 const DEFAULT_SKILL_SETTINGS = Object.freeze({
   enabled: true,

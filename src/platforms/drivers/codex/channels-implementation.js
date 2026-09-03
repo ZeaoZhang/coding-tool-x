@@ -7,7 +7,7 @@ const { PATHS } = require('../../../config/paths');
 const { getCodexDir } = require('./config');
 const { isProxyConfig, readConfig } = require('./native-config-implementation');
 const { syncCodexUserEnvironment } = require('./env-manager');
-const BaseChannelService = require('../../../server/services/base/base-channel-service');
+const BaseChannelService = require('../../../shared/base-channel-service');
 const {
   createSkippedResult,
   isLocalProxyBaseUrl,

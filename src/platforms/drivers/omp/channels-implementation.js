@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { PATHS, ensureStorageDirMigrated } = require('../../../config/paths');
-const BaseChannelService = require('../../../server/services/base/base-channel-service');
+const BaseChannelService = require('../../../shared/base-channel-service');
 const ompConfig = require('./config');
 const {
   writeManagedOmpProviders,

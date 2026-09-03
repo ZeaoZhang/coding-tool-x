@@ -43,7 +43,7 @@ require.cache[websocketModPath] = {
   }
 };
 
-const { _test, MANAGED_HOOK_NAME } = require('../../../src/server/services/notification-hooks');
+const { _test, MANAGED_HOOK_NAME } = require('../../../src/platforms/notification-hooks');
 
 const {
   parseManagedType,

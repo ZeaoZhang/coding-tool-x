@@ -18,7 +18,7 @@ const remoteCredentialCache = require('./remote-credential-cache');
 const {
   normalizeSafeRelativePath,
   resolveInsideRoot
-} = require('./config-artifact-paths');
+} = require('../../shared/config-artifact-paths');
 
 // 缓存有效期（5分钟）
 

@@ -79,7 +79,7 @@ afterEach(() => {
   delete require.cache[OMP_SESSIONS_PATH];
   delete require.cache[OMP_CONFIG_PATH];
   delete require.cache[SESSION_INDEX_PATH];
-  delete require.cache[require.resolve('../../../src/server/services/session-history-adapters')];
+  delete require.cache[require.resolve('../../../src/platforms/session-history-adapters')];
   delete require.cache[require.resolve('../../../src/platforms/drivers/omp/session-history-adapter')];
   delete require.cache[PATHS_PATH];
   fs.rmSync(testDir, { recursive: true, force: true });

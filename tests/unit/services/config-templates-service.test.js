@@ -153,9 +153,9 @@ beforeEach(() => {
     }
   };
 
-  require.cache[require.resolve('../../../src/server/services/agents-service')] = {
-    id: require.resolve('../../../src/server/services/agents-service'),
-    filename: require.resolve('../../../src/server/services/agents-service'),
+  require.cache[require.resolve('../../../src/platforms/agents-service')] = {
+    id: require.resolve('../../../src/platforms/agents-service'),
+    filename: require.resolve('../../../src/platforms/agents-service'),
     loaded: true,
     exports: {
       AgentsService: class {
@@ -166,9 +166,9 @@ beforeEach(() => {
     }
   };
 
-  require.cache[require.resolve('../../../src/server/services/commands-service')] = {
-    id: require.resolve('../../../src/server/services/commands-service'),
-    filename: require.resolve('../../../src/server/services/commands-service'),
+  require.cache[require.resolve('../../../src/platforms/commands-service')] = {
+    id: require.resolve('../../../src/platforms/commands-service'),
+    filename: require.resolve('../../../src/platforms/commands-service'),
     loaded: true,
     exports: {
       CommandsService: class {
@@ -322,8 +322,8 @@ afterEach(() => {
     '../../../src/server/services/config-templates-service',
     '../../../src/server/services/project-config-service',
     '../../../src/config/paths',
-    '../../../src/server/services/agents-service',
-    '../../../src/server/services/commands-service',
+    '../../../src/platforms/agents-service',
+    '../../../src/platforms/commands-service',
     '../../../src/server/services/skill-service',
     '../../../src/server/services/plugins-service',
     '../../../src/server/services/format-converter',

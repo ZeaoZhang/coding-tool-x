@@ -131,13 +131,13 @@ beforeEach(() => {
     exports: { fetchModelsFromProvider, probeModelAvailability }
   };
 
-  delete require.cache[require.resolve('../../../src/server/api/opencode-channels')];
-  routerFactory = require('../../../src/server/api/opencode-channels');
+  delete require.cache[require.resolve('../../../src/platforms/drivers/opencode/api-channels')];
+  routerFactory = require('../../../src/platforms/drivers/opencode/api-channels');
 });
 
 afterEach(() => {
   [
-    '../../../src/server/api/opencode-channels',
+    '../../../src/platforms/drivers/opencode/api-channels',
     '../../../src/platforms/drivers/opencode/channels-implementation',
     '../../../src/platforms/drivers/opencode/sessions-implementation',
     '../../../src/server/services/channel-scheduler',
@@ -173,8 +173,8 @@ describe('opencode-channels api', () => {
     expect(res._body.channels).toHaveLength(1);
 
     isOpenCodeInstalled.mockReturnValue(false);
-    delete require.cache[require.resolve('../../../src/server/api/opencode-channels')];
-    router = require('../../../src/server/api/opencode-channels')({});
+    delete require.cache[require.resolve('../../../src/platforms/drivers/opencode/api-channels')];
+    router = require('../../../src/platforms/drivers/opencode/api-channels')({});
     handler = findHandler(router, 'get', '/');
     res = makeRes();
     handler({}, res);

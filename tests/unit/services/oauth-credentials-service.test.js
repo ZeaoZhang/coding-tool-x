@@ -59,7 +59,7 @@ function stubModules() {
   clearNativeOAuthMock = vi.fn();
   disableNativeOAuthCredentialMock = vi.fn();
   applyOAuthCredentialMock = vi.fn();
-  const nativeAdapterPath = require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters');
+  const nativeAdapterPath = require.resolve('../../../src/platforms/native-oauth-adapters');
   require.cache[nativeAdapterPath] = {
     id: nativeAdapterPath,
     filename: nativeAdapterPath,
@@ -228,16 +228,16 @@ function stubModules() {
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oauth-creds-'));
   stubModules();
-  delete require.cache[require.resolve('../../../src/server/services/oauth-credentials-service')];
-  service = require('../../../src/server/services/oauth-credentials-service');
+  delete require.cache[require.resolve('../../../src/platforms/oauth-credentials-service')];
+  service = require('../../../src/platforms/oauth-credentials-service');
 });
 
 afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
   [
-    '../../../src/server/services/oauth-credentials-service',
+    '../../../src/platforms/oauth-credentials-service',
     '../../../src/config/paths',
-    '../../../src/platforms/drivers/shared/native-oauth-adapters',
+    '../../../src/platforms/native-oauth-adapters',
     '../../../src/server/services/oauth-utils',
     '../../../src/platforms/drivers/claude/native-config-implementation',
     '../../../src/platforms/drivers/codex/native-config-implementation',

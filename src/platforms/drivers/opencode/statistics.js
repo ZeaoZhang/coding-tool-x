@@ -1,6 +1,6 @@
 'use strict';
 
-const { createCapabilityDriver } = require('../shared/capability-driver');
+const { createCapabilityDriver } = require('../../../shared/capability-driver');
 
 function createDriver(context = {}) {
   return createCapabilityDriver({

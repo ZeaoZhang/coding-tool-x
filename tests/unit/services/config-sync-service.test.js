@@ -26,13 +26,13 @@ beforeEach(() => {
     }
   };
 
-  delete require.cache[require.resolve('../../../src/server/services/config-sync-service')];
-  ({ ConfigSyncService } = require('../../../src/server/services/config-sync-service'));
+  delete require.cache[require.resolve('../../../src/platforms/drivers/claude/config-sync')];
+  ({ ConfigSyncService } = require('../../../src/platforms/drivers/claude/config-sync'));
 });
 
 afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
-  delete require.cache[require.resolve('../../../src/server/services/config-sync-service')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/claude/config-sync')];
   delete require.cache[require.resolve('../../../src/config/paths')];
 });
 

@@ -14,7 +14,7 @@ const { createDecodedStream } = require('../../../server/services/response-decod
 const { getEffectiveApiKey } = require('./channels-implementation');
 const { persistProxyRequestSnapshot } = require('../../../server/services/request-logger');
 const { publishUsageLog, publishFailureLog } = require('../../../server/services/proxy-log-helper');
-const { redirectModel: redirectModelBase, resolveTargetUrl } = require('../../../server/services/base/proxy-utils');
+const { redirectModel: redirectModelBase, resolveTargetUrl } = require('../../../shared/proxy-utils');
 const {
   parseSSEUsage,
   parseNonStreamingUsage,
@@ -22,7 +22,7 @@ const {
   parseSSEEventText,
   mergeUsageIntoTokenData,
   createTokenData
-} = require('../../../server/services/base/response-usage-parser');
+} = require('../../../shared/response-usage-parser');
 const { attachServerShutdownHandling, expediteServerShutdown } = require('../../../server/services/server-shutdown');
 
 let proxyServer = null;

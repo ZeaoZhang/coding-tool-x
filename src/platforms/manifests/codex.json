@@ -37,6 +37,7 @@
   "statisticsPath": "/api/codex/statistics",
   "promptFile": "AGENTS.md",
   "promptLabel": "Codex",
+  "api": { "prefix": "codex" },
   "capabilities": {
     "projects": "legacy:codex",
     "sessions": "legacy:codex",
@@ -45,6 +46,8 @@
     "statistics": "legacy:codex",
     "resourceSync": "legacy:codex",
     "nativeConfig": "legacy:codex",
+    "projectConfig": "legacy:codex",
+    "api": "legacy:codex",
     "mcp": "legacy:codex",
     "prompts": "legacy:codex"
   }

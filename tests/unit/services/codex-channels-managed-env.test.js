@@ -8,7 +8,7 @@ const PATHS_PATH = require.resolve('../../../src/config/paths');
 const CODEX_CONFIG_PATH = require.resolve('../../../src/platforms/drivers/codex/config');
 const SETTINGS_MANAGER_PATH = require.resolve('../../../src/platforms/drivers/codex/native-config-implementation');
 const ENV_MANAGER_PATH = require.resolve('../../../src/platforms/drivers/codex/env-manager');
-const NATIVE_OAUTH_PATH = require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters');
+const NATIVE_OAUTH_PATH = require.resolve('../../../src/platforms/native-oauth-adapters');
 const MODULE_PATH = require.resolve('../../../src/platforms/drivers/codex/channels-implementation');
 
 let testDir;

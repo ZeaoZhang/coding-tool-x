@@ -65,7 +65,7 @@ beforeEach(() => {
     executeSync: vi.fn(() => ({ copied: 3, skipped: 0 }))
   };
 
-  const servicePath = require.resolve('../../../src/server/services/config-sync-service');
+  const servicePath = require.resolve('../../../src/platforms/drivers/claude/config-sync');
   function ConfigSyncServiceMock() {
     return configSyncService;
   }
@@ -82,7 +82,7 @@ beforeEach(() => {
 afterEach(() => {
   [
     '../../../src/server/api/config-sync',
-    '../../../src/server/services/config-sync-service'
+    '../../../src/platforms/drivers/claude/config-sync'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];

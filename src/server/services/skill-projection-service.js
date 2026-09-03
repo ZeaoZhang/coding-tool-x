@@ -5,8 +5,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { NATIVE_PATHS, PATHS } = require('../../config/paths');
 const { getOmpPaths } = require('../../platforms/drivers/omp/config');
-const { normalizeSafeRelativePath, resolveInsideRoot } = require('./config-artifact-paths');
-const { assertNoSymlinkComponents } = require('./project-config-adapters/shared');
+const { normalizeSafeRelativePath, resolveInsideRoot } = require('../../shared/config-artifact-paths');
+const { assertNoSymlinkComponents } = require('../../shared/project-config');
 
 const SUPPORTED_MODES = new Set(['native-copy', 'native-filter']);
 

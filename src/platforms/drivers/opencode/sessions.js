@@ -1,6 +1,6 @@
 'use strict';
 
-const { createCapabilityDriver } = require('../shared/capability-driver');
+const { createCapabilityDriver } = require('../../../shared/capability-driver');
 
 function createDriver(context = {}) {
   return createCapabilityDriver({
@@ -9,7 +9,33 @@ function createDriver(context = {}) {
     capability: 'sessions',
     servicePath: './opencode/sessions-implementation',
     localServicePath: '../opencode/sessions-implementation',
-    methods: {"listSessions":"getSessionsByProjectId","recent":"getRecentSessions","search":"searchSessions","delete":"deleteSession","fork":"forkSession","status":"getSessionStatus","messages":"getSessionMessages"}
+    methods: {
+      getProjects: 'getProjects',
+      recent: 'getRecentSessions',
+      search: 'searchSessions',
+      getSessionById: 'getSessionById',
+      delete: 'deleteSession',
+      fork: 'forkSession',
+      saveSessionOrder: 'saveSessionOrder',
+      status: 'getSessionStatus',
+      isAvailable: 'isOpenCodeInstalled'
+    },
+    customMethods: {
+      listSessions: (service, ...args) => {
+        const method = service.getSessionsByProjectId || service.getSessionsByProject;
+        if (typeof method !== 'function') return undefined;
+        return method.apply(service, args);
+      },
+      messages: (service, sessionId) => {
+        if (typeof service.getSessionMessages === 'function') {
+          return service.getSessionMessages(sessionId);
+        }
+        const session = typeof service.getSessionById === 'function'
+          ? service.getSessionById(sessionId)
+          : null;
+        return session?.messages || [];
+      }
+    }
   });
 }
 

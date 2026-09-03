@@ -10,17 +10,22 @@ const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
 const yaml = require('js-yaml');
 const configTemplatesService = require('./config-templates-service');
-const channelsService = require('../../platforms/drivers/claude/channels-implementation');
-const codexChannelsService = require('../../platforms/drivers/codex/channels-implementation');
-const geminiChannelsService = require('../../platforms/drivers/gemini/channels-implementation');
-const opencodeChannelsService = require('../../platforms/drivers/opencode/channels-implementation');
-const ompChannelsService = require('../../platforms/drivers/omp/channels-implementation');
-const { AgentsService } = require('./agents-service');
-const { CommandsService } = require('./commands-service');
+const { AgentsService } = require('../../platforms/agents-service');
+const { CommandsService } = require('../../platforms/commands-service');
 const { SkillService } = require('./skill-service');
 const { PluginsService } = require('./plugins-service');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 const platformRuntime = require('../../platforms/runtime');
+
+function getChannelDriver(platform) {
+  return platformRuntime.getPlatformRuntime().getDriver(platform, 'channels');
+}
+
+const channelsService = getChannelDriver('claude');
+const codexChannelsService = getChannelDriver('codex');
+const geminiChannelsService = getChannelDriver('gemini');
+const opencodeChannelsService = getChannelDriver('opencode');
+const ompChannelsService = getChannelDriver('omp');
 
 const CONFIG_VERSION = '1.4.0';
 const SKILL_FILE_ENCODING = 'base64';
@@ -146,7 +151,7 @@ function getOpenCodeConfigPaths() {
 
 function getOpenCodeNotificationPluginPath() {
   try {
-    const { getOpenCodeManagedPluginPath } = require('./notification-hooks');
+    const { getOpenCodeManagedPluginPath } = require('../../platforms/notification-hooks');
     return typeof getOpenCodeManagedPluginPath === 'function' ? getOpenCodeManagedPluginPath() : '';
   } catch (err) {
     return '';
@@ -760,7 +765,7 @@ function syncImportedChannelsToNativeConfigs(importChannelsByType, nativeConfigs
     if (!hasNativeConfigFor('claude')) {
       const primaryClaudeChannel = pickPrimaryChannel(importChannelsByType.claude);
       const persistedClaudeChannel = findMatchingPersistedChannel(
-        channelsService.getAllChannels?.() || [],
+        readDriverChannels(channelsService),
         primaryClaudeChannel,
         [
           (channel, imported) => channel.name === imported.name && channel.baseUrl === imported.baseUrl
@@ -768,7 +773,7 @@ function syncImportedChannelsToNativeConfigs(importChannelsByType, nativeConfigs
       );
       if (persistedClaudeChannel?.id) {
         ensureDir(path.dirname(NATIVE_PATHS.claude.settings));
-        channelsService.applyChannelToSettings(persistedClaudeChannel.id);
+        channelsService.applyNativeConfig(persistedClaudeChannel.id);
       }
     }
   } catch (err) {
@@ -777,7 +782,7 @@ function syncImportedChannelsToNativeConfigs(importChannelsByType, nativeConfigs
 
   try {
     if (!hasNativeConfigFor('codex') && (importChannelsByType.codex || []).length > 0) {
-      codexChannelsService.writeCodexConfigForMultiChannel(importChannelsByType.codex || []);
+      codexChannelsService.writeMultiChannelConfig(importChannelsByType.codex || []);
     }
   } catch (err) {
     console.warn('[ConfigImport] Codex native sync fallback failed:', err.message);
@@ -787,14 +792,14 @@ function syncImportedChannelsToNativeConfigs(importChannelsByType, nativeConfigs
     if (!hasNativeConfigFor('gemini')) {
       const primaryGeminiChannel = pickPrimaryChannel(importChannelsByType.gemini);
       const persistedGeminiChannel = findMatchingPersistedChannel(
-        geminiChannelsService.getChannels?.().channels || [],
+        readDriverChannels(geminiChannelsService),
         primaryGeminiChannel,
         [
           (channel, imported) => channel.name === imported.name && channel.baseUrl === imported.baseUrl
         ]
       );
       if (persistedGeminiChannel?.id) {
-        geminiChannelsService.applyChannelToSettings(persistedGeminiChannel.id);
+        geminiChannelsService.applyNativeConfig(persistedGeminiChannel.id);
       }
     }
   } catch (err) {
@@ -1783,13 +1788,20 @@ function writeTextFile(baseDir, relativePath, content, overwrite) {
   return 'success';
 }
 
+function readDriverChannels(driver) {
+  const result = typeof driver?.list === 'function' ? driver.list() : null;
+  const data = result?.status === 'ok' ? result.data : result;
+  return Array.isArray(data) ? data : data?.channels || [];
+}
+
 function getAllChannelsByType() {
-  const claude = channelsService.getAllChannels() || [];
-  const codex = codexChannelsService.getChannels()?.channels || [];
-  const gemini = geminiChannelsService.getChannels()?.channels || [];
-  const opencode = opencodeChannelsService.getChannels()?.channels || [];
-  const omp = ompChannelsService.getChannels()?.channels || [];
-  return { claude, codex, gemini, opencode, omp };
+  return {
+    claude: readDriverChannels(channelsService),
+    codex: readDriverChannels(codexChannelsService),
+    gemini: readDriverChannels(geminiChannelsService),
+    opencode: readDriverChannels(opencodeChannelsService),
+    omp: readDriverChannels(ompChannelsService)
+  };
 }
 
 /**
@@ -2032,13 +2044,11 @@ async function importConfigs(importData, options = {}) {
     }
 
     // 导入频道配置（兼容旧结构 channels 和新结构 channelsByType）
-    const importTypedChannels = (type, service, createChannel, findExisting = null) => {
+    const importTypedChannels = (type, driver, findExisting = null) => {
       const sourceChannels = importChannelsByType[type];
       for (const channel of sourceChannels) {
         try {
-          const existingChannels = service.getChannels
-            ? (service.getChannels()?.channels || [])
-            : (service.getAllChannels?.() || []);
+          const existingChannels = readDriverChannels(driver);
           const existing = typeof findExisting === 'function'
             ? findExisting(existingChannels, channel)
             : existingChannels.find(c => c.id === channel.id);
@@ -2049,9 +2059,9 @@ async function importConfigs(importData, options = {}) {
           }
 
           if (existing && overwrite) {
-            service.updateChannel(existing.id, { ...channel, id: existing.id });
+            driver.update(existing.id, { ...channel, id: existing.id });
           } else {
-            createChannel(channel);
+            driver.create(channel);
           }
           results.channels.success++;
         } catch (err) {
@@ -2061,51 +2071,34 @@ async function importConfigs(importData, options = {}) {
       }
     };
 
-    importTypedChannels('claude', channelsService, channel => {
-      const { name, baseUrl, apiKey, websiteUrl, ...extraConfig } = channel;
-      channelsService.createChannel(name, baseUrl, apiKey, websiteUrl, extraConfig);
-    }, (existingChannels, channel) => existingChannels.find(c => c.id === channel.id));
+    importTypedChannels('claude', channelsService, (existingChannels, channel) =>
+      existingChannels.find(c => c.id === channel.id));
 
-    importTypedChannels('codex', codexChannelsService, channel => {
-      const {
-        name,
-        providerKey,
-        baseUrl,
-        apiKey,
-        wireApi,
-        ...extraConfig
-      } = channel;
-      codexChannelsService.createChannel(name, providerKey, baseUrl, apiKey, wireApi, extraConfig);
-    }, (existingChannels, channel) => existingChannels.find(c =>
-      (channel.id && c.id === channel.id) ||
-      (channel.providerKey && c.providerKey === channel.providerKey)
-    ));
+    importTypedChannels('codex', codexChannelsService, (existingChannels, channel) =>
+      existingChannels.find(c =>
+        (channel.id && c.id === channel.id) ||
+        (channel.providerKey && c.providerKey === channel.providerKey)
+      ));
 
-    importTypedChannels('gemini', geminiChannelsService, channel => {
-      const { name, baseUrl, apiKey, model, ...extraConfig } = channel;
-      geminiChannelsService.createChannel(name, baseUrl, apiKey, model, extraConfig);
-    }, (existingChannels, channel) => existingChannels.find(c =>
-      (channel.id && c.id === channel.id) ||
-      (channel.name && c.name === channel.name)
-    ));
+    importTypedChannels('gemini', geminiChannelsService, (existingChannels, channel) =>
+      existingChannels.find(c =>
+        (channel.id && c.id === channel.id) ||
+        (channel.name && c.name === channel.name)
+      ));
 
-    importTypedChannels('opencode', opencodeChannelsService, channel => {
-      const { name, baseUrl, apiKey, ...extraConfig } = channel;
-      opencodeChannelsService.createChannel(name, baseUrl, apiKey, extraConfig);
-    }, (existingChannels, channel) => existingChannels.find(c =>
-      (channel.id && c.id === channel.id) ||
-      (channel.providerKey && c.providerKey === channel.providerKey) ||
-      (channel.name && channel.baseUrl && c.name === channel.name && c.baseUrl === channel.baseUrl)
-    ));
+    importTypedChannels('opencode', opencodeChannelsService, (existingChannels, channel) =>
+      existingChannels.find(c =>
+        (channel.id && c.id === channel.id) ||
+        (channel.providerKey && c.providerKey === channel.providerKey) ||
+        (channel.name && channel.baseUrl && c.name === channel.name && c.baseUrl === channel.baseUrl)
+      ));
 
-    importTypedChannels('omp', ompChannelsService, channel => {
-      const { name, baseUrl, apiKey, ...extraConfig } = channel;
-      ompChannelsService.createChannel(name, baseUrl, apiKey, extraConfig);
-    }, (existingChannels, channel) => existingChannels.find(c =>
-      (channel.id && c.id === channel.id) ||
-      (channel.providerKey && c.providerKey === channel.providerKey) ||
-      (channel.name && channel.baseUrl && c.name === channel.name && c.baseUrl === channel.baseUrl)
-    ));
+    importTypedChannels('omp', ompChannelsService, (existingChannels, channel) =>
+      existingChannels.find(c =>
+        (channel.id && c.id === channel.id) ||
+        (channel.providerKey && c.providerKey === channel.providerKey) ||
+        (channel.name && channel.baseUrl && c.name === channel.name && c.baseUrl === channel.baseUrl)
+      ));
     if ((importChannelsByType.omp || []).length > 0 && typeof ompChannelsService.syncManagedProviderExtension === 'function') {
       ompChannelsService.syncManagedProviderExtension();
     }

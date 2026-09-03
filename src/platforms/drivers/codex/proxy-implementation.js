@@ -19,8 +19,8 @@ const {
   resolveTargetUrl,
   isChatCompletionsPath,
   ensureOpenAiStreamUsage
-} = require('../../../server/services/base/proxy-utils');
-const { parseSSEUsage, parseNonStreamingUsage, mergeUsageIntoTokenData, createTokenData } = require('../../../server/services/base/response-usage-parser');
+} = require('../../../shared/proxy-utils');
+const { parseSSEUsage, parseNonStreamingUsage, mergeUsageIntoTokenData, createTokenData } = require('../../../shared/response-usage-parser');
 const { attachServerShutdownHandling, expediteServerShutdown } = require('../../../server/services/server-shutdown');
 
 let proxyServer = null;
@@ -53,7 +53,7 @@ const PRICING = {
 
 const CODEX_BASE_PRICING = DEFAULT_CONFIG.pricing.codex;
 
-// detectModelTier, redirectModel, resolveTargetUrl imported from services/base/proxy-utils
+// detectModelTier, redirectModel, resolveTargetUrl imported from shared/proxy-utils
 
 // resolveCodexTarget replaced by resolveTargetUrl from proxy-utils
 const resolveCodexTarget = resolveTargetUrl;

@@ -25,7 +25,7 @@ const {
   redirectModel,
   resolveTargetUrl,
   ensureOpenAiStreamUsage
-} = require('../../../server/services/base/proxy-utils');
+} = require('../../../shared/proxy-utils');
 const { attachServerShutdownHandling, expediteServerShutdown } = require('../../../server/services/server-shutdown');
 const { buildCodexTargetUrl, createCodexRequest } = require('../codex/wire');
 const {
@@ -33,7 +33,7 @@ const {
   parseNonStreamingUsage,
   mergeUsageIntoTokenData,
   createTokenData
-} = require('../../../server/services/base/response-usage-parser');
+} = require('../../../shared/response-usage-parser');
 const { createClaudeRequest, buildClaudeTargetUrl, buildClaudeCountTokensTargetUrl, buildClaudeCountTokensHeaders } = require('../claude/wire');
 const { createGeminiRequest, buildGeminiTargetUrl, shouldUseGeminiCliFormat } = require('../gemini/wire');
 
@@ -73,7 +73,7 @@ const CLAUDE_USER_ID_FULL_RE = /^user_[0-9a-f]{64}_account__session_[a-z0-9._-]+
 let cachedClaudeAccountId = '';
 let cachedClaudeUserId = '';
 
-// detectModelTier, redirectModel, resolveTargetUrl imported from services/base/proxy-utils
+// detectModelTier, redirectModel, resolveTargetUrl imported from shared/proxy-utils
 const resolveOpenCodeTarget = resolveTargetUrl;
 
 /**

@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('path');
+const { invokeCapabilityDriver } = require('../api/capability-driver');
 
 function totalSizeOf(sessions) {
   return sessions.reduce((sum, session) => sum + (Number(session.size) || 0), 0);
@@ -12,13 +13,18 @@ function getAliases() {
 }
 
 async function buildClaudePayload(projectName, config, options = {}) {
-  const {
-    getSessionsForProject,
-    parseRealProjectPath
-  } = require('../../platforms/drivers/claude/sessions-implementation');
-
-  const result = await getSessionsForProject(config, projectName, { force: options.force === true });
-  const { fullPath, projectName: displayName } = parseRealProjectPath(projectName);
+  const result = await invokeCapabilityDriver(
+    'claude',
+    'sessions',
+    'listSessions',
+    [config, projectName, { force: options.force === true }]
+  );
+  const { fullPath, projectName: displayName } = invokeCapabilityDriver(
+    'claude',
+    'sessions',
+    'parseRealProjectPath',
+    [projectName]
+  );
 
   return {
     sessions: result.sessions,
@@ -33,8 +39,12 @@ async function buildClaudePayload(projectName, config, options = {}) {
 }
 
 async function buildCodexPayload(projectName, options = {}) {
-  const { getSessionsByProject } = require('../../platforms/drivers/codex/sessions-implementation');
-  const sessions = await getSessionsByProject(projectName, { force: options.force === true });
+  const sessions = await invokeCapabilityDriver(
+    'codex',
+    'sessions',
+    'listSessions',
+    [projectName, { force: options.force === true }]
+  );
 
   return {
     sessions,
@@ -50,9 +60,18 @@ async function buildCodexPayload(projectName, options = {}) {
 }
 
 async function buildGeminiPayload(projectHash, options = {}) {
-  const { getProjectSessions, getProjectPath } = require('../../platforms/drivers/gemini/sessions-implementation');
-  const sessions = await getProjectSessions(projectHash, { force: options.force === true });
-  const realPath = getProjectPath(projectHash, { force: options.force === true });
+  const sessions = await invokeCapabilityDriver(
+    'gemini',
+    'sessions',
+    'listSessions',
+    [projectHash, { force: options.force === true }]
+  );
+  const realPath = await invokeCapabilityDriver(
+    'gemini',
+    'sessions',
+    'getProjectPath',
+    [projectHash, { force: options.force === true }]
+  );
   const displayName = realPath ? path.basename(realPath) : `Project ${projectHash.substring(0, 8)}`;
 
   return {
@@ -68,11 +87,18 @@ async function buildGeminiPayload(projectHash, options = {}) {
   };
 }
 
-function buildOpenCodePayload(projectName, options = {}) {
-  const { getSessionsByProject, getProjects } = require('../../platforms/drivers/opencode/sessions-implementation');
-  const sessions = getSessionsByProject(projectName, { force: options.force === true });
+async function buildOpenCodePayload(projectName, options = {}) {
+  const sessions = await invokeCapabilityDriver(
+    'opencode',
+    'sessions',
+    'listSessions',
+    [projectName, { force: options.force === true }]
+  );
+  const projects = await invokeCapabilityDriver('opencode', 'sessions', 'getProjects', [{
+    force: options.force === true
+  }]);
   const firstDirectory = sessions.find(session => session.directory)?.directory;
-  const project = firstDirectory ? null : getProjects({ force: options.force === true }).find(p => p.name === projectName);
+  const project = firstDirectory ? null : projects.find(p => p.name === projectName);
   const fullPath = firstDirectory || project?.fullPath || projectName;
 
   return {
@@ -89,12 +115,18 @@ function buildOpenCodePayload(projectName, options = {}) {
 }
 
 async function buildOmpPayload(projectName, options = {}) {
-  const { getProjects, getSessionsByProject } = require('../../platforms/drivers/omp/sessions-implementation');
-  const sessions = await getSessionsByProject(projectName, { force: options.force === true });
+  const sessions = await invokeCapabilityDriver(
+    'omp',
+    'sessions',
+    'listSessions',
+    [projectName, { force: options.force === true }]
+  );
   const firstDirectory = sessions.find(session => session.directory)?.directory;
   let project = null;
   try {
-    project = (await getProjects({ force: options.force === true })).find(p => p.name === projectName) || null;
+    project = (await invokeCapabilityDriver('omp', 'sessions', 'getProjects', [{
+      force: options.force === true
+    }])).find(p => p.name === projectName) || null;
   } catch {
     project = null;
   }

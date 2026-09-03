@@ -13,7 +13,7 @@ function createDriver({ requireImpl, ...context } = {}) {
     capability: 'nativeConfig',
     ...context,
     ...settings,
-    clearNativeOAuth: () => require('../shared/native-oauth-adapters').clearNativeOAuth('codex'),
+    clearNativeOAuth: () => require('../../native-oauth-adapters').clearNativeOAuth('codex'),
     clearActiveChannelMarker() {
       try {
         fs.unlinkSync(PATHS.activeChannel.codex);

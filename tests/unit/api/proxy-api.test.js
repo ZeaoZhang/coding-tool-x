@@ -133,7 +133,7 @@ beforeEach(() => {
     }
   };
 
-  const nativeOauthPath = require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters');
+  const nativeOauthPath = require.resolve('../../../src/platforms/native-oauth-adapters');
   require.cache[nativeOauthPath] = {
     id: nativeOauthPath,
     filename: nativeOauthPath,
@@ -175,22 +175,22 @@ beforeEach(() => {
     }
   };
 
-  delete require.cache[require.resolve('../../../src/server/api/proxy')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/claude/api-proxy')];
 });
 
 afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
-  delete require.cache[require.resolve('../../../src/server/api/proxy')];
+  delete require.cache[require.resolve('../../../src/platforms/drivers/claude/api-proxy')];
   delete require.cache[require.resolve('../../../src/platforms/drivers/claude/proxy-implementation')];
   delete require.cache[require.resolve('../../../src/platforms/drivers/claude/native-config-implementation')];
   delete require.cache[require.resolve('../../../src/platforms/drivers/claude/channels-implementation')];
-  delete require.cache[require.resolve('../../../src/platforms/drivers/shared/native-oauth-adapters')];
+  delete require.cache[require.resolve('../../../src/platforms/native-oauth-adapters')];
   delete require.cache[require.resolve('../../../src/server/websocket-server')];
   delete require.cache[require.resolve('../../../src/config/paths')];
 });
 
 function buildApp() {
-  const router = require('../../../src/server/api/proxy');
+  const router = require('../../../src/platforms/drivers/claude/api-proxy');
   const app = express();
   app.use(express.json());
   app.use('/', router);

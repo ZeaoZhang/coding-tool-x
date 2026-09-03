@@ -1,4 +1,9 @@
 'use strict';
-const { createCapabilityDriver } = require('../shared/capability-driver');
-function createDriver(context = {}) { return createCapabilityDriver({ ...context, platform: 'codex', capability: 'mcp', servicePath: '../../server/services/mcp-service', localServicePath: '../../../server/services/mcp-service', methods: { read: 'readPlatformMcpConfig', write: 'writePlatformMcpConfig', remove: 'removePlatformMcpServer', sync: 'syncPlatformMcpServer', import: 'importPlatformMcpServers', export: 'exportPlatformMcpServers' }, prependPlatform: true }); }
+
+const { createMcpDriver } = require('../shared/mcp');
+
+function createDriver(context = {}) {
+  return createMcpDriver({ ...context, platform: 'codex' });
+}
+
 module.exports = { createDriver };

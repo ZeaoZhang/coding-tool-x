@@ -13,6 +13,7 @@ let getCodexChannelsMock;
 let getGeminiChannelsMock;
 let getOpenCodeChannelsMock;
 let getOmpChannelsMock;
+let getDriverMock;
 
 beforeEach(() => {
   serviceExports = {
@@ -40,10 +41,34 @@ beforeEach(() => {
   getGeminiChannelsMock = vi.fn(() => ({ channels: [{ id: 'gemini-1', enabled: true }] }));
   getOpenCodeChannelsMock = vi.fn(() => ({ channels: [{ id: 'opencode-1', enabled: true }] }));
   getOmpChannelsMock = vi.fn(() => ({ channels: [{ id: 'omp-1', enabled: true }] }));
+  const proxyStatuses = {
+    claude: getProxyStatusMock,
+    codex: getCodexProxyStatusMock,
+    gemini: getGeminiProxyStatusMock,
+    opencode: getOpenCodeProxyStatusMock,
+    omp: getOmpProxyStatusMock
+  };
+  const channelValues = {
+    claude: getClaudeChannelsMock,
+    codex: getCodexChannelsMock,
+    gemini: getGeminiChannelsMock,
+    opencode: getOpenCodeChannelsMock,
+    omp: getOmpChannelsMock
+  };
+  getDriverMock = vi.fn((tool, capability) => capability === 'proxy'
+    ? { status: () => ({ status: 'ok', data: proxyStatuses[tool]() }) }
+    : { list: () => ({ status: 'ok', data: { channels: Array.isArray(channelValues[tool]()) ? channelValues[tool]() : channelValues[tool]().channels } }) });
 
-  require.cache[require.resolve('../../../src/server/services/oauth-credentials-service')] = {
-    id: require.resolve('../../../src/server/services/oauth-credentials-service'),
-    filename: require.resolve('../../../src/server/services/oauth-credentials-service'),
+  require.cache[require.resolve('../../../src/platforms/runtime')] = {
+    id: require.resolve('../../../src/platforms/runtime'),
+    filename: require.resolve('../../../src/platforms/runtime'),
+    loaded: true,
+    exports: { getPlatformRuntime: () => ({ getDriver: getDriverMock }) }
+  };
+
+  require.cache[require.resolve('../../../src/platforms/oauth-credentials-service')] = {
+    id: require.resolve('../../../src/platforms/oauth-credentials-service'),
+    filename: require.resolve('../../../src/platforms/oauth-credentials-service'),
     loaded: true,
     exports: serviceExports
   };
@@ -132,8 +157,8 @@ beforeEach(() => {
 afterEach(() => {
   [
     '../../../src/server/api/oauth-credentials',
-    '../../../src/server/services/oauth-credentials-service',
-    '../../../src/server/websocket-server',
+    '../../../src/platforms/oauth-credentials-service',
+    '../../../src/platforms/runtime',
     '../../../src/platforms/drivers/claude/proxy-implementation',
     '../../../src/platforms/drivers/codex/proxy-implementation',
     '../../../src/platforms/drivers/gemini/proxy-implementation',

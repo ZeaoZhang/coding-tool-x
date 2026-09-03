@@ -82,7 +82,7 @@ beforeEach(() => {
   GLOBAL_CACHE_DELETE.mockReset();
   SET_ALIAS_MOCK.mockReset();
   delete require.cache[SESSION_INDEX_PATH];
-  delete require.cache[require.resolve('../../../src/server/services/session-history-adapters')];
+  delete require.cache[require.resolve('../../../src/platforms/session-history-adapters')];
   delete require.cache[require.resolve('../../../src/platforms/drivers/claude/session-history-adapter')];
   delete require.cache[SESSIONS_PATH];
 });
@@ -91,7 +91,7 @@ afterEach(() => {
   if (require.cache[SESSION_INDEX_PATH]) require(SESSION_INDEX_PATH).closeSessionHistoryIndex();
   delete require.cache[SESSIONS_PATH];
   delete require.cache[SESSION_INDEX_PATH];
-  delete require.cache[require.resolve('../../../src/server/services/session-history-adapters')];
+  delete require.cache[require.resolve('../../../src/platforms/session-history-adapters')];
   delete require.cache[require.resolve('../../../src/platforms/drivers/claude/session-history-adapter')];
   try { fs.rmSync(testDir, { recursive: true, force: true }); } catch (_) {}
 });

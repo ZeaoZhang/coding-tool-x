@@ -4,7 +4,19 @@ const crypto = require('crypto');
 const { getAllSessions, parseSessionInfoFast } = require('../../../utils/session');
 const { loadAliases, setAlias } = require('../../../server/services/alias');
 const { globalCache, CacheKeys } = require('../../../server/services/enhanced-cache');
-const { listProjects: idxListProjects, listSessions: idxListSessions, getRecentSessions: idxGetRecent, searchSessions: idxSearch } = require('../../../server/services/session-history-index');
+let sessionHistoryIndex = null;
+
+function configure({ sessionHistoryIndex: index } = {}) {
+  sessionHistoryIndex = index || null;
+}
+
+function getSessionHistoryIndex() {
+  if (!sessionHistoryIndex) {
+    const { getDefaultDependencies } = require('../../../platforms/runtime');
+    sessionHistoryIndex = getDefaultDependencies().sessionHistoryIndex;
+  }
+  return sessionHistoryIndex;
+}
 const { PATHS, NATIVE_PATHS } = require('../../../config/paths');
 
 const CLAUDE_PROJECTS_DIR = NATIVE_PATHS.claude.projects;
@@ -102,12 +114,12 @@ function sliceClaudeSessionContentByUserMessage(content, afterUserMessageNumber)
 // ===== Read-side: all project/list/session/recent/search delegate to session-history-index =====
 
 async function getProjects(config) {
-  const indexed = await idxListProjects('claude');
+  const indexed = await getSessionHistoryIndex().listProjects('claude');
   return indexed.map(p => p.name);
 }
 
 async function getProjectsWithStats(config, options = {}) {
-  return idxListProjects('claude');
+  return getSessionHistoryIndex().listProjects('claude');
 }
 
 // ===== Path resolution helpers (kept for mutation/conversion paths) =====
@@ -230,7 +242,7 @@ function extractCwdFromSessionHeader(sessionFile) {
 
 async function getProjectAndSessionCounts(config) {
   try {
-    const projects = await idxListProjects('claude');
+    const projects = await getSessionHistoryIndex().listProjects('claude');
     let sessionCount = 0;
     for (const p of projects) sessionCount += p.sessionCount || 0;
     return { projectCount: projects.length, sessionCount };
@@ -242,7 +254,7 @@ async function getProjectAndSessionCounts(config) {
 // ===== Sessions for project: index + saved order + fork relations =====
 
 async function getSessionsForProject(config, projectName, options = {}) {
-  const indexed = await idxListSessions('claude', projectName);
+  const indexed = await getSessionHistoryIndex().listSessions('claude', projectName);
   const forkRelations = getForkRelations();
   const savedOrder = getSessionOrder(projectName);
 
@@ -344,7 +356,7 @@ function deleteProject(config, projectName) {
 // ===== Search: delegates to index =====
 
 async function searchSessions(config, projectName, keyword, contextLength = 15) {
-  const results = await idxSearch('claude', keyword, { projectName, contextLength });
+  const results = await getSessionHistoryIndex().searchSessions('claude', keyword, { projectName, contextLength });
   const aliases = loadAliases();
   return results.map(r => ({
     sessionId: r.sessionId,
@@ -355,7 +367,7 @@ async function searchSessions(config, projectName, keyword, contextLength = 15) 
 }
 
 async function getRecentSessions(config, limit = 5) {
-  const indexed = await idxGetRecent('claude', limit);
+  const indexed = await getSessionHistoryIndex().getRecentSessions('claude', limit);
   const aliases = loadAliases();
   const forkRelations = getForkRelations();
   return indexed.map(s => ({
@@ -377,7 +389,7 @@ async function searchSessionsAcrossProjects(config, keyword, contextLength = 35)
   const allResults = [];
 
   try {
-    const claudeResults = await idxSearch('claude', keyword, { contextLength });
+    const claudeResults = await getSessionHistoryIndex().searchSessions('claude', keyword, { contextLength });
     for (const r of claudeResults) allResults.push({ ...r, channel: 'claude' });
   } catch (_) {}
 
@@ -400,8 +412,25 @@ async function searchSessionsAcrossProjects(config, keyword, contextLength = 35)
   allResults.sort((a, b) => (b.matchCount || 0) - (a.matchCount || 0));
   return allResults;
 }
+function hasActualMessages(sessionFile) {
+  if (!sessionFile || !fs.existsSync(sessionFile)) return false;
+  return fs.readFileSync(sessionFile, 'utf8')
+    .split(/\r?\n/)
+    .some(line => {
+      if (!line.trim()) return false;
+      try {
+        const entry = JSON.parse(line);
+        return entry.type === 'user' || entry.type === 'assistant'
+          || entry.message?.role === 'user' || entry.message?.role === 'assistant';
+      } catch (_) {
+        return false;
+      }
+    });
+}
+
 
 module.exports = {
+  configure,
   getProjects,
   getProjectsWithStats,
   getSessionsForProject,
