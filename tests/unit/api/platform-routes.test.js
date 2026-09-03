@@ -21,24 +21,27 @@ function request(app, url) {
   });
 }
 
-function createProbeRouter(platform) {
-  const router = express.Router();
-  router.get('/probe', (_req, res) => res.json({ platform }));
-  return router;
-}
 
 describe('platform-routes', () => {
   it('mounts configured prefixes and only configured root aliases', async () => {
+    const route = {
+      method: 'GET',
+      path: '/probe',
+      capability: 'probe',
+      operation: 'probe',
+      request: 'default',
+      response: 'default'
+    };
     const registry = {
       list: () => [
-        { key: 'claude', api: { prefix: 'claude', rootAlias: true, rootAliasPaths: ['probe'] } },
-        { key: 'codex', api: { prefix: 'codex' } }
+        { key: 'claude', capabilities: { probe: 'fake-probe' }, api: { prefix: 'claude', rootAlias: true, rootAliasPaths: ['probe'], routes: [route] } },
+        { key: 'codex', capabilities: { probe: 'fake-probe' }, api: { prefix: 'codex', routes: [route] } }
       ]
     };
     const runtime = {
-      getDriver: platform => ({
-        createRouter: () => createProbeRouter(platform)
-      })
+      getDriver: (_platform, capability) => capability === 'probe'
+        ? { probe: async context => ({ status: 'ok', data: { platform: context.platform } }) }
+        : null
     };
     const app = express();
     app.use('/api', createPlatformApiRouter({ registry, runtime }));

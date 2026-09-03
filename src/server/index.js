@@ -21,6 +21,7 @@ const {
 const { createApiRequestLogger } = require('./services/request-logger');
 const { inspectWebBuildState, ensureWebDistReady } = require('./services/web-build');
 const { ensureHttpsCredentials } = require('./services/https-cert');
+const notificationHooks = require('../platforms/notification-hooks');
 
 function getInquirer() {
   return require('inquirer');
@@ -177,17 +178,14 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
     message: 'Skill/MCP/project configuration requires same-origin access.'
   }));
 
-  // Registry-backed platform catalog and config-driven platform API routes
-  const { getPlatformRegistry, getPlatformRuntime } = require('../platforms/runtime');
-  const platformRegistry = getPlatformRegistry();
-  const platformRuntime = getPlatformRuntime();
+  const { getPlatformContext } = require('./platform-context');
+  const platformContext = getPlatformContext({ dependencies: { config } });
   app.use('/api/platforms', require('./api/platforms')({
-    registry: platformRegistry,
-    runtime: platformRuntime
+    ...platformContext,
+    config
   }));
   app.use('/api', require('./api/platform-routes')({
-    registry: platformRegistry,
-    runtime: platformRuntime,
+    ...platformContext,
     config
   }));
 
@@ -207,9 +205,6 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   app.use('/api/env', require('./api/env'));
   app.use('/api/skills', require('./api/skills'));
   app.use('/api/project-config', require('./api/project-config'));
-  const claudeHooks = require('../platforms/drivers/claude/api-hooks');
-  const notificationHooks = require('../platforms/notification-hooks');
-  app.use('/api/claude/hooks', claudeHooks);
   app.use('/api/hooks', require('./api/hooks'));
 
   // 初始化 Claude hooks 默认配置（自动开启任务完成通知）
@@ -237,8 +232,6 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   // 配置注册表 API (集中管理 skills/commands/agents/plugins 的启用/禁用)
   app.use('/api/config-registry', require('./api/config-registry'));
 
-  // 健康检查 API
-  app.use('/api/health-check', require('../platforms/drivers/claude/api-health-check')(config));
 
   // Serve static files in production
   const distPath = path.join(__dirname, '../../dist/web');
@@ -310,7 +303,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
     }
   }
   // 自动恢复代理状态
-  autoRestoreProxies();
+  autoRestoreProxies({ ...platformContext, config });
 
   // 延迟执行健康检查，避免阻塞启动
   setTimeout(() => performStartupHealthCheck(), 2000);

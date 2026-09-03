@@ -177,3 +177,41 @@ test('validates per-scope Skill activation modes and native formats', () => {
   expect(invalid.valid).toBe(false);
   expect(normalizeManifestError(invalid.errors)).toContain('skillActivation');
 });
+test('validates manifest API route descriptors and declared capabilities', () => {
+  const base = {
+    key: 'demo-cli',
+    label: 'Demo CLI',
+    command: 'demo',
+    capabilities: { projects: 'legacy:claude' },
+    api: {
+      prefix: 'demo',
+      routes: [{
+        path: '/projects',
+        method: 'GET',
+        capability: 'projects',
+        operation: 'listProjects',
+        request: 'projects-list',
+        response: 'projects-list'
+      }]
+    }
+  };
+
+  expect(validateManifest(base)).toMatchObject({ valid: true, errors: [] });
+  expect(validateManifest({
+    ...base,
+    api: {
+      ...base.api,
+      routes: [{ ...base.api.routes[0], capability: 'sessions' }]
+    }
+  }).valid).toBe(false);
+  expect(validateManifest({
+    ...base,
+    api: {
+      ...base.api,
+      routes: [
+        base.api.routes[0],
+        { ...base.api.routes[0] }
+      ]
+    }
+  }).valid).toBe(false);
+});

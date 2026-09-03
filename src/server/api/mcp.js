@@ -106,7 +106,7 @@ function sanitizeMcpServers(servers) {
 }
 const MCP_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
 const MCP_EXPORT_FORMATS = ['json', 'claude', 'codex', 'gemini', 'opencode', 'omp'];
-const { getPlatformRegistry, getPlatformRuntime } = require('../../platforms/runtime');
+const { getPlatformContext } = require('../platform-context');
 
 function normalizePlatformKey(platform) {
   return String(platform || '').trim().toLowerCase();
@@ -126,7 +126,7 @@ function createCapabilityError(platform, code) {
 
 function resolveMcpPlatform(platform) {
   const key = normalizePlatformKey(platform);
-  const registry = getPlatformRegistry();
+  const registry = getPlatformContext().registry;
   if (!registry.resolve(key)) return { error: createCapabilityError(key, 'not_found') };
   const driverId = registry.getCapability(key, 'mcp');
   if (!driverId || driverId === 'unsupported') {
@@ -139,7 +139,7 @@ function resolveMcpExportPlatform(platform) {
   const resolved = resolveMcpPlatform(platform);
   if (resolved.error) return resolved;
 
-  const runtime = getPlatformRuntime();
+  const runtime = getPlatformContext().runtime;
   const driver = runtime.getDriver(resolved.key, 'mcp');
   if (!driver || typeof driver.export !== 'function') {
     return { error: createCapabilityError(resolved.key, 'unsupported') };

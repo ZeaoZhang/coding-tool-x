@@ -29,7 +29,9 @@
     "startTip": "启动动态切换"
   },
   "logFile": "cc-tool-out.log",
-  "logAliases": ["ui"],
+  "logAliases": [
+    "ui"
+  ],
   "logNote": "OMP 受管 provider 配置没有独立请求代理日志，相关活动记录在 UI/server 日志中。",
   "statisticsPath": "/api/omp/statistics",
   "pathResolverId": "omp",
@@ -40,20 +42,397 @@
     "plugins": true
   },
   "skillActivation": {
-    "user": { "mode": "native-copy", "format": "omp-skill-v1" },
-    "project": { "mode": "native-copy", "format": "omp-skill-v1" }
+    "user": {
+      "mode": "native-copy",
+      "format": "omp-skill-v1"
+    },
+    "project": {
+      "mode": "native-copy",
+      "format": "omp-skill-v1"
+    }
   },
   "projectResources": {
-    "instruction": { "path": null },
+    "instruction": {
+      "path": null
+    },
     "skills": {
       "canonicalRoot": ".omp/skills",
-      "readRoots": [".omp/skills"]
+      "readRoots": [
+        ".omp/skills"
+      ]
     },
-    "mcp": { "path": ".omp/mcp.json", "format": "omp-json" }
+    "mcp": {
+      "path": ".omp/mcp.json",
+      "format": "omp-json"
+    }
   },
   "promptFile": null,
   "promptLabel": "OMP command templates",
-  "api": { "prefix": "omp" },
+  "api": {
+    "prefix": "omp",
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/projects",
+        "capability": "projects",
+        "operation": "listProjects",
+        "request": "default",
+        "response": "projects-list"
+      },
+      {
+        "method": "POST",
+        "path": "/projects/order",
+        "capability": "projects",
+        "operation": "saveProjectOrder",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/projects/create",
+        "capability": "projects",
+        "operation": "createProject",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "DELETE",
+        "path": "/projects/:projectName",
+        "capability": "projects",
+        "operation": "deleteProject",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/sessions/search/global",
+        "capability": "sessions",
+        "operation": "searchAcrossProjects",
+        "request": "default",
+        "response": "sessions-list"
+      },
+      {
+        "method": "GET",
+        "path": "/sessions/recent/list",
+        "capability": "sessions",
+        "operation": "recent",
+        "request": "default",
+        "response": "sessions-list"
+      },
+      {
+        "method": "GET",
+        "path": "/sessions/:projectName",
+        "capability": "sessions",
+        "operation": "listSessions",
+        "request": "default",
+        "response": "sessions-list"
+      },
+      {
+        "method": "GET",
+        "path": "/sessions/:projectName/search",
+        "capability": "sessions",
+        "operation": "search",
+        "request": "default",
+        "response": "sessions-list"
+      },
+      {
+        "method": "GET",
+        "path": "/sessions/:projectName/:sessionId/status",
+        "capability": "sessions",
+        "operation": "status",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/sessions/:projectName/:sessionId/outline",
+        "capability": "sessions",
+        "operation": "outline",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/sessions/:projectName/:sessionId/messages",
+        "capability": "sessions",
+        "operation": "messages",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "DELETE",
+        "path": "/sessions/:projectName/:sessionId",
+        "capability": "sessions",
+        "operation": "delete",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/sessions/:projectName/batch-delete",
+        "capability": "sessions",
+        "operation": "batchDelete",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/sessions/:projectName/:sessionId/fork",
+        "capability": "sessions",
+        "operation": "fork",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/sessions/:projectName/create",
+        "capability": "sessions",
+        "operation": "createSession",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/sessions/:projectName/order",
+        "capability": "sessions",
+        "operation": "saveSessionOrder",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/sessions/:projectName/:sessionId/launch",
+        "capability": "sessions",
+        "operation": "launch",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/channels",
+        "capability": "channels",
+        "operation": "list",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/channels",
+        "capability": "channels",
+        "operation": "create",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/channels/enabled",
+        "capability": "channels",
+        "operation": "enabled",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/channels/current",
+        "capability": "channels",
+        "operation": "current",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/channels/pool/status",
+        "capability": "channels",
+        "operation": "poolStatus",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/channels/best-for-restore",
+        "capability": "channels",
+        "operation": "bestForRestore",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/channels/sync-current",
+        "capability": "channels",
+        "operation": "sync",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/channels/order",
+        "capability": "channels",
+        "operation": "order",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "PUT",
+        "path": "/channels/:channelId",
+        "capability": "channels",
+        "operation": "update",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "DELETE",
+        "path": "/channels/:channelId",
+        "capability": "channels",
+        "operation": "remove",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/channels/:channelId/models",
+        "capability": "channels",
+        "operation": "models",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/channels/:channelId/apply-to-settings",
+        "capability": "channels",
+        "operation": "applyToSettings",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/channels/:channelId/reset-health",
+        "capability": "channels",
+        "operation": "resetHealth",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/channels/:channelId/speed-test",
+        "capability": "channels",
+        "operation": "speedTest",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/channels/speed-test-all",
+        "capability": "channels",
+        "operation": "speedTestAll",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/channels/probe-models",
+        "capability": "channels",
+        "operation": "probeModels",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/channels/catalog-metadata",
+        "capability": "channels",
+        "operation": "catalogMetadata",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/proxy/status",
+        "capability": "proxy",
+        "operation": "status",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/proxy/start",
+        "capability": "proxy",
+        "operation": "start",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/proxy/stop",
+        "capability": "proxy",
+        "operation": "stop",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/proxy/logs/clear",
+        "capability": "proxy",
+        "operation": "clearLogs",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/statistics/summary",
+        "capability": "statistics",
+        "operation": "summary",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/statistics/today",
+        "capability": "statistics",
+        "operation": "today",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/statistics/daily/:date",
+        "capability": "statistics",
+        "operation": "daily",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/config",
+        "capability": "api",
+        "operation": "getConfig",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/config/capabilities",
+        "capability": "api",
+        "operation": "getConfigCapabilities",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/config/auth-providers",
+        "capability": "api",
+        "operation": "getConfigAuthProviders",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/config/resources",
+        "capability": "api",
+        "operation": "getConfigResources",
+        "request": "default",
+        "response": "default"
+      }
+    ]
+  },
   "capabilities": {
     "projects": "legacy:omp",
     "sessions": "legacy:omp",

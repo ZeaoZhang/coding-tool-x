@@ -12,13 +12,6 @@ const { NATIVE_PATHS, PATHS } = require('../../../config/paths');
 const PROJECT_ORDER_FILE = PATHS.opencodeProjectOrder;
 const SESSION_ORDER_FILE = PATHS.opencodeSessionOrder;
 const OPENCODE_DB_PATH = path.join(NATIVE_PATHS.opencode.data, 'opencode.db');
-const COUNTS_CACHE_TTL_MS = 30 * 1000;
-const EMPTY_COUNTS = Object.freeze({ projectCount: 0, sessionCount: 0 });
-
-let countsCache = {
-  expiresAt: 0,
-  value: EMPTY_COUNTS
-};
 
 function ensureParentDir(filePath) {
   const dir = path.dirname(filePath);
@@ -196,9 +189,6 @@ function isOpenCodeInstalled() {
   return fs.existsSync(OPENCODE_DB_PATH);
 }
 
-function invalidateProjectAndSessionCountsCache() {
-  countsCache = { expiresAt: 0, value: EMPTY_COUNTS };
-}
 
 // ---------------------------------------------------------------------------
 // Project / session order (file-based)
@@ -260,14 +250,6 @@ function getSessionLocation(sessionId) {
 // Database query functions (parameterized)
 // ---------------------------------------------------------------------------
 
-function queryProjectAndSessionCounts() {
-  const rows = _query(`
-    SELECT
-      (SELECT COUNT(*) FROM project) AS project_count,
-      (SELECT COUNT(*) FROM session WHERE time_archived IS NULL) AS session_count
-  `);
-  return rows.length > 0 ? rows[0] : { project_count: 0, session_count: 0 };
-}
 
 function getProjectRows() {
   return _query(`
@@ -277,7 +259,8 @@ function getProjectRows() {
       p.time_created,
       p.time_updated,
       p.time_archived,
-      p.data
+      p.data,
+      (SELECT COUNT(*) FROM session s WHERE s.project_id = p.id AND s.time_archived IS NULL) AS session_count
     FROM project p
     ORDER BY p.time_updated DESC
   `);
@@ -397,7 +380,7 @@ function getProjects(_options = {}) {
     displayName: getProjectDisplayName(project),
     fullPath: project.worktree || '/',
     path: project.worktree || '/',
-    sessionCount: 0,
+    sessionCount: Number(project.session_count) || 0,
     lastUsed: toIsoTime(project.time_updated),
     source: 'opencode'
   }));
@@ -596,7 +579,6 @@ function deleteSession(sessionId) {
     // ignore fork relation cleanup errors
   }
 
-  invalidateProjectAndSessionCountsCache();
   return { success: true, projectName: location.projectId, sessionId };
 }
 
@@ -708,7 +690,6 @@ function forkSession(sessionId) {
     // ignore
   }
 
-  invalidateProjectAndSessionCountsCache();
   return { success: true, sessionId: newSessionId, forkedFrom: sessionId };
 }
 
@@ -739,25 +720,15 @@ function deleteProject(projectId) {
   _exec(`DELETE FROM project WHERE id = ?`, projectId);
 
   removeProjectFromOrder(projectId);
-  invalidateProjectAndSessionCountsCache();
   return { success: true, projectId, deletedSessions: deletedSessionIds.length };
 }
 
 function getProjectAndSessionCounts(options = {}) {
-  if (options.force) {
-    invalidateProjectAndSessionCountsCache();
-  } else if (countsCache.expiresAt > Date.now()) {
-    return countsCache.value;
-  }
-
-  const row = queryProjectAndSessionCounts();
-  const result = {
-    projectCount: Number(row.project_count) || 0,
-    sessionCount: Number(row.session_count) || 0
+  const projects = getProjects(options);
+  return {
+    projectCount: projects.length,
+    sessionCount: projects.reduce((sum, project) => sum + project.sessionCount, 0)
   };
-
-  countsCache = { expiresAt: Date.now() + COUNTS_CACHE_TTL_MS, value: result };
-  return result;
 }
 
 module.exports = {

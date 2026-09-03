@@ -144,7 +144,9 @@ describe('built-in project Driver contract', () => {
       : service.getProjects.mock.calls[0];
     expect(projectsCall[0]).toEqual(expectedConfig);
     if (platform === 'claude') expect(projectsCall[1]).toEqual(options);
-    expect(service.getProjectAndSessionCounts).toHaveBeenCalledWith(expectedConfig);
+    expect(service.getProjectAndSessionCounts).toHaveBeenCalledWith(
+      ...(platform === 'claude' ? [expectedConfig, options] : [expectedConfig])
+    );
     expect(service.saveProjectOrder).toHaveBeenCalledWith(
       ...(platform === 'claude' ? [options.config, ['one']] : [['one']])
     );

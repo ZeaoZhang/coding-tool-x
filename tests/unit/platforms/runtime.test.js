@@ -354,3 +354,27 @@ test('production singleton throws clearly when no default driver registry is ava
     Module._load = originalLoad;
   }
 });
+test('passes the owning runtime and request context to Driver factories', () => {
+  let createdContext;
+  const driverRegistry = {
+    create: vi.fn((id, context) => {
+      createdContext = context;
+      return { inspect: () => context };
+    })
+  };
+  const registry = {
+    getCapability: () => 'demo-driver',
+    resolve: () => ({ key: 'demo' }),
+    resolvePaths: () => ({})
+  };
+  const runtime = createPlatformRuntime({ registry, driverRegistry });
+  const requestContext = { config: { profile: 'isolated' }, params: { projectName: 'demo' } };
+
+  expect(runtime.getDriver('demo', 'projects', requestContext).inspect()).toEqual(expect.objectContaining({
+    platform: 'demo',
+    capability: 'projects',
+    runtime,
+    context: requestContext
+  }));
+  expect(createdContext.runtime).toBe(runtime);
+});
