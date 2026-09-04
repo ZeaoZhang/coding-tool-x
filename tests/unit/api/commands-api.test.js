@@ -293,3 +293,40 @@ describe('commands api repo and remote routes', () => {
     expect(res.body.success).toBe(false);
   });
 });
+
+test('keeps Claude as the default when the platform is absent', async () => {
+  const res = await request(buildApp()).get('/?projectPath=/tmp/project');
+
+  expect(res.status).toBe(200);
+  expect(res.body.platform).toBe('claude');
+  expect(services.claude.listCommands).toHaveBeenCalledWith('/tmp/project');
+});
+
+test('rejects an unknown non-empty platform without falling back to Claude', async () => {
+  const res = await request(buildApp()).get('/?platform=missing&projectPath=/tmp/project');
+
+  expect(res.status).toBe(404);
+  expect(res.body.success).toBe(false);
+  expect(services.claude.listCommands).not.toHaveBeenCalled();
+});
+
+test('routes a registered custom platform to its own command service', async () => {
+  const runtime = require('../../../src/platforms/runtime');
+  const definition = { key: 'demo-cli', label: 'Demo CLI' };
+  const registry = {
+    resolve: vi.fn(key => key === 'demo-cli' ? definition : null)
+  };
+  services['demo-cli'] = createMockService();
+  const registrySpy = vi.spyOn(runtime, 'getPlatformRegistry').mockReturnValue(registry);
+
+  try {
+    const res = await request(buildApp()).get('/?platform=demo-cli&projectPath=/tmp/project');
+
+    expect(res.status).toBe(200);
+    expect(res.body.platform).toBe('demo-cli');
+    expect(services['demo-cli'].listCommands).toHaveBeenCalledWith('/tmp/project');
+    expect(services.claude.listCommands).not.toHaveBeenCalled();
+  } finally {
+    registrySpy.mockRestore();
+  }
+});

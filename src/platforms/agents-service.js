@@ -14,6 +14,7 @@ const { RepoScannerBase } = require('../server/services/repo-scanner-base');
 const { LocalResourceIndex } = require('../server/services/local-resource-index');
 const { NATIVE_PATHS } = require('../config/paths');
 const { resolvePreferredHomeDir } = require('../utils/home-dir');
+const { createPlatformAccessError } = require('./access');
 const {
   normalizeSafeFileStem,
   normalizeSafeRelativePath,
@@ -44,7 +45,6 @@ function readAgentMetadata(filePath) {
 
 // 默认仓库源
 const DEFAULT_REPOS = [];
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
 const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
 const CODEX_CONFIG_PATH = NATIVE_PATHS.codex.config;
 const HOME_DIR = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
@@ -86,9 +86,15 @@ const PLATFORM_CONFIG = {
 };
 
 function normalizePlatform(platform) {
-  const normalized = typeof platform === 'string' && platform.trim() ? platform.trim() : 'claude';
-  if (!SUPPORTED_PLATFORMS.includes(normalized)) {
-    throw new Error(`不支持的平台: ${platform}`);
+  const normalized = typeof platform === 'string' && platform.trim()
+    ? platform.trim().toLowerCase()
+    : 'claude';
+  if (!Object.prototype.hasOwnProperty.call(PLATFORM_CONFIG, normalized)) {
+    throw createPlatformAccessError('unsupported', {
+      platform: normalized,
+      capability: 'agents',
+      message: `Agents are not supported for ${normalized}`
+    });
   }
   return normalized;
 }

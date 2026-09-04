@@ -36,7 +36,13 @@ beforeEach(() => {
   };
 
   const AgentsServiceStub = function(platform = 'claude') {
-    return services[platform] || services.claude;
+    if (!services[platform]) {
+      const error = new Error(`Agents are not supported for ${platform}`);
+      error.code = 'unsupported';
+      error.status = 404;
+      throw error;
+    }
+    return services[platform];
   };
 
   const servicePath = require.resolve('../../../src/platforms/agents-service');
@@ -141,7 +147,7 @@ describe('agents api middleware and listing', () => {
   test('rejects unsupported platform in middleware', async () => {
     const res = await request(buildApp()).get('/?platform=unsupported');
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(404);
     expect(res.body.success).toBe(false);
   });
 
@@ -177,6 +183,47 @@ describe('agents api middleware and listing', () => {
     expect(res.body.success).toBe(true);
     expect(res.body.total).toBe(1);
   });
+});
+
+test('routes a registered custom platform to its own agent service', async () => {
+  const runtime = require('../../../src/platforms/runtime');
+  const definition = { key: 'demo-cli', label: 'Demo CLI' };
+  const registry = {
+    resolve: vi.fn(key => key === 'demo-cli' ? definition : null)
+  };
+  services['demo-cli'] = createMockService();
+  const registrySpy = vi.spyOn(runtime, 'getPlatformRegistry').mockReturnValue(registry);
+
+  try {
+    const res = await request(buildApp()).get(`/?platform=demo-cli&projectPath=${encodeURIComponent(allowedProjectPath)}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.platform).toBe('demo-cli');
+    expect(services['demo-cli'].listAgents).toHaveBeenCalledWith(resolvedAllowedProjectPath);
+    expect(services.claude.listAgents).not.toHaveBeenCalled();
+  } finally {
+    registrySpy.mockRestore();
+  }
+});
+
+test('reports unsupported for a registered platform without an agent implementation', async () => {
+  const runtime = require('../../../src/platforms/runtime');
+  const definition = { key: 'ui-only', label: 'UI Only' };
+  const registry = {
+    resolve: vi.fn(key => key === 'ui-only' ? definition : null)
+  };
+  const registrySpy = vi.spyOn(runtime, 'getPlatformRegistry').mockReturnValue(registry);
+
+  try {
+    const res = await request(buildApp()).get('/?platform=ui-only');
+
+    expect(res.status).toBe(404);
+    expect(res.body.success).toBe(false);
+    expect(res.body.code).toBe('unsupported');
+    expect(services.claude.listAgents).not.toHaveBeenCalled();
+  } finally {
+    registrySpy.mockRestore();
+  }
 });
 
 describe('agent CRUD routes', () => {
