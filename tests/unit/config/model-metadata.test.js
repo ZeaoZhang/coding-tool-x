@@ -5,10 +5,12 @@ const {
   MODEL_ALIASES,
   DEFAULT_MODELS,
   METADATA_LAST_UPDATED,
+  METADATA_SOURCE,
   resolveModelMetadata,
   resolveModelLimit,
   resolveModelPricing,
   getAllModelIds,
+  getModelIdsByToolType,
   getDefaultModels,
   getDefaultModelsByToolType,
 } = require('../../../src/config/model-metadata');
@@ -25,6 +27,25 @@ describe('model-metadata', () => {
     test('METADATA_LAST_UPDATED is a string', () => {
       expect(typeof METADATA_LAST_UPDATED).toBe('string');
       expect(METADATA_LAST_UPDATED.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('catalog provenance and tool groups', () => {
+    test('exposes Models.dev provenance', () => {
+      expect(METADATA_SOURCE).toMatchObject({
+        name: 'models.dev',
+        url: 'https://models.dev/api.json'
+      });
+      expect(METADATA_SOURCE.lastUpdated).toBe(METADATA_LAST_UPDATED);
+    });
+
+    test('uses explicit toolTypes while retaining compatible models', () => {
+      expect(getModelIdsByToolType('claude').every((id) => {
+        const meta = MODEL_METADATA[id];
+        return meta.toolTypes?.includes('claude') || id.startsWith('claude-');
+      })).toBe(true);
+      expect(getModelIdsByToolType('omp').some((id) => MODEL_METADATA[id].provider === 'deepseek')).toBe(true);
+      expect(getModelIdsByToolType('opencode')).toContain('deepseek/deepseek-v4-pro');
     });
   });
 

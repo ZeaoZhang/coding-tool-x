@@ -1,6 +1,7 @@
 'use strict';
 
 const { createChannelDriver } = require('../../../shared/channel-driver');
+const { ok, failed } = require('../../../shared/driver-result');
 
 function createDriver(context = {}) {
   const driver = createChannelDriver({
@@ -27,6 +28,22 @@ function createDriver(context = {}) {
   driver.syncManagedProviderExtension = (...args) => (
     driver._service().syncManagedProviderExtension(...args)
   );
+  driver.catalogMetadata = ({ body = {} } = {}) => {
+    const operation = 'catalogMetadata';
+    try {
+      const value = driver._service().getCatalogMetadata(body);
+      const wrap = result => (
+        result && typeof result.status === 'string'
+          ? result
+          : ok('omp', 'channels', operation, result)
+      );
+      return value && typeof value.then === 'function'
+        ? value.then(wrap).catch(error => failed('omp', 'channels', operation, error))
+        : wrap(value);
+    } catch (error) {
+      return failed('omp', 'channels', operation, error);
+    }
+  };
   return driver;
 }
 

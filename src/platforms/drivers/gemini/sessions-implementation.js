@@ -3,7 +3,9 @@ const path = require('path');
 const crypto = require('crypto');
 const { HOME_DIR } = require('../../../config/paths');
 const { getGeminiDir } = require('./config');
-const { resolveModelPricing } = require('../../../server/utils/pricing');
+const DEFAULT_CONFIG = require('../../../config/default');
+const { resolveModelPricing, calculateTokenCost } = require('../../../server/utils/pricing');
+const GEMINI_BASE_PRICING = DEFAULT_CONFIG.pricing.gemini;
 let sessionHistoryIndex = null;
 
 function configure({ sessionHistoryIndex: index } = {}) {
@@ -507,15 +509,10 @@ function readSessionMeta(filePath) {
       if (msg.tokens) {
         totalTokens += msg.tokens.total || 0;
 
-        // 计算成本（简化版本，使用 gemini-2.5-pro 的定价）
         if (msg.model) {
           model = msg.model;
-          const inputTokens = msg.tokens.input || 0;
-          const outputTokens = msg.tokens.output || 0;
-          const pricing = resolveModelPricing('gemini', msg.model);
-          const inputRate = typeof pricing.input === 'number' ? pricing.input : 1.25;
-          const outputRate = typeof pricing.output === 'number' ? pricing.output : 10;
-          totalCost += (inputTokens * inputRate / 1000000) + (outputTokens * outputRate / 1000000);
+          const pricing = resolveModelPricing('gemini', msg.model, {}, GEMINI_BASE_PRICING);
+          totalCost += calculateTokenCost(pricing, msg.tokens, GEMINI_BASE_PRICING);
         }
       }
     });

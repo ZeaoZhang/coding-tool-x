@@ -5,6 +5,7 @@ const { execFileSync } = require('child_process');
 const { PATHS, ensureStorageDirMigrated } = require('../../../config/paths');
 const BaseChannelService = require('../../../shared/base-channel-service');
 const ompConfig = require('./config');
+const { MODEL_METADATA, METADATA_SOURCE } = require('../../../config/model-metadata');
 const {
   writeManagedOmpProviders,
   removeManagedOmpProviders,
@@ -638,6 +639,57 @@ function buildOmpSyncCandidate(modelsConfig, selection, channels) {
   };
 }
 
+
+function getCatalogMetadata({
+  providerKey = '',
+  model = '',
+  speedTestModel = '',
+  allowedModels = [],
+  models = []
+} = {}) {
+  const requestedIds = [
+    model,
+    speedTestModel,
+    ...(Array.isArray(models)
+      ? models.map(item => (
+        item && typeof item === 'object' && !Array.isArray(item) ? item.id || item.name : item
+      ))
+      : []),
+    ...(Array.isArray(allowedModels)
+      ? allowedModels.map(item => (
+        item && typeof item === 'object' && !Array.isArray(item) ? item.id || item.name : item
+      ))
+      : [])
+  ]
+    .map(value => String(value || '').trim().toLowerCase())
+    .filter(Boolean);
+  const normalizedProviderKey = String(providerKey || '').trim().toLowerCase();
+
+  const allEntries = Object.entries(MODEL_METADATA)
+    .filter(([, metadata]) => Array.isArray(metadata.toolTypes) && metadata.toolTypes.includes('omp'))
+    .map(([id, metadata]) => ({ ...structuredClone(metadata), id }));
+
+  const matchesRequestedId = entry => requestedIds.length > 0 && requestedIds.some(requested => (
+    requested === entry.id.toLowerCase()
+      || requested === String(entry.sourceId || '').toLowerCase()
+      || requested === entry.id.split('/').pop().toLowerCase()
+  ));
+  const matchesProvider = entry => (
+    String(entry.provider || '').toLowerCase() === normalizedProviderKey
+    || String(entry.sourceId || '').toLowerCase().startsWith(`${normalizedProviderKey}/`)
+  );
+  const providerEntries = normalizedProviderKey
+    ? allEntries.filter(entry => matchesRequestedId(entry) || matchesProvider(entry))
+    : [];
+  const entries = normalizedProviderKey && providerEntries.length > 0 ? providerEntries : allEntries;
+
+  return {
+    models: entries,
+    warnings: [],
+    source: { ...METADATA_SOURCE }
+  };
+}
+
 function syncCurrentOmpChannel() {
   let modelsConfig = { providers: {} };
   let settings = {};
@@ -693,6 +745,7 @@ module.exports = {
   syncManagedOmpProviders: (channels, options) => service.syncManagedOmpProviders(channels, options),
   disableManagedOmpProviders: () => service.disableManagedOmpProviders(),
   syncManagedProviderExtension: (channels) => service.syncManagedProviderExtension(channels),
+  getCatalogMetadata,
   isManagedOmpModeEnabled,
   getOrCreateOmpGatewaySecret,
   enableManagedOmpMode,

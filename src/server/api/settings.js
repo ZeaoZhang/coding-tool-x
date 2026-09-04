@@ -3,6 +3,8 @@ const router = express.Router();
 const {
   MODEL_METADATA,
   METADATA_LAST_UPDATED,
+  METADATA_SOURCE,
+  getModelIdsByToolType,
   getDefaultSpeedTestModels,
   saveDefaultSpeedTestModels
 } = require('../../config/model-metadata');
@@ -64,6 +66,11 @@ function handleGetModelSettings(req, res) {
     const definitions = normalizeDefinitions(config.modelDefinitions);
     const defaultSpeedTestModels = getDefaultSpeedTestModels();
 
+    const toolModels = Object.fromEntries(
+      ['claude', 'codex', 'gemini', 'opencode', 'omp']
+        .map((toolType) => [toolType, getModelIdsByToolType(toolType)])
+    );
+
     // Build merged table: built-in + user overrides
     const merged = {};
     for (const [id, meta] of Object.entries(MODEL_METADATA)) {
@@ -91,6 +98,8 @@ function handleGetModelSettings(req, res) {
       warnings: resolved.warnings,
       builtinModelIds: Object.keys(MODEL_METADATA),
       lastUpdated: METADATA_LAST_UPDATED,
+      metadataSource: METADATA_SOURCE,
+      toolModels,
       defaultSpeedTestModels
     });
   } catch (error) {
