@@ -6,6 +6,7 @@ const { getGeminiDir } = require('./config');
 const DEFAULT_CONFIG = require('../../../config/default');
 const { resolveModelPricing, calculateTokenCost } = require('../../../server/utils/pricing');
 const GEMINI_BASE_PRICING = DEFAULT_CONFIG.pricing.gemini;
+let sessionHistoryIndex = null;
 
 function configure({ sessionHistoryIndex: index } = {}) {
   sessionHistoryIndex = index || null;
