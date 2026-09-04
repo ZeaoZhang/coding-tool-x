@@ -285,7 +285,7 @@ watch(() => props.visible, (value) => {
   if (value) {
     loadSummaries()
   }
-})
+}, { immediate: true })
 
 function getSummary(tool) {
   return summaries.value?.[tool] || null

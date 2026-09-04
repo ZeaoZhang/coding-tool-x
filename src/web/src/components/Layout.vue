@@ -121,7 +121,7 @@
           <HeaderButton
             :icon="BookmarkOutline"
             :tooltip="`我的收藏 (${totalFavorites})`"
-            @click="showFavoritesDrawer = true"
+            @click="openFavoritesDrawer"
           />
           <div v-if="totalFavorites > 0" class="favorites-badge">
             {{ totalFavorites }}
@@ -132,28 +132,28 @@
         <HeaderButton
           :icon="FolderOpenOutline"
           tooltip="工作区管理"
-          @click="showWorkspaceDrawer = true"
+          @click="openWorkspaceDrawer"
         />
 
         <!-- Prompts Button -->
         <HeaderButton
           :icon="ChatboxOutline"
           tooltip="Prompts 管理"
-          @click="showPromptsDrawer = true"
+          @click="openPromptsDrawer"
         />
 
         <!-- MCP Button -->
         <HeaderButton
           :icon="ServerOutline"
           tooltip="MCP 服务器管理"
-          @click="showMcpDrawer = true"
+          @click="openMcpDrawer"
         />
 
 
         <HeaderButton
           :icon="SettingsOutline"
           tooltip="设置"
-          @click="showSettingsDrawer = true"
+          @click="openSettingsDrawer"
         />
         <n-dropdown trigger="click" placement="bottom-end" :options="moreMenuOptions" @select="handleMoreMenuSelect">
           <div class="more-menu-trigger" aria-label="更多工具">
@@ -189,15 +189,15 @@
         :proxy-running="effectiveProxyRunning"
         :proxy-loading="effectiveProxyLoading"
         @proxy-toggle="handleProxyToggle"
-        @show-recent="showRecentDrawer = true"
+        @show-recent="openRecentDrawer"
       />
     </div>
 
     <!-- Recent Sessions Drawer -->
-    <RecentSessionsDrawer v-model:visible="showRecentDrawer" :channel="currentChannel" />
+    <RecentSessionsDrawer v-if="isDrawerLoaded('recent')" v-model:visible="showRecentDrawer" :channel="currentChannel" />
 
     <!-- Favorites Drawer -->
-    <FavoritesDrawer v-model:visible="showFavoritesDrawer" @view-history="handleViewHistoryFromFavorites" />
+    <FavoritesDrawer v-if="isDrawerLoaded('favorites')" v-model:visible="showFavoritesDrawer" @view-history="handleViewHistoryFromFavorites" />
 
     <!-- Chat History Drawer -->
     <ChatHistoryDrawer
@@ -211,40 +211,40 @@
     />
 
     <!-- Settings Drawer -->
-    <SettingsDrawer v-model:visible="showSettingsDrawer" />
+    <SettingsDrawer v-if="isDrawerLoaded('settings')" v-model:visible="showSettingsDrawer" />
 
     <!-- MCP Drawer -->
-    <McpDrawer v-model:visible="showMcpDrawer" />
+    <McpDrawer v-if="isDrawerLoaded('mcp')" v-model:visible="showMcpDrawer" />
 
     <!-- Prompts Drawer -->
-    <PromptsDrawer v-model:visible="showPromptsDrawer" />
+    <PromptsDrawer v-if="isDrawerLoaded('prompts')" v-model:visible="showPromptsDrawer" />
 
     <!-- Speed Test Drawer -->
-    <SpeedTestDrawer v-model:visible="showSpeedTestDrawer" />
+    <SpeedTestDrawer v-if="isDrawerLoaded('speed-test')" v-model:visible="showSpeedTestDrawer" />
 
     <!-- OpenCode Gateway Convert Drawer -->
     <GatewayConvertDrawer
-      v-if="currentChannel === 'opencode'"
+      v-if="currentChannel === 'opencode' && isDrawerLoaded('gateway')"
       v-model:visible="showGatewayConvertDrawer"
     />
 
     <!-- Workspace Drawer -->
-    <WorkspaceDrawer v-model:visible="showWorkspaceDrawer" />
+    <WorkspaceDrawer v-if="isDrawerLoaded('workspace')" v-model:visible="showWorkspaceDrawer" />
 
     <!-- Config Templates Drawer -->
-    <ConfigTemplatesDrawer v-model:visible="showConfigTemplatesDrawer" />
+    <ConfigTemplatesDrawer v-if="isDrawerLoaded('config-templates')" v-model:visible="showConfigTemplatesDrawer" />
 
     <!-- Config Export/Import Drawer -->
-    <ConfigExportDrawer v-model:visible="showConfigExportDrawer" />
+    <ConfigExportDrawer v-if="isDrawerLoaded('config-export')" v-model:visible="showConfigExportDrawer" />
 
     <!-- OAuth Credentials Drawer -->
-    <OAuthCredentialsDrawer v-model:visible="showOAuthCredentialsDrawer" />
+    <OAuthCredentialsDrawer v-if="isDrawerLoaded('oauth')" v-model:visible="showOAuthCredentialsDrawer" />
 
     <!-- Skills/Commands/Agents Drawers -->
-    <SkillsDrawer v-model:visible="showSkillsDrawer" :platform="skillsDrawerPlatform" :project-path="skillsDrawerProjectPath" />
-    <CommandsDrawer v-model:visible="showCommandsDrawer" :platform="commandsDrawerPlatform" />
-    <AgentsDrawer v-model:visible="showAgentsDrawer" :platform="agentsDrawerPlatform" />
-    <PluginsDrawer v-model:visible="showPluginsDrawer" :platform="pluginsDrawerPlatform" :project-path="pluginsDrawerProjectPath" />
+    <SkillsDrawer v-if="isDrawerLoaded('skills')" v-model:visible="showSkillsDrawer" :platform="skillsDrawerPlatform" :project-path="skillsDrawerProjectPath" />
+    <CommandsDrawer v-if="isDrawerLoaded('commands')" v-model:visible="showCommandsDrawer" :platform="commandsDrawerPlatform" />
+    <AgentsDrawer v-if="isDrawerLoaded('agents')" v-model:visible="showAgentsDrawer" :platform="agentsDrawerPlatform" />
+    <PluginsDrawer v-if="isDrawerLoaded('plugins')" v-model:visible="showPluginsDrawer" :platform="pluginsDrawerPlatform" :project-path="pluginsDrawerProjectPath" />
 
     <!-- Help Modal -->
     <n-modal v-model:show="showHelpModal" preset="card" :title="`${APP_NAME} 使用帮助`" style="width: 800px; max-width: 90vw;">
@@ -424,27 +424,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, defineAsyncComponent, reactive } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NTooltip, NSwitch, NSpin, NModal, NIcon, NText, NInput, NButton, NSpace, NDropdown } from 'naive-ui'
 import { ServerOutline, MoonOutline, SunnyOutline, SettingsOutline, HomeOutline, BookmarkOutline, ChatboxOutline, WarningOutline, FolderOpenOutline, StatsChartOutline, EllipsisHorizontal } from '@vicons/ionicons5'
-import RightPanel from './RightPanel.vue'
-import RecentSessionsDrawer from './RecentSessionsDrawer.vue'
-import FavoritesDrawer from './FavoritesDrawer.vue'
-import ChatHistoryDrawer from './ChatHistoryDrawer.vue'
-import SettingsDrawer from './SettingsDrawer.vue'
-import McpDrawer from './McpDrawer.vue'
-import PromptsDrawer from './PromptsDrawer.vue'
-import SpeedTestDrawer from './SpeedTestDrawer.vue'
-import GatewayConvertDrawer from './GatewayConvertDrawer.vue'
-import SkillsDrawer from './SkillsDrawer.vue'
-import CommandsDrawer from './CommandsDrawer.vue'
-import AgentsDrawer from './AgentsDrawer.vue'
-import PluginsDrawer from './PluginsDrawer.vue'
-import WorkspaceDrawer from './WorkspaceDrawer.vue'
-import ConfigTemplatesDrawer from './ConfigTemplatesDrawer.vue'
-import ConfigExportDrawer from './ConfigExportDrawer.vue'
-import OAuthCredentialsDrawer from './OAuthCredentialsDrawer.vue'
 import HeaderButton from './HeaderButton.vue'
 import EnvConflictModal from './EnvConflictModal.vue'
 import { updateNestedUIConfig } from '../api/ui-config'
@@ -458,6 +441,23 @@ import { useDashboard } from '../composables/useDashboard'
 import { getRoutePlatform } from '../config/platformCatalog'
 import { buildPlatformNavigation } from '../config/platformCatalog'
 import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
+const RightPanel = defineAsyncComponent(() => import('./RightPanel.vue'))
+const RecentSessionsDrawer = defineAsyncComponent(() => import('./RecentSessionsDrawer.vue'))
+const FavoritesDrawer = defineAsyncComponent(() => import('./FavoritesDrawer.vue'))
+const ChatHistoryDrawer = defineAsyncComponent(() => import('./ChatHistoryDrawer.vue'))
+const SettingsDrawer = defineAsyncComponent(() => import('./SettingsDrawer.vue'))
+const McpDrawer = defineAsyncComponent(() => import('./McpDrawer.vue'))
+const PromptsDrawer = defineAsyncComponent(() => import('./PromptsDrawer.vue'))
+const SpeedTestDrawer = defineAsyncComponent(() => import('./SpeedTestDrawer.vue'))
+const GatewayConvertDrawer = defineAsyncComponent(() => import('./GatewayConvertDrawer.vue'))
+const SkillsDrawer = defineAsyncComponent(() => import('./SkillsDrawer.vue'))
+const CommandsDrawer = defineAsyncComponent(() => import('./CommandsDrawer.vue'))
+const AgentsDrawer = defineAsyncComponent(() => import('./AgentsDrawer.vue'))
+const PluginsDrawer = defineAsyncComponent(() => import('./PluginsDrawer.vue'))
+const WorkspaceDrawer = defineAsyncComponent(() => import('./WorkspaceDrawer.vue'))
+const ConfigTemplatesDrawer = defineAsyncComponent(() => import('./ConfigTemplatesDrawer.vue'))
+const ConfigExportDrawer = defineAsyncComponent(() => import('./ConfigExportDrawer.vue'))
+const OAuthCredentialsDrawer = defineAsyncComponent(() => import('./OAuthCredentialsDrawer.vue'))
 
 // 使用主题 composable
 const { isDark, toggleTheme } = useTheme()
@@ -535,6 +535,24 @@ const showChatHistory = ref(false)
 const chatHistorySession = ref(null)
 const chatHistoryChannel = ref(null)
 const chatHistoryRef = ref(null)
+const loadedDrawers = reactive(new Set())
+
+function isDrawerLoaded(name) {
+  return loadedDrawers.has(name)
+}
+
+function markDrawerLoaded(name) {
+  loadedDrawers.add(name)
+}
+watch(
+  [chatHistoryRef, chatHistorySession, chatHistoryChannel, showChatHistory],
+  ([drawer, session, , visible]) => {
+    if (drawer && session && visible) {
+      drawer.open()
+    }
+  },
+  { flush: 'post' }
+)
 
 // 环境变量冲突检测
 const envConflicts = ref([])
@@ -692,22 +710,62 @@ function goHome() {
 function openGithub() {
   window.open('https://github.com/ZeaoZhang/coding-tool', '_blank')
 }
+function openDrawer(name, visibleRef) {
+  markDrawerLoaded(name)
+  visibleRef.value = true
+}
+
+function openRecentDrawer() {
+  openDrawer('recent', showRecentDrawer)
+}
+
+function openFavoritesDrawer() {
+  openDrawer('favorites', showFavoritesDrawer)
+}
+
+function openSettingsDrawer() {
+  openDrawer('settings', showSettingsDrawer)
+}
+
+function openMcpDrawer() {
+  openDrawer('mcp', showMcpDrawer)
+}
+
+function openPromptsDrawer() {
+  openDrawer('prompts', showPromptsDrawer)
+}
+
+function openSpeedTestDrawer() {
+  openDrawer('speed-test', showSpeedTestDrawer)
+}
+
+function openWorkspaceDrawer() {
+  openDrawer('workspace', showWorkspaceDrawer)
+}
+
+function openConfigTemplatesDrawer() {
+  openDrawer('config-templates', showConfigTemplatesDrawer)
+}
+
+function openConfigExportDrawer() {
+  openDrawer('config-export', showConfigExportDrawer)
+}
 
 function handleMoreMenuSelect(key) {
   if (key === 'config-templates') {
-    showConfigTemplatesDrawer.value = true
+    openConfigTemplatesDrawer()
     return
   }
   if (key === 'config-export') {
-    showConfigExportDrawer.value = true
+    openConfigExportDrawer()
     return
   }
   if (key === 'oauth') {
-    showOAuthCredentialsDrawer.value = true
+    openOAuthCredentialsDrawer()
     return
   }
   if (key === 'speed-test') {
-    showSpeedTestDrawer.value = true
+    openSpeedTestDrawer()
     return
   }
   if (key === 'help') {
@@ -797,34 +855,34 @@ onUnmounted(() => {
 function openSkillsDrawer(event) {
   skillsDrawerPlatform.value = event?.detail?.platform || ''
   skillsDrawerProjectPath.value = event?.detail?.cwd || event?.detail?.projectPath || ''
-  showSkillsDrawer.value = true
+  openDrawer('skills', showSkillsDrawer)
 }
 
-function openOAuthCredentialsDrawer(event) {
-  showOAuthCredentialsDrawer.value = true
+function openOAuthCredentialsDrawer() {
+  openDrawer('oauth', showOAuthCredentialsDrawer)
 }
 
 function openCommandsDrawer(event) {
   commandsDrawerPlatform.value = event?.detail?.platform || ''
-  showCommandsDrawer.value = true
+  openDrawer('commands', showCommandsDrawer)
 }
 
 function openAgentsDrawer(event) {
   agentsDrawerPlatform.value = event?.detail?.platform || ''
-  showAgentsDrawer.value = true
+  openDrawer('agents', showAgentsDrawer)
 }
 
 function openPluginsDrawer(event) {
   pluginsDrawerPlatform.value = event?.detail?.platform || ''
   pluginsDrawerProjectPath.value = event?.detail?.cwd || event?.detail?.projectPath || ''
-  showPluginsDrawer.value = true
+  openDrawer('plugins', showPluginsDrawer)
 }
 
 function openGatewayConvertDrawer() {
   if (currentChannel.value !== 'opencode') {
     return
   }
-  showGatewayConvertDrawer.value = true
+  openDrawer('gateway', showGatewayConvertDrawer)
 }
 
 watch(() => currentChannel.value, (channel) => {
@@ -838,9 +896,6 @@ function handleViewHistoryFromFavorites({ session, channel }) {
   chatHistorySession.value = session
   chatHistoryChannel.value = channel
   showChatHistory.value = true
-  nextTick(() => {
-    chatHistoryRef.value?.open()
-  })
 }
 </script>
 

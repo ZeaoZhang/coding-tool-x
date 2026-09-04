@@ -846,7 +846,7 @@ watch(() => props.visible, (val) => {
   if (val) {
     loadServers()
   }
-})
+}, { immediate: true })
 
 // 关闭粘贴弹窗时清空
 watch(showPasteModal, (val) => {

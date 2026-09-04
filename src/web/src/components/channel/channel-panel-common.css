@@ -122,7 +122,7 @@
   opacity: 1;
 }
 
-.channel-actions :deep(.n-switch) {
+.channel-actions .n-switch {
   margin-left: 2px;
 }
 
@@ -261,17 +261,17 @@
 }
 
 /* radio group 样式优化 */
-.channel-form :deep(.n-radio-group) {
+.channel-form .n-radio-group {
   width: 100%;
 }
 
-.channel-form :deep(.n-radio-group .n-space) {
+.channel-form .n-radio-group .n-space {
   width: 100%;
   display: flex;
   gap: 16px;
 }
 
-.channel-form :deep(.n-radio) {
+.channel-form .n-radio {
   padding: 8px 16px;
   border-radius: 6px;
   border: 1px solid var(--n-border-color);
@@ -281,25 +281,25 @@
   justify-content: center;
 }
 
-.channel-form :deep(.n-radio:hover) {
+.channel-form .n-radio:hover {
   border-color: var(--n-primary-color);
   background: var(--n-primary-color-suppl, rgba(24, 160, 88, 0.08));
 }
 
-.channel-form :deep(.n-radio.n-radio--checked) {
+.channel-form .n-radio.n-radio--checked {
   border-color: var(--n-primary-color);
   background: var(--n-primary-color-suppl, rgba(24, 160, 88, 0.08));
 }
 
-.channel-form :deep(.n-form-item) {
+.channel-form .n-form-item {
   margin-bottom: 10px;
 }
 
-.channel-form :deep(.n-form-item:last-child) {
+.channel-form .n-form-item:last-child {
   margin-bottom: 0;
 }
 
-.channel-form :deep(.n-form-item-label) {
+.channel-form .n-form-item-label {
   font-size: 12px;
   padding-bottom: 0;
 }

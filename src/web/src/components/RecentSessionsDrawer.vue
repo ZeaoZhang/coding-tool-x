@@ -86,7 +86,7 @@ watch(() => props.visible, (val) => {
   if (val) {
     loadSessions()
   }
-})
+}, { immediate: true })
 
 // Sync with show
 watch(show, (val) => {
