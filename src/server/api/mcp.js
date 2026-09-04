@@ -104,60 +104,48 @@ function sanitizeMcpServers(servers) {
   if (!servers || typeof servers !== 'object' || Array.isArray(servers)) return {};
   return Object.fromEntries(Object.entries(servers).map(([id, server]) => [id, sanitizeMcpServer(server)]));
 }
-const MCP_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
-const MCP_EXPORT_FORMATS = ['json', 'claude', 'codex', 'gemini', 'opencode', 'omp'];
-const { getPlatformContext } = require('../platform-context');
+const { resolveCapability, resolveOperation } = require('../../platforms/access');
 
 function normalizePlatformKey(platform) {
   return String(platform || '').trim().toLowerCase();
 }
 
-function createCapabilityError(platform, code) {
-  const key = normalizePlatformKey(platform);
-  const error = new Error(code === 'not_found'
-    ? `无效的平台: ${key}`
-    : `平台 ${key} 未声明 mcp capability`);
-  error.status = 404;
-  error.code = code;
-  error.platform = key;
-  error.capability = 'mcp';
-  return error;
-}
-
 function resolveMcpPlatform(platform) {
-  const key = normalizePlatformKey(platform);
-  const registry = getPlatformContext().registry;
-  if (!registry.resolve(key)) return { error: createCapabilityError(key, 'not_found') };
-  const driverId = registry.getCapability(key, 'mcp');
-  if (!driverId || driverId === 'unsupported') {
-    return { error: createCapabilityError(key, 'unsupported') };
+  try {
+    const resolved = resolveCapability(platform, 'mcp');
+    const driverId = resolved.manifest?.capabilities?.mcp || null;
+    return { key: resolved.key, driverId, driver: resolved.driver };
+  } catch (error) {
+    return { error };
   }
-  return { key, driverId };
 }
 
 function resolveMcpExportPlatform(platform) {
-  const resolved = resolveMcpPlatform(platform);
-  if (resolved.error) return resolved;
-
-  const runtime = getPlatformContext().runtime;
-  const driver = runtime.getDriver(resolved.key, 'mcp');
-  if (!driver || typeof driver.export !== 'function') {
-    return { error: createCapabilityError(resolved.key, 'unsupported') };
+  try {
+    const resolved = resolveOperation(platform, 'mcp', 'export');
+    return { key: resolved.key, driver: resolved.driver };
+  } catch (error) {
+    return { error };
   }
-
-  return { key: resolved.key, driver };
 }
 
 
 
 function sendCapabilityError(res, error, fallbackStatus = 400) {
-  const status = error?.status === 404 && error?.code ? 404 : fallbackStatus;
+  const status = ['not_found', 'unsupported'].includes(error?.code)
+    ? 404
+    : error?.code === 'invalid'
+      ? 400
+      : error?.code === 'failed'
+        ? 500
+        : (error?.status === 404 && error?.code ? 404 : fallbackStatus);
   return res.status(status).json({
     success: false,
     error: sanitizeErrorMessage(error.message),
     code: error.code || undefined,
     platform: error.platform || undefined,
-    capability: error.capability || undefined
+    capability: error.capability || undefined,
+    operation: error.operation || undefined
   });
 }
 

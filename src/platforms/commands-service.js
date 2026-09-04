@@ -9,9 +9,9 @@ const fs = require('fs');
 const path = require('path');
 const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
-const { RepoScannerBase } = require('../server/services/repo-scanner-base');
-const { LocalResourceIndex } = require('../server/services/local-resource-index');
 const { NATIVE_PATHS } = require('../config/paths');
+const { RepoScannerBase } = require('../server/services/repo-scanner-base');
+const { createPlatformAccessError } = require('./access');
 const {
   parseFrontmatter
 } = require('../server/services/format-converter');
@@ -74,7 +74,6 @@ function parseCommandMetadata(filePath, platform) {
 
 // 默认仓库源
 const DEFAULT_REPOS = [];
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
 const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
 const CLAUDE_COMMANDS_DIR = NATIVE_PATHS.claude.commands
   || path.join(NATIVE_PATHS.claude.dir || path.dirname(NATIVE_PATHS.claude.settings), 'commands');
@@ -119,7 +118,17 @@ const PLATFORM_CONFIG = {
 };
 
 function normalizePlatform(platform) {
-  return SUPPORTED_PLATFORMS.includes(platform) ? platform : 'claude';
+  const normalized = typeof platform === 'string' && platform.trim()
+    ? platform.trim().toLowerCase()
+    : 'claude';
+  if (!Object.prototype.hasOwnProperty.call(PLATFORM_CONFIG, normalized)) {
+    throw createPlatformAccessError('unsupported', {
+      platform: normalized,
+      capability: 'commands',
+      message: `Commands are not supported for ${normalized}`
+    });
+  }
+  return normalized;
 }
 
 /**

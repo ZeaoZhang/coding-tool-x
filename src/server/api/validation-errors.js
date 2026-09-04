@@ -23,12 +23,23 @@ function isValidationError(error) {
 }
 
 function sendApiError(res, error, fallbackStatus = 500, extra = {}) {
-  const status = isValidationError(error) ? 400 : fallbackStatus;
-  return res.status(status).json({
+  const status = ['not_found', 'unsupported'].includes(error?.code)
+    ? 404
+    : error?.code === 'invalid'
+      ? 400
+      : error?.code === 'failed'
+        ? 500
+        : (isValidationError(error) ? 400 : fallbackStatus);
+  const payload = {
     success: false,
     message: error?.message || String(error),
     ...extra
-  });
+  };
+  if (error?.code) payload.code = error.code;
+  if (error?.platform) payload.platform = error.platform;
+  if (error?.capability) payload.capability = error.capability;
+  if (error?.operation) payload.operation = error.operation;
+  return res.status(status).json(payload);
 }
 
 module.exports = {

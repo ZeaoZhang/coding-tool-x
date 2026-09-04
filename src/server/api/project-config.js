@@ -2,11 +2,11 @@
 
 const express = require('express');
 const { ProjectConfigService } = require('../services/project-config-service');
+const { resolvePlatform } = require('../../platforms/access');
 const { sendApiError } = require('./validation-errors');
 
 const router = express.Router();
 const projectConfigService = new ProjectConfigService();
-const SUPPORTED_PLATFORMS = new Set(['claude', 'codex', 'gemini', 'opencode', 'omp']);
 
 function requireProjectPath(source = {}) {
   const projectPath = source.projectPath;
@@ -17,11 +17,7 @@ function requireProjectPath(source = {}) {
 }
 
 function requirePlatform(source = {}) {
-  const platform = String(source.platform || 'claude').trim().toLowerCase();
-  if (!SUPPORTED_PLATFORMS.has(platform)) {
-    throw new Error(`Unsupported platform: ${source.platform || platform}`);
-  }
-  return platform;
+  return resolvePlatform(source.platform, { fallback: 'claude' }).key;
 }
 
 function queryInput(req) {

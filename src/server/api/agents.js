@@ -9,16 +9,12 @@ const fs = require('fs');
 const path = require('path');
 const { AgentsService } = require('../../platforms/agents-service');
 const { PATHS, HOME_DIR } = require('../../config/paths');
+const { resolvePlatform, createPlatformAccessError } = require('../../platforms/access');
 const { sendApiError } = require('./validation-errors');
 
 const router = express.Router();
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode'];
 const agentServices = new Map();
 const DEFAULT_PROJECT_ALLOWED_ROOTS = [HOME_DIR, process.cwd()];
-
-function isSupportedPlatform(platform) {
-  return SUPPORTED_PLATFORMS.includes(platform);
-}
 
 function getRawPlatform(req) {
   const queryPlatform = typeof req.query?.platform === 'string' ? req.query.platform.trim() : '';
@@ -26,18 +22,22 @@ function getRawPlatform(req) {
   return queryPlatform || bodyPlatform || '';
 }
 
-function resolvePlatform(rawPlatform) {
-  return rawPlatform || 'claude';
-}
-
 function getPlatform(req) {
-  return resolvePlatform(getRawPlatform(req));
+  return resolvePlatform(getRawPlatform(req), { fallback: 'claude' }).key;
 }
 
 function getAgentsService(req) {
   const platform = getPlatform(req);
   if (!agentServices.has(platform)) {
-    agentServices.set(platform, new AgentsService(platform));
+    const service = new AgentsService(platform);
+    if (!service || typeof service.listAgents !== 'function') {
+      throw createPlatformAccessError('unsupported', {
+        platform,
+        capability: 'agents',
+        message: `Agents are not supported for ${platform}`
+      });
+    }
+    agentServices.set(platform, service);
   }
   return { platform, service: agentServices.get(platform) };
 }
@@ -211,14 +211,13 @@ function normalizeOptionalProjectPath(projectPath) {
 }
 
 router.use((req, res, next) => {
-  const rawPlatform = getRawPlatform(req);
-  if (rawPlatform && !isSupportedPlatform(rawPlatform)) {
-    return res.status(400).json({
-      success: false,
-      message: `不支持的平台: ${rawPlatform}`
-    });
+  try {
+    getPlatform(req);
+    return next();
+  } catch (error) {
+    console.error('[Agents API] Platform resolution failed:', error);
+    return sendApiError(res, error, error.status || 404);
   }
-  next();
 });
 
 /**

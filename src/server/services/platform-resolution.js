@@ -1,44 +1,36 @@
-const SUPPORTED_PLATFORMS = Object.freeze([
-  'claude',
-  'codex',
-  'gemini',
-  'opencode',
-  'omp'
-]);
+const { resolvePlatform } = require('../../platforms/access');
 
 function resolveManagedPlatform(rawPlatform, options = {}) {
-  const fallback = options.fallback || 'claude';
   const raw = rawPlatform == null ? '' : String(rawPlatform);
   const normalized = raw.trim().toLowerCase();
+  const fallback = options.fallback === undefined ? 'claude' : options.fallback;
 
   if (!normalized) {
+    const resolved = resolvePlatform('', { ...options, fallback });
     return {
-      platform: fallback,
+      platform: resolved.key,
       warning: null,
       deprecated: false
     };
   }
 
   if (normalized === 'pi') {
+    const resolved = resolvePlatform('omp', options);
     return {
-      platform: 'omp',
+      platform: resolved.key,
       warning: 'Platform "pi" is deprecated; use "omp".',
       deprecated: true
     };
   }
 
-  if (!SUPPORTED_PLATFORMS.includes(normalized)) {
-    throw new Error(`Invalid platform: ${raw.trim() || raw}`);
-  }
-
+  const resolved = resolvePlatform(normalized, options);
   return {
-    platform: normalized,
+    platform: resolved.key,
     warning: null,
     deprecated: false
   };
 }
 
 module.exports = {
-  SUPPORTED_PLATFORMS,
   resolveManagedPlatform
 };
