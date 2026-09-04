@@ -18,6 +18,7 @@
     "test:unit:watch": "vitest",
     "test:windows": "node scripts/test-windows-regression.js",
     "benchmark:codex": "node scripts/benchmark-codex-loading.js",
+    "sync:model-catalog": "node scripts/sync-model-catalog.js",
     "build:web": "cd src/web && npm run build",
     "prepack": "npm run build:web",
     "dev:web": "cd src/web && npm run dev",
