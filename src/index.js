@@ -550,7 +550,7 @@ async function main({ menuDependencies } = {}) {
 
       case 'workspace':
         const { workspaceMenu } = require('./commands/workspace');
-        await workspaceMenu();
+        await workspaceMenu({ platform: config.currentCliType || '' });
         break;
 
       case 'switch-cli-type':
