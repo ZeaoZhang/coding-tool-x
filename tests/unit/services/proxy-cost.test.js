@@ -28,4 +28,28 @@ describe('proxy cost calculation', () => {
       cacheRead: 1000000
     })).toBeCloseTo(11.375, 8);
   });
+
+  test('unknown Codex model uses configured base pricing', () => {
+    expect(calculateCodexCost('gpt-4-retired', {
+      input: 1000000,
+      output: 1000000,
+      cacheRead: 1000000
+    })).toBeCloseTo(17.75, 8);
+  });
+
+  test('unknown OpenCode model uses configured base pricing', () => {
+    expect(calculateOpenCodeCost('gpt-4-retired', {
+      input: 1000000,
+      output: 1000000,
+      cacheRead: 1000000
+    })).toBeCloseTo(17.75, 8);
+  });
+
+  test('unknown Gemini model uses configured base pricing', () => {
+    expect(calculateGeminiCost('gemini-pro-vision-retired', {
+      input: 1000000,
+      output: 1000000,
+      cacheRead: 1000000
+    })).toBeCloseTo(11.375, 8);
+  });
 });
