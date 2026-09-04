@@ -515,7 +515,7 @@ async function main({ menuDependencies } = {}) {
             config = loadConfig();
           }
           return switched;
-        }, true); // crossProject = true，跨项目显示最近会话
+        }, true, { platform: config.currentCliType || '' }); // crossProject = true，跨项目显示最近会话
         break;
 
       case 'search':
@@ -527,7 +527,7 @@ async function main({ menuDependencies } = {}) {
             config = loadConfig();
           }
           return switched;
-        });
+        }, { platform: config.currentCliType || '' });
         break;
 
       case 'switch':
@@ -544,7 +544,7 @@ async function main({ menuDependencies } = {}) {
               config = loadConfig();
             }
             return switched;
-          });
+          }, false, { platform: config.currentCliType || '' });
         }
         break;
 
