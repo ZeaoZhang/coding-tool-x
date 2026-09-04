@@ -115,3 +115,43 @@ test('maps Driver rejection to a failed typed HTTP response', async () => {
     body: { error: expect.objectContaining({ status: 'failed', error: 'boom' }) }
   });
 });
+
+test('returns unsupported for missing Driver operations on GET and POST routes', async () => {
+  const definition = {
+    ...manifest(),
+    api: {
+      ...manifest().api,
+      routes: [
+        ...manifest().api.routes,
+        {
+          path: '/projects',
+          method: 'POST',
+          capability: 'projects',
+          operation: 'listProjects',
+          request: 'default',
+          response: 'default'
+        }
+      ]
+    }
+  };
+  const registry = {
+    list: () => [definition],
+    resolve: () => definition,
+    getCapability: () => 'fake-projects'
+  };
+  const app = express();
+  app.use(express.json());
+  app.use('/api/platforms', createPlatformRouter({
+    registry,
+    runtime: { getDriver: () => ({}) }
+  }));
+
+  await expect(request(app, 'GET', '/api/platforms/demo/projects')).resolves.toMatchObject({
+    status: 404,
+    body: { error: { code: 'unsupported', operation: 'listProjects' } }
+  });
+  await expect(request(app, 'POST', '/api/platforms/demo/projects', {})).resolves.toMatchObject({
+    status: 404,
+    body: { error: { code: 'unsupported', operation: 'listProjects' } }
+  });
+});

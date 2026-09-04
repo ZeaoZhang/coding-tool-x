@@ -13,10 +13,7 @@ function createDriver(context = {}) {
     adapterLocalPath: '../platforms/drivers/claude/session-history-adapter',
     adapterMethods: { inventory: 'inventory', parse: 'parse' },
     methods: {
-      listSessions: 'getSessionsForProject',
-      recent: 'getRecentSessions',
-      search: 'searchSessions',
-      searchAcrossProjects: 'searchSessionsAcrossProjects',
+      launch: 'launch',
       delete: 'deleteSession',
       fork: 'forkSession',
       saveSessionOrder: 'saveSessionOrder',
@@ -25,6 +22,30 @@ function createDriver(context = {}) {
       hasActualMessages: 'hasActualMessages',
       status: 'getSessionStatus',
       messages: 'getSessionMessages'
+    },
+    customMethods: {
+      listSessions: (service, projectName, options = {}) => service.getSessionsForProject(
+        options.config || {},
+        projectName,
+        options
+      ),
+      recent: (service, limit, options = {}) => service.getRecentSessions(
+        options.config || {},
+        limit,
+        options
+      ),
+      search: (service, projectName, keyword, contextLength, options = {}) => service.searchSessions(
+        options.config || {},
+        projectName,
+        keyword,
+        contextLength,
+        options
+      ),
+      searchAcrossProjects: (service, keyword, limit, options = {}) => service.searchSessionsAcrossProjects(
+        options.config || {},
+        keyword,
+        limit
+      )
     },
     onSuccess: operation => {
       if (['delete', 'fork', 'saveSessionOrder'].includes(operation)) {

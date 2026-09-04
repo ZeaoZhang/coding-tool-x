@@ -1,6 +1,7 @@
 'use strict';
 
 const { validateManifest, normalizeManifestError } = require('../../../src/platforms/manifest-schema');
+const { BUILT_IN_MANIFESTS } = require('../../../src/platforms/registry');
 
 test('accepts a valid generic platform manifest', () => {
   const result = validateManifest({
@@ -214,4 +215,67 @@ test('validates manifest API route descriptors and declared capabilities', () =>
       ]
     }
   }).valid).toBe(false);
+});
+
+test('rejects route operations outside the capability contract', () => {
+  const result = validateManifest({
+    key: 'demo-cli',
+    label: 'Demo CLI',
+    command: 'demo',
+    capabilities: { sessions: 'legacy:claude' },
+    api: {
+      prefix: 'demo',
+      routes: [{
+        path: '/sessions',
+        method: 'GET',
+        capability: 'sessions',
+        operation: 'notAnOperation',
+        request: 'default',
+        response: 'default'
+      }]
+    }
+  });
+
+  expect(result.valid).toBe(false);
+  expect(normalizeManifestError(result.errors)).toContain('/api/routes/0/operation');
+});
+
+test('rejects unknown named request and response codecs', () => {
+  const base = {
+    key: 'demo-cli',
+    label: 'Demo CLI',
+    command: 'demo',
+    capabilities: { projects: 'legacy:claude' },
+    api: {
+      prefix: 'demo',
+      routes: [{
+        path: '/projects',
+        method: 'GET',
+        capability: 'projects',
+        operation: 'listProjects',
+        request: 'missing-codec',
+        response: 'projects-list'
+      }]
+    }
+  };
+
+  const requestResult = validateManifest(base);
+  const responseResult = validateManifest({
+    ...base,
+    api: {
+      ...base.api,
+      routes: [{ ...base.api.routes[0], request: 'default', response: 'missing-codec' }]
+    }
+  });
+
+  expect(requestResult.valid).toBe(false);
+  expect(normalizeManifestError(requestResult.errors)).toContain('/api/routes/0/request');
+  expect(responseResult.valid).toBe(false);
+  expect(normalizeManifestError(responseResult.errors)).toContain('/api/routes/0/response');
+});
+
+test('keeps every built-in route operation within the declared contract', () => {
+  for (const manifest of BUILT_IN_MANIFESTS) {
+    expect(validateManifest(manifest)).toMatchObject({ valid: true, errors: [] });
+  }
 });

@@ -1,6 +1,6 @@
 'use strict';
 
-const { applyRequestCodec, applyResponseCodec, emptyPayload } = require('./platform-api-config');
+const { applyRequestCodec, applyResponseCodec } = require('./platform-api-config');
 
 const STATUS_CODES = Object.freeze({ ok: 200, invalid: 400, unsupported: 404, unavailable: 503, failed: 500 });
 
@@ -125,9 +125,7 @@ async function invokeRoute({ registry, runtime, config, request, response, manif
   const declaredCapability = getDeclaredCapability(registry, platform, manifest, route.capability);
   const absentCapability = declaredCapability === null || declaredCapability === undefined || declaredCapability === 'unsupported';
   if (absentCapability) {
-    return !legacyRoute && route.method === 'GET'
-      ? sendDriverResult(response, makeSuccess(context, emptyPayload(route)), route, context)
-      : sendDriverResult(response, makeUnsupported(context), route, context);
+    return sendDriverResult(response, makeUnsupported(context), route, context);
   }
 
   let driver;
@@ -142,9 +140,7 @@ async function invokeRoute({ registry, runtime, config, request, response, manif
     return sendDriverResult(response, makeFailure(context, error), route, context);
   }
   if (!driver || typeof driver[operation] !== 'function') {
-    return !legacyRoute && route.method === 'GET'
-      ? sendDriverResult(response, makeSuccess(context, emptyPayload(route)), route, context)
-      : sendDriverResult(response, makeUnsupported(context), route, context);
+    return sendDriverResult(response, makeUnsupported(context), route, context);
   }
 
   try {

@@ -64,6 +64,15 @@ const responseCodecs = Object.freeze({
   sessions: sessionPayload
 });
 
+function hasRequestCodec(codec) {
+  return typeof codec === 'function' || typeof requestCodecs[codec] === 'function';
+}
+
+function hasResponseCodec(codec) {
+  return typeof codec === 'function' || typeof responseCodecs[codec] === 'function';
+}
+
+
 function applyRequestCodec(request, manifest, route, config) {
   const codec = typeof route.request === 'function' ? route.request : requestCodecs[route.request] || requestCodecs.default;
   return codec(request, manifest, route, config);
@@ -83,6 +92,8 @@ function emptyPayload(route) {
 module.exports = {
   requestCodecs,
   responseCodecs,
+  hasRequestCodec,
+  hasResponseCodec,
   applyRequestCodec,
   applyResponseCodec,
   emptyPayload,

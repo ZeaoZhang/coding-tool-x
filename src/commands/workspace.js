@@ -4,8 +4,71 @@ const inquirer = require('inquirer');
 const fs = require('fs');
 const path = require('path');
 const workspaceService = require('../server/services/workspace-service');
-const { getProjectsWithStats } = require('../platforms/drivers/claude/sessions-implementation');
 const { loadConfig } = require('../config/loader');
+const { resolveOperation } = require('../platforms/access');
+
+function isDriverResult(value) {
+  return value && typeof value === 'object' && typeof value.status === 'string';
+}
+
+function unwrapDriverResult(value) {
+  if (!isDriverResult(value) || value.status !== 'ok') return value;
+  return value.data;
+}
+
+function createFailureResult(error, platform, operation) {
+  const result = {
+    status: error?.code || 'failed',
+    platform: error?.platform || platform || 'claude',
+    capability: 'projects',
+    operation,
+    error: error?.message || String(error)
+  };
+  if (error?.cause) {
+    Object.defineProperty(result, 'cause', { value: error.cause, enumerable: false });
+  }
+  return result;
+}
+
+async function listProjectsForWorkspace(config, options = {}) {
+  const platform = options.platform || config.currentCliType || '';
+  try {
+    const resolved = resolveOperation(platform, 'projects', 'listProjects', {
+      ...options,
+      fallback: 'claude'
+    });
+    const result = unwrapDriverResult(await resolved.operation({ config }));
+    return { result, platform: resolved };
+  } catch (error) {
+    return {
+      result: createFailureResult(error, platform, 'listProjects'),
+      platform: null
+    };
+  }
+}
+
+function normalizeProjects(value) {
+  const unwrapped = unwrapDriverResult(value);
+  if (isDriverResult(unwrapped)) return unwrapped;
+  const projects = Array.isArray(unwrapped)
+    ? unwrapped
+    : Array.isArray(unwrapped?.projects) ? unwrapped.projects : [];
+  return projects
+    .map(project => {
+      const fullPath = project.fullPath || project.path || project.sourcePath || project.worktree || '';
+      const name = project.name || project.projectName || project.id || path.basename(fullPath);
+      return {
+        ...project,
+        name,
+        displayName: project.displayName || project.label || project.title || name,
+        fullPath,
+        sessionCount: Number(
+          project.sessionCount ?? project.sessions ?? project.stats?.sessionCount ?? 0
+        ) || 0
+      };
+    })
+    .filter(project => project.fullPath);
+}
 
 /**
  * 列出所有工作区
@@ -42,9 +105,13 @@ async function listWorkspaces() {
 /**
  * 创建工作区
  */
-async function createWorkspace() {
+async function createWorkspace(options = {}) {
   try {
-    const config = loadConfig();
+    const config = options.config || loadConfig();
+    const accessOptions = {
+      ...options,
+      platform: options.platform || config.currentCliType || ''
+    };
 
     // 1. 输入工作区名称
     const { name } = await inquirer.prompt([
@@ -116,9 +183,21 @@ async function createWorkspace() {
     // 4. 选择项目
     const projects = [];
     let continueAdding = true;
+    let selectedPlatform = null;
 
     while (continueAdding) {
-      const availableProjects = await getProjectsWithStats(config);
+      const projectResult = await listProjectsForWorkspace(config, accessOptions);
+      const availableProjects = normalizeProjects(projectResult.result);
+      selectedPlatform = projectResult.platform || selectedPlatform;
+
+      if (isDriverResult(availableProjects)) {
+        const platformLabel = selectedPlatform?.manifest?.label
+          || selectedPlatform?.manifest?.title
+          || accessOptions.platform
+          || '当前平台';
+        console.log(chalk.yellow(`\n${platformLabel} 不支持项目发现，无法创建工作区\n`));
+        return;
+      }
 
       if (availableProjects.length === 0) {
         console.log(chalk.yellow('\n没有可用的项目\n'));
@@ -308,7 +387,10 @@ async function createWorkspace() {
 
     console.log(chalk.green(`\n[OK] 工作区创建成功!\n`));
     console.log(chalk.gray(`工作区路径: ${workspace.path}\n`));
-    console.log(chalk.gray(`提示: 可以在此路径下启动 Claude Code 以访问所有项目\n`));
+    const platformManifest = selectedPlatform?.manifest || {};
+    const platformLabel = platformManifest.label || platformManifest.title || accessOptions.platform || '当前 CLI';
+    const platformCommand = platformManifest.command || platformLabel;
+    console.log(chalk.gray(`提示: 可以在此路径下启动 ${platformCommand}（${platformLabel}）以访问所有项目\n`));
 
   } catch (error) {
     console.error(chalk.red(`\n[ERROR] ${error.message}\n`));
@@ -436,7 +518,7 @@ async function deleteWorkspace() {
 /**
  * 工作区管理主菜单
  */
-async function workspaceMenu() {
+async function workspaceMenu(options = {}) {
   let continueMenu = true;
 
   while (continueMenu) {
@@ -459,7 +541,7 @@ async function workspaceMenu() {
 
     switch (action) {
       case 'create':
-        await createWorkspace();
+        await createWorkspace(options);
         break;
       case 'view':
         await viewWorkspace();
