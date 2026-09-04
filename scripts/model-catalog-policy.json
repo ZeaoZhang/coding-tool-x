@@ -1,0 +1,56 @@
+{
+  "sourceUrl": "https://models.dev/api.json",
+  "minimumModelCount": 12,
+  "providers": {
+    "openai": {
+      "runtimeMode": "direct",
+      "toolTypes": ["codex", "opencode", "omp"],
+      "modelPatterns": ["^(gpt-|o[134](?:-|$))"]
+    },
+    "anthropic": {
+      "runtimeMode": "direct",
+      "toolTypes": ["claude", "opencode", "omp"],
+      "modelPatterns": ["^claude-"]
+    },
+    "google": {
+      "runtimeMode": "direct",
+      "toolTypes": ["gemini", "opencode", "omp"],
+      "modelPatterns": ["^gemini-"]
+    },
+    "deepseek": {
+      "runtimeMode": "compatible",
+      "toolTypes": ["opencode", "omp"],
+      "modelPatterns": ["^deepseek-"]
+    },
+    "alibaba": {
+      "runtimeMode": "compatible",
+      "toolTypes": ["opencode", "omp"],
+      "modelPatterns": ["^(qwen|deepseek-)"]
+    },
+    "moonshotai": {
+      "runtimeMode": "compatible",
+      "toolTypes": ["opencode", "omp"],
+      "modelPatterns": ["^kimi-"]
+    },
+    "zai": {
+      "runtimeMode": "compatible",
+      "toolTypes": ["opencode", "omp"],
+      "modelPatterns": ["^glm-"]
+    },
+    "mistral": {
+      "runtimeMode": "compatible",
+      "toolTypes": ["opencode", "omp"],
+      "modelPatterns": ["^(mistral|codestral|devstral)"]
+    },
+    "meta": {
+      "runtimeMode": "compatible",
+      "toolTypes": ["opencode", "omp"],
+      "modelPatterns": ["^(llama|meta-llama)"]
+    },
+    "xai": {
+      "runtimeMode": "compatible",
+      "toolTypes": ["opencode", "omp"],
+      "modelPatterns": ["^grok-"]
+    }
+  }
+}
