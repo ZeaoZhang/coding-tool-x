@@ -261,6 +261,24 @@ function getToolModelOptions(toolType) {
   return buildModelOptions(getAllModelsByToolType(toolType))
 }
 
+function getOfflineModelOptions(toolType, form = {}) {
+  if (toolType === 'omp') {
+    return getToolModelOptions('omp');
+  }
+
+  if (toolType === 'opencode') {
+    const nativeToolType = ['claude', 'codex', 'gemini'].includes(form.gatewaySourceType)
+      ? form.gatewaySourceType
+      : '';
+    return mergeModelOptions(
+      getToolModelOptions('opencode'),
+      nativeToolType ? getToolModelOptions(nativeToolType) : []
+    );
+  }
+
+  return getToolModelOptions(toolType);
+}
+
 function resolveClaudeModelToolType(gatewaySourceType) {
   return String(gatewaySourceType || '').trim().toLowerCase() === 'openai_compatible'
     ? 'codex'
@@ -1359,8 +1377,10 @@ const channelPanelFactories = {
       }
 
       if (!channelId) {
+        const offlineOptions = getOfflineModelOptions('opencode', form)
         if (!form.baseUrl) {
-          form.availableModels = []
+          form.availableModels = offlineOptions
+          form.modelsFetchMeta = { offline: true, source: 'Models.dev' }
           form.modelsFetching = false
           return
         }
@@ -1370,40 +1390,42 @@ const channelPanelFactories = {
             apiKey: form.apiKey || '',
             gatewaySourceType: form.gatewaySourceType || 'codex'
           })
-          form.availableModels = result.models && result.models.length > 0 ? buildModelOptions(result.models) : []
+          form.availableModels = mergeModelOptions(
+            buildModelOptions(result.models || []),
+            offlineOptions
+          )
           if (result.error) {
             form.modelsFetchError = result.error
-            form.modelsFetchErrorHint = result.errorHint || '请手动填写模型名称'
+            form.modelsFetchErrorHint = result.errorHint
+              || (offlineOptions.length ? '已使用 Models.dev 离线模型列表' : '请手动填写模型名称')
           }
         } catch (error) {
-          form.availableModels = []
+          form.availableModels = offlineOptions
           form.modelsFetchError = error.message || '获取模型列表失败'
-          form.modelsFetchErrorHint = '请手动填写模型名称'
+          form.modelsFetchErrorHint = offlineOptions.length
+            ? '已使用 Models.dev 离线模型列表'
+            : '请手动填写模型名称'
         } finally {
           form.modelsFetching = false
         }
         return
       }
 
+      const offlineOptions = getOfflineModelOptions('opencode', form)
       try {
         const result = await fetchOpenCodeChannelModels(channelId, { forceRefresh })
-        if (result.models && result.models.length > 0) {
-          form.availableModels = buildModelOptions(result.models)
-          if (result.fallbackUsed) {
-            form.modelsFetchError = result.error || '无法自动获取模型列表'
-            form.modelsFetchErrorHint = result.errorHint || '请手动填写模型名称'
-          }
-        } else {
-          form.availableModels = []
-          if (result.error) {
-            form.modelsFetchError = result.error
-            form.modelsFetchErrorHint = result.errorHint || '请手动填写模型名称'
-          }
+        const liveOptions = buildModelOptions(result.models || [])
+        form.availableModels = mergeModelOptions(liveOptions, offlineOptions)
+        if (result.fallbackUsed || (liveOptions.length === 0 && offlineOptions.length > 0)) {
+          form.modelsFetchError = result.error || '无法自动获取模型列表'
+          form.modelsFetchErrorHint = result.errorHint || '已使用 Models.dev 离线模型列表'
         }
       } catch (error) {
-        form.availableModels = []
+        form.availableModels = offlineOptions
         form.modelsFetchError = error.message || '获取模型列表失败'
-        form.modelsFetchErrorHint = '请手动填写模型名称'
+        form.modelsFetchErrorHint = offlineOptions.length
+          ? '已使用 Models.dev 离线模型列表'
+          : '请手动填写模型名称'
       } finally {
         form.modelsFetching = false
       }
@@ -1705,9 +1727,11 @@ const channelPanelFactories = {
       form.modelsFetching = true
       form.modelsFetchError = null
       form.modelsFetchErrorHint = null
+      const offlineOptions = getOfflineModelOptions('omp', form)
       if (!channelId) {
         if (!form.baseUrl) {
-          form.availableModels = []
+          form.availableModels = offlineOptions
+          form.modelsFetchMeta = { offline: true, source: 'Models.dev' }
           form.modelsFetching = false
           return
         }
@@ -1723,21 +1747,27 @@ const channelPanelFactories = {
             allowedModels: Array.isArray(form.allowedModels) ? form.allowedModels : [],
             modelRedirects: Array.isArray(form.modelRedirects) ? form.modelRedirects : []
           }, { forceRefresh })
-          form.availableModels = result.models && result.models.length > 0 ? buildModelOptions(result.models) : []
+          const liveOptions = buildModelOptions(result.models || [])
+          form.availableModels = mergeModelOptions(liveOptions, offlineOptions)
           form.modelsFetchMeta = {
             cached: !!result.cached,
             stale: !!result.stale,
             retryAfter: result.retryAfter || null,
-            fetchedAt: result.fetchedAt || null
+            fetchedAt: result.fetchedAt || null,
+            offline: liveOptions.length === 0,
+            source: liveOptions.length > 0 ? 'channel' : 'Models.dev'
           }
           if (result.error) {
             form.modelsFetchError = result.error
-            form.modelsFetchErrorHint = result.errorHint || '请手动填写模型名称'
+            form.modelsFetchErrorHint = result.errorHint
+              || (offlineOptions.length ? '已使用 Models.dev 离线模型列表' : '请手动填写模型名称')
           }
         } catch (error) {
-          form.availableModels = []
+          form.availableModels = offlineOptions
           form.modelsFetchError = error.message || '获取模型列表失败'
-          form.modelsFetchErrorHint = '请手动填写模型名称'
+          form.modelsFetchErrorHint = offlineOptions.length
+            ? '已使用 Models.dev 离线模型列表'
+            : '请手动填写模型名称'
         } finally {
           form.modelsFetching = false
         }
@@ -1745,28 +1775,32 @@ const channelPanelFactories = {
       }
       try {
         const result = await fetchOmpChannelModels(channelId, { forceRefresh })
-        form.availableModels = result.models && result.models.length > 0 ? buildModelOptions(result.models) : []
+        const liveOptions = buildModelOptions(result.models || [])
+        form.availableModels = mergeModelOptions(liveOptions, offlineOptions)
         form.modelsFetchMeta = {
           cached: !!result.cached,
           stale: !!result.stale,
           retryAfter: result.retryAfter || null,
-          fetchedAt: result.fetchedAt || null
+          fetchedAt: result.fetchedAt || null,
+          offline: liveOptions.length === 0,
+          source: liveOptions.length > 0 ? 'channel' : 'Models.dev'
         }
-        if (result.error) {
-          form.modelsFetchError = result.error
-          form.modelsFetchErrorHint = result.errorHint || '请手动填写模型名称'
+        if (result.error || (liveOptions.length === 0 && offlineOptions.length > 0)) {
+          form.modelsFetchError = result.error || '无法自动获取模型列表'
+          form.modelsFetchErrorHint = result.errorHint || '已使用 Models.dev 离线模型列表'
         }
       } catch (error) {
-        form.availableModels = []
+        form.availableModels = offlineOptions
         form.modelsFetchError = error.message || '获取模型列表失败'
-        form.modelsFetchErrorHint = '请手动填写模型名称'
+        form.modelsFetchErrorHint = offlineOptions.length
+          ? '已使用 Models.dev 离线模型列表'
+          : '请手动填写模型名称'
       } finally {
         form.modelsFetching = false
       }
     },
     fetchModelMetadataForChannel: async (form) => {
       const providerKey = String(form.providerKey || '').trim()
-      if (!providerKey) throw new Error('请先填写 Provider Key')
       const result = await fetchOmpCatalogMetadata(providerKey, {
         model: form.model || null,
         speedTestModel: form.speedTestModel || null,
@@ -1783,7 +1817,10 @@ const channelPanelFactories = {
       form.modelDefinitionsJson = formatJson([...byId.values()].filter(model => model.id), [])
       form.modelMetadataMode = 'hybrid'
       const warningCount = Array.isArray(result.warnings) ? result.warnings.length : 0
-      form.modelMetadataStatus = `已读取 ${result.models?.length || 0} 个模型${warningCount ? `，${warningCount} 条兼容提示` : ''}`
+      const sourceName = result.source?.name === 'models.dev'
+        ? 'Models.dev'
+        : (result.source?.name || 'Models.dev')
+      form.modelMetadataStatus = `已读取 ${result.models?.length || 0} 个模型（${sourceName} 离线快照）${warningCount ? `，${warningCount} 条兼容提示` : ''}`
     },
     testFn: testOmpChannelSpeed,
     api: {

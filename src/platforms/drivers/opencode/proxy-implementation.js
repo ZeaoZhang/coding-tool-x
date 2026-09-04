@@ -48,21 +48,7 @@ const requestMetadata = new Map();
 // 格式: { channelId: { "originalModel": "redirectedModel", ... } }
 const printedRedirectCache = new Map();
 
-// OpenAI/Claude pricing is sourced from config/model-metadata.js
-const PRICING = {
-  'gpt-4o': { input: 2.5, output: 10 },
-  'gpt-4o-2024-11-20': { input: 2.5, output: 10 },
-  'gpt-4o-mini': { input: 0.15, output: 0.6 },
-  'gpt-4-turbo': { input: 10, output: 30 },
-  'gpt-4': { input: 30, output: 60 },
-  'gpt-3.5-turbo': { input: 0.5, output: 1.5 },
-  'o1': { input: 15, output: 60 },
-  'o1-mini': { input: 3, output: 12 },
-  'o1-pro': { input: 150, output: 600 },
-  'o3': { input: 10, output: 40 },
-  'o3-mini': { input: 1.1, output: 4.4 },
-  'o4-mini': { input: 1.1, output: 4.4 }
-};
+// OpenCode pricing is sourced from config/model-metadata.js.
 
 const OPENCODE_BASE_PRICING = DEFAULT_CONFIG.pricing.opencode || DEFAULT_CONFIG.pricing.codex;
 const CLAUDE_SESSION_USER_ID_TTL_MS = 60 * 60 * 1000;
@@ -80,33 +66,7 @@ const resolveOpenCodeTarget = resolveTargetUrl;
  * 计算请求成本
  */
 function calculateCost(model, tokens) {
-  let fallbackPricing = PRICING[model];
-  if (!fallbackPricing) {
-    const modelLower = String(model || '').toLowerCase();
-    if (modelLower.includes('gpt-4o-mini')) {
-      fallbackPricing = PRICING['gpt-4o-mini'];
-    } else if (modelLower.includes('gpt-4o')) {
-      fallbackPricing = PRICING['gpt-4o'];
-    } else if (modelLower.includes('gpt-4')) {
-      fallbackPricing = PRICING['gpt-4'];
-    } else if (modelLower.includes('gpt-3.5')) {
-      fallbackPricing = PRICING['gpt-3.5-turbo'];
-    } else if (modelLower.includes('o1-mini')) {
-      fallbackPricing = PRICING['o1-mini'];
-    } else if (modelLower.includes('o1-pro')) {
-      fallbackPricing = PRICING['o1-pro'];
-    } else if (modelLower.includes('o1')) {
-      fallbackPricing = PRICING['o1'];
-    } else if (modelLower.includes('o3-mini')) {
-      fallbackPricing = PRICING['o3-mini'];
-    } else if (modelLower.includes('o3')) {
-      fallbackPricing = PRICING['o3'];
-    } else if (modelLower.includes('o4-mini')) {
-      fallbackPricing = PRICING['o4-mini'];
-    }
-  }
-
-  const pricing = resolveModelPricing('opencode', model, fallbackPricing, OPENCODE_BASE_PRICING);
+  const pricing = resolveModelPricing('opencode', model, {}, OPENCODE_BASE_PRICING);
   return calculateTokenCost(pricing, tokens, OPENCODE_BASE_PRICING);
 }
 

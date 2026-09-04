@@ -38,8 +38,12 @@ const FALLBACK_MODELS = {
     'gemini-2.5-pro',
     'gemini-2.5-flash',
     'gemini-2.5-flash-lite'
-  ]
+  ],
+  opencode: [],
+  omp: []
 };
+
+const TOOL_TYPES = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
 
 function normalizeModelList(models = []) {
   const seen = new Set();
@@ -64,25 +68,40 @@ function classifyToolTypeByModelId(modelId) {
   return '';
 }
 
-function buildAllModelsFromMetadata(modelsMap) {
-  const grouped = {
-    claude: [],
-    codex: [],
-    gemini: []
-  };
+export function buildAllModelsFromMetadata(modelsMap, explicitToolModels = {}) {
+  const grouped = Object.fromEntries(TOOL_TYPES.map(toolType => [toolType, []]));
+  const hasExplicitGroups = TOOL_TYPES.some(toolType => (
+    Array.isArray(explicitToolModels?.[toolType])
+  ));
+
+  if (hasExplicitGroups) {
+    for (const toolType of TOOL_TYPES) {
+      grouped[toolType] = normalizeModelList(explicitToolModels[toolType] || []);
+    }
+    return grouped;
+  }
 
   for (const [modelId, meta] of Object.entries(modelsMap || {})) {
     if (!meta || typeof meta !== 'object' || !meta.limit || !meta.pricing) continue;
-    const toolType = classifyToolTypeByModelId(modelId);
-    if (!toolType) continue;
-    grouped[toolType].push(modelId);
+    const declaredToolTypes = Array.isArray(meta.toolTypes)
+      ? meta.toolTypes
+      : [classifyToolTypeByModelId(modelId)];
+    for (const toolType of declaredToolTypes) {
+      if (TOOL_TYPES.includes(toolType)) grouped[toolType].push(modelId);
+    }
   }
 
-  return {
-    claude: normalizeModelList(grouped.claude),
-    codex: normalizeModelList(grouped.codex),
-    gemini: normalizeModelList(grouped.gemini)
-  };
+  return Object.fromEntries(TOOL_TYPES.map(toolType => [
+    toolType,
+    normalizeModelList(grouped[toolType])
+  ]));
+}
+
+function cloneFallbackModels() {
+  return Object.fromEntries(TOOL_TYPES.map(toolType => [
+    toolType,
+    [...(FALLBACK_MODELS[toolType] || [])]
+  ]));
 }
 
 // Promise cache for concurrent calls
@@ -124,28 +143,24 @@ async function loadDefaultModels(options = {}) {
           throw new Error(`HTTP ${metadataResponse.status}: ${metadataResponse.statusText}`);
         }
         const metadataData = await metadataResponse.json();
-        const metadataModels = buildAllModelsFromMetadata(metadataData.models || {});
-        allModels.value = {
-          claude: metadataModels.claude.length > 0 ? metadataModels.claude : [...FALLBACK_MODELS.claude],
-          codex: metadataModels.codex.length > 0 ? metadataModels.codex : [...FALLBACK_MODELS.codex],
-          gemini: metadataModels.gemini.length > 0 ? metadataModels.gemini : [...FALLBACK_MODELS.gemini]
-        };
+        const metadataModels = buildAllModelsFromMetadata(
+          metadataData.models || {},
+          metadataData.toolModels || {}
+        );
+        allModels.value = Object.fromEntries(TOOL_TYPES.map(toolType => [
+          toolType,
+          metadataModels[toolType].length > 0
+            ? metadataModels[toolType]
+            : [...(FALLBACK_MODELS[toolType] || [])]
+        ]));
       } catch (metadataError) {
         console.warn('Failed to load model metadata list, using fallback:', metadataError);
-        allModels.value = {
-          claude: [...FALLBACK_MODELS.claude],
-          codex: [...FALLBACK_MODELS.codex],
-          gemini: [...FALLBACK_MODELS.gemini]
-        };
+        allModels.value = cloneFallbackModels();
       }
     } catch (error) {
       console.warn('Failed to load default models, using fallback:', error);
       defaultModels.value = FALLBACK_MODELS;
-      allModels.value = {
-        claude: [...FALLBACK_MODELS.claude],
-        codex: [...FALLBACK_MODELS.codex],
-        gemini: [...FALLBACK_MODELS.gemini]
-      };
+      allModels.value = cloneFallbackModels();
     } finally {
       loading.value = false;
       fetchPromise = null;
@@ -162,7 +177,13 @@ async function loadDefaultModels(options = {}) {
  * @returns {Array<string>} Array of model names
  */
 function getDefaultModels(toolType) {
-  return defaultModels.value?.[toolType] || FALLBACK_MODELS[toolType] || [];
+  const explicitModels = defaultModels.value?.[toolType];
+  if (Array.isArray(explicitModels) && explicitModels.length > 0) return explicitModels;
+
+  const dynamicModels = allModels.value?.[toolType];
+  if (Array.isArray(dynamicModels) && dynamicModels.length > 0) return dynamicModels;
+
+  return FALLBACK_MODELS[toolType] || [];
 }
 
 function getAllModelsByToolType(toolType) {
