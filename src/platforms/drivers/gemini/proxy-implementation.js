@@ -36,22 +36,6 @@ const requestMetadata = new Map();
 // 格式: { channelId: { "originalModel": "redirectedModel", ... } }
 const printedGeminiRedirectCache = new Map();
 
-// Gemini 模型定价（每百万 tokens 的价格，单位：美元）
-// 作为 model-metadata 未覆盖时的兜底值
-const PRICING = {
-  'gemini-2.5-pro': { input: 1.25, output: 10, cacheRead: 0.125 },
-  'gemini-2.5-flash': { input: 0.3, output: 2.5, cacheRead: 0.03 },
-  'gemini-2.5-flash-lite': { input: 0.1, output: 0.4, cacheRead: 0.01 },
-  'gemini-2.0-flash-exp': { input: 0, output: 0 }, // 实验性免费
-  'gemini-2.0-flash-thinking-exp-1219': { input: 0, output: 0 }, // 实验性免费
-  'gemini-1.5-pro': { input: 1.25, output: 5 },
-  'gemini-1.5-flash': { input: 0.075, output: 0.3 },
-  'gemini-1.5-flash-8b': { input: 0.0375, output: 0.15 },
-  'gemini-1.0-pro': { input: 0.5, output: 1.5 },
-  // 旧版本别名
-  'gemini-pro': { input: 0.5, output: 1.5 },
-  'gemini-pro-vision': { input: 0.5, output: 1.5 }
-};
 
 const GEMINI_BASE_PRICING = DEFAULT_CONFIG.pricing.gemini;
 const jsonBodyParser = express.json({
@@ -196,36 +180,7 @@ function isHttpErrorStatus(statusCode) {
  * 计算请求成本
  */
 function calculateCost(model, tokens) {
-  // 尝试精确匹配
-  let fallbackPricing = PRICING[model];
-
-  // 如果没有精确匹配，尝试模糊匹配
-  if (!fallbackPricing) {
-    const modelLower = String(model || '').toLowerCase();
-    if (modelLower.includes('gemini-2.5-pro')) {
-      fallbackPricing = PRICING['gemini-2.5-pro'];
-    } else if (modelLower.includes('gemini-2.5-flash-lite')) {
-      fallbackPricing = PRICING['gemini-2.5-flash-lite'];
-    } else if (modelLower.includes('gemini-2.5-flash')) {
-      fallbackPricing = PRICING['gemini-2.5-flash'];
-    } else if (modelLower.includes('gemini-2.0-flash-thinking')) {
-      fallbackPricing = PRICING['gemini-2.0-flash-thinking-exp-1219'];
-    } else if (modelLower.includes('gemini-2.0-flash')) {
-      fallbackPricing = PRICING['gemini-2.0-flash-exp'];
-    } else if (modelLower.includes('gemini-1.5-pro')) {
-      fallbackPricing = PRICING['gemini-1.5-pro'];
-    } else if (modelLower.includes('gemini-1.5-flash-8b')) {
-      fallbackPricing = PRICING['gemini-1.5-flash-8b'];
-    } else if (modelLower.includes('gemini-1.5-flash')) {
-      fallbackPricing = PRICING['gemini-1.5-flash'];
-    } else if (modelLower.includes('gemini-1.0-pro')) {
-      fallbackPricing = PRICING['gemini-1.0-pro'];
-    } else if (modelLower.includes('gemini-pro')) {
-      fallbackPricing = PRICING['gemini-pro'];
-    }
-  }
-
-  const pricing = resolveModelPricing('gemini', model, fallbackPricing, GEMINI_BASE_PRICING);
+  const pricing = resolveModelPricing('gemini', model, {}, GEMINI_BASE_PRICING);
   return calculateTokenCost(pricing, tokens, GEMINI_BASE_PRICING);
 }
 
