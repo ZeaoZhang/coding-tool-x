@@ -237,7 +237,7 @@ process.on('SIGTERM', () => {
 /**
  * 主函数
  */
-async function main() {
+async function main({ menuDependencies } = {}) {
   // 处理命令行参数
   const args = process.argv.slice(2);
 
@@ -495,7 +495,9 @@ async function main() {
   while (true) {
     // 显示主菜单
     const { showMainMenu } = require('./ui/menu');
-    const action = await showMainMenu(config);
+    const action = menuDependencies
+      ? await showMainMenu(config, menuDependencies)
+      : await showMainMenu(config);
 
     // 发送命令开始事件
     eventBus.emitSync('cli:command:before', { command: action, args: [], config });
