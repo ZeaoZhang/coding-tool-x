@@ -214,7 +214,7 @@
                     自动获取 Metadata
                   </n-button>
                   <span class="model-catalog-status" role="status" aria-live="polite">
-                    {{ state.formData.modelMetadataStatus || '仅在点击时调用 OMP；普通保存不会启动 OMP 命令。' }}
+                    {{ state.formData.modelMetadataStatus || 'Metadata 读取 Models.dev 离线快照；模型列表按钮才探测渠道，普通保存不会启动网络或 OMP 命令。' }}
                   </span>
                 </div>
                 <n-input
