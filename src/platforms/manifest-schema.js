@@ -2,6 +2,8 @@
 
 const Ajv = require('ajv');
 
+const { hasRequestCodec, hasResponseCodec } = require('../server/api/platform-api-config');
+
 const DRIVER_IDS = new Set([
   'unsupported',
   'generic-jsonl',
@@ -34,12 +36,24 @@ const API_ROUTE_DESCRIPTOR_SCHEMA = {
     method: { enum: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] },
     capability: { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9_-]*$' },
     operation: { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9_-]*$' },
-    request: { type: ['string', 'object'] },
-    response: { type: ['string', 'object'] }
+    request: {},
+    response: {}
   }
 };
 
 const API_ROUTE_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
+
+const CAPABILITY_OPERATIONS = Object.freeze({
+  api: new Set(['getConfig', 'getConfigAuthProviders', 'getConfigCapabilities', 'getConfigResources']),
+  channels: new Set(['applyToSettings', 'bestForRestore', 'catalogMetadata', 'create', 'current', 'enabled', 'list', 'models', 'order', 'poolStatus', 'probeModels', 'remove', 'resetHealth', 'speedTest', 'speedTestAll', 'sync', 'update']),
+  health: new Set(['healthCheck']),
+  hooks: new Set(['getHooks', 'saveHooks', 'testHooks']),
+  projects: new Set(['createProject', 'deleteProject', 'listProjects', 'saveProjectOrder']),
+  proxy: new Set(['clearLogs', 'start', 'status', 'stop']),
+  sessions: new Set(['batchDelete', 'createSession', 'delete', 'fork', 'launch', 'listSessions', 'messages', 'outline', 'recent', 'saveSessionOrder', 'search', 'searchAcrossProjects', 'status']),
+  statistics: new Set(['daily', 'summary', 'today'])
+});
+
 
 const schema = {
   type: 'object',
@@ -222,6 +236,25 @@ function validateApiRoutes(manifest, errors) {
         message: 'must reference a declared capability'
       });
     }
+    const operations = CAPABILITY_OPERATIONS[route.capability];
+    if (!operations || !operations.has(route.operation)) {
+      errors.push({
+        instancePath: `/api/routes/${index}/operation`,
+        message: `must be a supported operation for capability ${route.capability}`
+      });
+    }
+    if (!hasRequestCodec(route.request)) {
+      errors.push({
+        instancePath: `/api/routes/${index}/request`,
+        message: 'must reference a known request codec'
+      });
+    }
+    if (!hasResponseCodec(route.response)) {
+      errors.push({
+        instancePath: `/api/routes/${index}/response`,
+        message: 'must reference a known response codec'
+      });
+    }
   }
 
   for (const [index, alias] of (api.rootAliasPaths || []).entries()) {
@@ -282,4 +315,4 @@ function normalizeManifestError(errors = []) {
   }).join('; ');
 }
 
-module.exports = { DRIVER_IDS, PATH_RESOLVER_IDS, schema, validateManifest, normalizeManifestError };
+module.exports = { DRIVER_IDS, PATH_RESOLVER_IDS, CAPABILITY_OPERATIONS, schema, validateManifest, normalizeManifestError };
