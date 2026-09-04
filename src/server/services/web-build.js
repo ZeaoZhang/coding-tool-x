@@ -6,7 +6,7 @@ const { spawn } = require('child_process');
 
 const DEFAULT_PROJECT_ROOT = path.resolve(__dirname, '../../..');
 const IGNORED_DIR_NAMES = new Set(['node_modules', '.git', 'dist']);
-const WATCHED_WEB_FILES = ['index.html', 'package.json', 'package-lock.json', 'pnpm-lock.yaml', 'vite.config.js'];
+const WATCHED_WEB_FILES = ['index.html', 'package.json', 'package-lock.json', 'vite.config.js'];
 const WATCHED_WEB_DIRS = ['src', 'public'];
 
 function pathExists(targetPath) {
