@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
+const { spawnSync } = require('child_process');
 const { getAllSessions, parseSessionInfoFast } = require('../../../utils/session');
 const { loadAliases, setAlias } = require('../../../server/services/alias');
 const { globalCache, CacheKeys } = require('../../../server/services/enhanced-cache');
@@ -41,6 +41,81 @@ function getCcToolDir() { return PATHS.base; }
 function getOrderFilePath() { return PATHS.projectOrder; }
 function getForkRelationsFilePath() { return PATHS.forkRelations; }
 function getSessionOrderFilePath() { return PATHS.sessionOrder; }
+
+function readSessionCwd(config = {}, sessionId) {
+  const sessionFile = path.join(
+    resolveProjectsDir(config),
+    config.currentProject || '',
+    `${sessionId}.jsonl`
+  );
+  let fd;
+  try {
+    fd = fs.openSync(sessionFile, 'r');
+    const buffer = Buffer.alloc(2048);
+    const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
+    const lines = buffer.subarray(0, bytesRead).toString('utf8').split('\n').slice(0, 5);
+    for (const line of lines) {
+      try {
+        const value = JSON.parse(line);
+        if (typeof value.cwd === 'string' && value.cwd.trim()) return value.cwd;
+      } catch (_) {
+        // 忽略无效的会话元数据
+      }
+    }
+  } catch (_) {
+    return null;
+  } finally {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch (_) {
+        // 忽略文件关闭错误
+      }
+    }
+  }
+  return null;
+}
+
+function resolveLaunchCwd(config, sessionId, cwd) {
+  const candidate = typeof cwd === 'string' && cwd.trim()
+    ? cwd
+    : readSessionCwd(config, sessionId);
+  if (candidate) {
+    try {
+      if (fs.statSync(candidate).isDirectory()) return candidate;
+    } catch (_) {
+      // 使用当前目录
+    }
+  }
+  return process.cwd();
+}
+
+function launch(sessionId, {
+  fork = false,
+  config = {},
+  cwd,
+  processRunner = spawnSync
+} = {}) {
+  const normalizedSessionId = String(sessionId || '');
+  const args = ['-r', normalizedSessionId];
+  if (fork) args.push('--fork-session');
+  const launchCwd = resolveLaunchCwd(config, normalizedSessionId, cwd);
+  const result = processRunner('claude', args, {
+    cwd: launchCwd,
+    stdio: 'inherit',
+    windowsHide: true
+  });
+  if (result?.error) {
+    throw result.error instanceof Error ? result.error : new Error(String(result.error));
+  }
+  return {
+    ...(result && typeof result === 'object' ? result : {}),
+    status: result?.status ?? 0,
+    signal: result?.signal || null,
+    cwd: launchCwd,
+    args
+  };
+}
 
 function getProjectOrder(config) {
   const orderFile = getOrderFilePath();
@@ -435,7 +510,7 @@ module.exports = {
   getSessionsForProject,
   deleteSession,
   forkSession,
-  getRecentSessions,
+  launch,
   getProjectOrder,
   saveProjectOrder,
   getSessionOrder,
