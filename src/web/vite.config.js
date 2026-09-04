@@ -6,7 +6,8 @@ export default defineConfig({
   plugins: [vue()],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, 'src')
+      '@': path.resolve(import.meta.dirname, 'src'),
+      vuedraggable: path.resolve(import.meta.dirname, 'node_modules/vuedraggable/src/vuedraggable.js')
     }
   },
   server: {
@@ -26,33 +27,33 @@ export default defineConfig({
   build: {
     outDir: '../../dist/web',
     emptyOutDir: true,
-    // 代码分割优化
-    rollupOptions: {
+    // Vite 8 uses Rolldown; keep third-party cache boundaries explicit while
+    // leaving route and async-component boundaries to automatic splitting.
+    rolldownOptions: {
       output: {
-        manualChunks(id) {
-          if (!id.includes('node_modules')) {
-            return
-          }
-
-          if (id.includes('/naive-ui/')) {
-            return 'naive-ui'
-          }
-
-          if (id.includes('/markdown-it/') || id.includes('/marked/') || id.includes('/highlight.js/')) {
-            return 'markdown'
-          }
-
-          if (id.includes('/@vicons/')) {
-            return 'icons'
-          }
-
-          if (id.includes('/vue-router/') || id.includes('/pinia/') || id.includes('/vue/')) {
-            return 'vue-vendor'
-          }
-
-          if (id.includes('/axios/') || id.includes('/vuedraggable/')) {
-            return 'vendors'
-          }
+        codeSplitting: {
+          groups: [
+            {
+              name: 'markdown',
+              test: /[\\/]node_modules[\\/](?:markdown-it|marked|highlight\\.js)[\\/]/,
+              priority: 30
+            },
+            {
+              name: 'icons',
+              test: /[\\/]node_modules[\\/]@vicons[\\/]ionicons5[\\/]/,
+              priority: 30
+            },
+            {
+              name: 'vue-vendor',
+              test: /[\\/]node_modules[\\/](?:vue|vue-demi|vue-router|pinia|@vue[\\/](?:shared|reactivity|runtime-core|runtime-dom))[\\/]/,
+              priority: 40
+            },
+            {
+              name: 'vendors',
+              test: /[\\/]node_modules[\\/](?:axios|vuedraggable|sortablejs)[\\/]/,
+              priority: 10
+            }
+          ]
         }
       }
     },

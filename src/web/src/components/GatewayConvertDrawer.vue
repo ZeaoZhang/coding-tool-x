@@ -314,7 +314,7 @@ watch(() => props.visible, async (val) => {
       fillSamplePayload()
     }
   }
-})
+}, { immediate: true })
 </script>
 
 <style scoped>

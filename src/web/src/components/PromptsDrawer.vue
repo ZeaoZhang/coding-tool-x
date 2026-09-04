@@ -377,7 +377,7 @@ watch(() => props.visible, (val) => {
   if (val) {
     loadPresets()
   }
-})
+}, { immediate: true })
 </script>
 
 <style scoped>

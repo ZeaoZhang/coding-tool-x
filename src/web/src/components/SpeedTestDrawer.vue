@@ -567,7 +567,7 @@ watch(() => props.visible, (val) => {
   } else {
     cancelTests({ notify: false })
   }
-})
+}, { immediate: true })
 
 onUnmounted(() => cancelTests({ notify: false }))
 </script>
