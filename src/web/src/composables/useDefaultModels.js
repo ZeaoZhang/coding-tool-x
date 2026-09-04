@@ -161,6 +161,7 @@ async function loadDefaultModels(options = {}) {
       console.warn('Failed to load default models, using fallback:', error);
       defaultModels.value = FALLBACK_MODELS;
       allModels.value = cloneFallbackModels();
+    } finally {
       loading.value = false;
       fetchPromise = null;
     }
@@ -176,7 +177,13 @@ async function loadDefaultModels(options = {}) {
  * @returns {Array<string>} Array of model names
  */
 function getDefaultModels(toolType) {
-  return defaultModels.value?.[toolType] || FALLBACK_MODELS[toolType] || [];
+  const explicitModels = defaultModels.value?.[toolType];
+  if (Array.isArray(explicitModels) && explicitModels.length > 0) return explicitModels;
+
+  const dynamicModels = allModels.value?.[toolType];
+  if (Array.isArray(dynamicModels) && dynamicModels.length > 0) return dynamicModels;
+
+  return FALLBACK_MODELS[toolType] || [];
 }
 
 function getAllModelsByToolType(toolType) {

@@ -97,7 +97,9 @@ function matchesPolicy(modelId, rule) {
 function getModalities(model) {
   const modalities = isPlainObject(model.modalities) ? model.modalities : {};
   const input = Array.isArray(modalities.input)
-    ? modalities.input.map(value => normalizeString(value).toLowerCase()).filter(Boolean)
+    ? modalities.input
+      .map(value => normalizeString(value).toLowerCase())
+      .filter(value => value === 'text' || value === 'image')
     : [];
   const output = Array.isArray(modalities.output)
     ? modalities.output.map(value => normalizeString(value).toLowerCase()).filter(Boolean)
@@ -163,7 +165,6 @@ function normalizeModel(providerId, rule, model, rawModelId, warnings) {
     return null;
   }
 
-  const status = normalizeString(model.status).toLowerCase();
   const efforts = getEfforts(model);
   const output = {
     id: runtimeId,
@@ -197,8 +198,6 @@ function normalizeModel(providerId, rule, model, rawModelId, warnings) {
   if (isFiniteNumber(cost.cache_write) && cost.cache_write >= 0) {
     output.pricing.cacheCreation = cost.cache_write;
   }
-
-
   const ignoredCostFields = getIgnoredCostFields(cost);
   if (ignoredCostFields.length > 0) {
     warnings.push(`${sourceId}: unsupported cost fields use base prices (${ignoredCostFields.join(', ')})`);

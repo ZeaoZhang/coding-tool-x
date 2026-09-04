@@ -64,10 +64,28 @@ describe('useDefaultModels', () => {
         })
       }))
 
-    const { loadDefaultModels, getAllModelsByToolType } = useDefaultModels()
+    const { loadDefaultModels, getAllModelsByToolType, getDefaultModels } = useDefaultModels()
     await loadDefaultModels({ forceRefresh: true })
 
     expect(getAllModelsByToolType('opencode')).toContain('deepseek/deepseek-v4-pro')
     expect(getAllModelsByToolType('omp')).toContain('deepseek/deepseek-v4-pro')
+    expect(getDefaultModels('omp')).toContain('deepseek/deepseek-v4-pro')
+  })
+
+  it('clears the refresh cache after a completed load', async () => {
+    const fetchMock = vi.fn((url) => Promise.resolve({
+      ok: true,
+      json: async () => String(url).includes('/api/config/')
+        ? { defaultModels: { claude: [], codex: [], gemini: [] } }
+        : { models: {}, toolModels: {} }
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { loadDefaultModels, loading } = useDefaultModels()
+    await loadDefaultModels({ forceRefresh: true })
+    await loadDefaultModels({ forceRefresh: true })
+
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+    expect(loading.value).toBe(false)
   })
 })

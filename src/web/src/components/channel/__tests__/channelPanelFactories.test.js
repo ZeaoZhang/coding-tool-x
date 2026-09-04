@@ -43,7 +43,8 @@ describe('channel panel model catalogs', () => {
     }[toolType] || []))
     fetchOmpCatalogMetadata.mockReset().mockResolvedValue({
       models: [{ id: 'deepseek/deepseek-v4-pro', limit: { context: 1000000, output: 384000 } }],
-      warnings: []
+      warnings: [],
+      source: { name: 'models.dev' }
     })
     fetchOmpChannelModels.mockReset()
     fetchOpenCodeChannelModels.mockReset()
@@ -55,7 +56,7 @@ describe('channel panel model catalogs', () => {
     const form = {
       presetId: 'openrouter',
       baseUrl: '',
-      gatewaySourceType: 'codex',
+      gatewaySourceType: 'openai_compatible',
       availableModels: [],
       modelsFetching: false,
       modelsFetchError: null,
@@ -65,8 +66,7 @@ describe('channel panel model catalogs', () => {
     await channelPanelFactories.opencode().fetchModelsForChannel('', form)
 
     expect(form.availableModels).toEqual([
-      { label: 'deepseek/deepseek-v4-pro', value: 'deepseek/deepseek-v4-pro' },
-      { label: 'gpt-5.5', value: 'gpt-5.5' }
+      { label: 'deepseek/deepseek-v4-pro', value: 'deepseek/deepseek-v4-pro' }
     ])
     expect(probeOpenCodeChannelModels).not.toHaveBeenCalled()
   })
@@ -88,6 +88,25 @@ describe('channel panel model catalogs', () => {
     expect(probeOmpChannelModels).not.toHaveBeenCalled()
   })
 
+  it('keeps the offline OMP catalog when a live probe returns no models', async () => {
+    fetchOmpChannelModels.mockResolvedValue({ models: [] })
+    const form = {
+      baseUrl: 'http://127.0.0.1:20092',
+      availableModels: [],
+      modelsFetching: false,
+      modelsFetchError: null,
+      modelsFetchErrorHint: null
+    }
+
+    await channelPanelFactories.omp().fetchModelsForChannel('channel-id', form)
+
+    expect(form.availableModels).toEqual([
+      { label: 'deepseek/deepseek-v4-pro', value: 'deepseek/deepseek-v4-pro' }
+    ])
+    expect(form.modelsFetchError).toBe('无法自动获取模型列表')
+    expect(form.modelsFetchErrorHint).toBe('已使用 Models.dev 离线模型列表')
+  })
+
   it('allows OMP metadata lookup without a provider key', async () => {
     const form = {
       providerKey: '',
@@ -101,5 +120,6 @@ describe('channel panel model catalogs', () => {
 
     expect(fetchOmpCatalogMetadata).toHaveBeenCalledWith('', expect.any(Object))
     expect(form.modelDefinitionsJson).toContain('deepseek/deepseek-v4-pro')
+    expect(form.modelMetadataStatus).toBe('已读取 1 个模型（Models.dev 离线快照）')
   })
 })

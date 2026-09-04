@@ -935,7 +935,9 @@
                 <div>
                   <h3 class="panel-title">模型设置</h3>
                   <n-text depth="3" class="panel-subtitle">管理默认测速模型、模型上下文窗口和定价信息</n-text>
-                  <n-text depth="3" class="panel-subtitle">价格来源：Models.dev 参考价格（离线快照）</n-text>
+                  <n-text depth="3" class="panel-subtitle">
+                    价格来源：Models.dev 参考价格（离线快照） · {{ modelMetadataSource.lastUpdated || '日期未知' }}
+                  </n-text>
                 </div>
               </div>
             </div>
@@ -990,8 +992,7 @@
                     <n-radio value="claude">Claude</n-radio>
                     <n-radio value="openai">OpenAI</n-radio>
                     <n-radio value="gemini">Gemini</n-radio>
-                    <n-radio value="opencode">OpenCode</n-radio>
-                    <n-radio value="omp">OMP</n-radio>
+                    <n-radio value="compatible">OpenCode / OMP</n-radio>
                     <n-radio value="overrides">自定义</n-radio>
                   </n-radio-group>
                 </div>
@@ -1726,6 +1727,11 @@ const securityFormReady = computed(() => {
 let securityStatusPromise = null
 
 // ─── 模型设置管理 ──────────────────────────────────────────────────────────
+const modelMetadataSource = ref({
+  name: 'Models.dev',
+  url: '',
+  lastUpdated: ''
+})
 const modelMetaLoading = ref(false)
 const savingModelMeta = ref(false)
 // Built-in + overrides merged table, keyed by model ID
@@ -1842,9 +1848,7 @@ function isCustomModel(modelId) {
 const MODEL_FILTER_TOOL_TYPES = {
   claude: 'claude',
   openai: 'codex',
-  gemini: 'gemini',
-  opencode: 'opencode',
-  omp: 'omp'
+  gemini: 'gemini'
 }
 
 const filteredModelMeta = computed(() => {
@@ -1855,8 +1859,13 @@ const filteredModelMeta = computed(() => {
 
   return allIds.filter(id => {
     if (search && !id.toLowerCase().includes(search)) return false
+    const meta = modelMetaTable.value[id]
+    if (filter === 'compatible') {
+      return Array.isArray(meta?.toolTypes)
+        ? meta.toolTypes.includes('opencode') || meta.toolTypes.includes('omp')
+        : false
+    }
     if (toolType) {
-      const meta = modelMetaTable.value[id]
       if (Array.isArray(meta?.toolTypes)) return meta.toolTypes.includes(toolType)
       return getModelProviderById(id, meta) === toolType
     }
@@ -1949,6 +1958,12 @@ async function loadModelMetadata() {
   modelMetaLoading.value = true
   try {
     const data = await fetchModelSettings()
+    const metadataSource = data.metadataSource || {}
+    modelMetadataSource.value = {
+      name: metadataSource.name || 'Models.dev',
+      url: metadataSource.url || '',
+      lastUpdated: metadataSource.lastUpdated || ''
+    }
     modelMetaTable.value = data.models || {}
     modelMetaOverrides.value = data.overrides || {}
     builtInModelIds.value = new Set(data.builtinModelIds || [])

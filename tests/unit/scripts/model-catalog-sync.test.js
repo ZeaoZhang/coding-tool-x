@@ -33,7 +33,7 @@ const source = {
         family: 'gpt',
         reasoning: true,
         tool_call: true,
-        modalities: { input: ['text', 'image'], output: ['text'] },
+        modalities: { input: ['text', 'image', 'audio'], output: ['text'] },
         limit: { context: 1050000, output: 128000 },
         cost: { input: 5, output: 30, cache_read: 0.5 }
       },
@@ -88,6 +88,7 @@ describe('model catalog synchronizer contract', () => {
       sourceId: 'openai/gpt-5.5',
       provider: 'openai',
       toolTypes: ['codex', 'opencode', 'omp'],
+      input: ['text', 'image'],
       pricing: { input: 5, output: 30, cacheRead: 0.5 }
     });
     expect(result.snapshot.models['deepseek/deepseek-v4-pro']).toMatchObject({
