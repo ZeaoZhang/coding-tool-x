@@ -76,8 +76,16 @@ describe('settings API router', () => {
         },
       },
       METADATA_LAST_UPDATED: '2025-01-01',
+      METADATA_SOURCE: {
+        name: 'models.dev',
+        url: 'https://models.dev/api.json',
+        lastUpdated: '2025-01-01'
+      },
+      getModelIdsByToolType: vi.fn((toolType) => (
+        toolType === 'claude' ? ['claude-3-opus'] : ['deepseek/deepseek-v4-pro']
+      )),
       getDefaultSpeedTestModels: vi.fn().mockReturnValue(['claude-3-opus']),
-      saveDefaultSpeedTestModels: vi.fn(v => v || []),
+      saveDefaultSpeedTestModels: vi.fn(v => v || [])
     };
 
     loaderStub = {
@@ -112,6 +120,18 @@ describe('settings API router', () => {
     expect(data).toHaveProperty('builtinModelIds');
     expect(data).toHaveProperty('lastUpdated', '2025-01-01');
     expect(data).toHaveProperty('defaultSpeedTestModels');
+    expect(data).toHaveProperty('metadataSource', {
+      name: 'models.dev',
+      url: 'https://models.dev/api.json',
+      lastUpdated: '2025-01-01'
+    });
+    expect(data.toolModels).toMatchObject({
+      claude: ['claude-3-opus'],
+      codex: ['deepseek/deepseek-v4-pro'],
+      gemini: ['deepseek/deepseek-v4-pro'],
+      opencode: ['deepseek/deepseek-v4-pro'],
+      omp: ['deepseek/deepseek-v4-pro']
+    });
     expect(data).toHaveProperty('schemaVersion', 2);
     expect(data).toHaveProperty('fieldSchema');
     expect(data).toHaveProperty('resolvedModels');
