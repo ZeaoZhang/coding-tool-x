@@ -71,7 +71,8 @@ function resolveKey(key, fallback) {
 function resolvePlatform(key, options = {}) {
   const { registry } = getDependencies(options);
   const normalizedKey = resolveKey(key, options.fallback);
-  if (!registry || typeof registry.resolve !== 'function') {
+  if (!registry
+    || (typeof registry.resolve !== 'function' && typeof registry.list !== 'function')) {
     throw createPlatformAccessError('failed', {
       platform: normalizedKey,
       message: 'Platform Registry is not available'
@@ -80,7 +81,14 @@ function resolvePlatform(key, options = {}) {
 
   let manifest;
   try {
-    manifest = registry.resolve(normalizedKey);
+    if (typeof registry.resolve === 'function') {
+      manifest = registry.resolve(normalizedKey);
+    } else {
+      const entries = registry.list({ enabledOnly: false });
+      manifest = Array.isArray(entries)
+        ? entries.find(entry => entry && entry.key === normalizedKey)
+        : null;
+    }
   } catch (cause) {
     throw createPlatformAccessError('failed', {
       platform: normalizedKey,
