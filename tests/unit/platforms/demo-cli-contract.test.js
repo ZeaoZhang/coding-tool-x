@@ -7,7 +7,7 @@ const path = require('path');
 const { createPlatformRegistry } = require('../../../src/platforms/registry');
 const { createPlatformRuntime } = require('../../../src/platforms/runtime');
 const { getDriverRegistry } = require('../../../src/platforms/driver-registry');
-
+const { resolveCapability, resolveOperation } = require('../../../src/platforms/access');
 describe('demo-cli configuration-only contract', () => {
   test('discovers generic capabilities without server platform branches', () => {
     const registry = createPlatformRegistry({
@@ -95,5 +95,63 @@ describe('demo-cli configuration-only contract', () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+  test('resolves generic projects and reports missing proxy and launch operations', async () => {
+    const manifest = {
+      key: 'demo-cli',
+      label: 'Demo CLI',
+      command: 'demo',
+      capabilities: {
+        projects: 'generic-projects',
+        sessions: 'generic-sessions',
+        resourceSync: 'generic-resources',
+        proxy: 'unsupported'
+      }
+    };
+    const drivers = {
+      projects: {
+        listProjects: async () => [{ name: 'demo', fullPath: '/tmp/demo' }]
+      },
+      sessions: {
+        recent: async () => []
+      },
+      resourceSync: {
+        list: async () => []
+      }
+    };
+    const registry = {
+      resolve: vi.fn(key => key === 'demo-cli' ? manifest : null),
+      getCapability: vi.fn((_key, capability) => manifest.capabilities[capability] || null)
+    };
+    const runtime = {
+      getDriver: vi.fn((_key, capability) => drivers[capability] || null)
+    };
+    const options = { registry, runtime };
+
+    const projects = resolveOperation('demo-cli', 'projects', 'listProjects', options);
+    expect(await projects.operation({ config: {} })).toEqual([{ name: 'demo', fullPath: '/tmp/demo' }]);
+    expect(resolveCapability('demo-cli', 'sessions', options).driver).toBe(drivers.sessions);
+    expect(resolveCapability('demo-cli', 'resourceSync', options).driver).toBe(drivers.resourceSync);
+
+    let proxyError;
+    try {
+      resolveCapability('demo-cli', 'proxy', options);
+    } catch (error) {
+      proxyError = error;
+    }
+    expect(proxyError).toMatchObject({ code: 'unsupported', platform: 'demo-cli', capability: 'proxy' });
+
+    let launchError;
+    try {
+      resolveOperation('demo-cli', 'sessions', 'launch', options);
+    } catch (error) {
+      launchError = error;
+    }
+    expect(launchError).toMatchObject({
+      code: 'unsupported',
+      platform: 'demo-cli',
+      capability: 'sessions',
+      operation: 'launch'
+    });
   });
 });
