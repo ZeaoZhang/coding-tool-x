@@ -2902,6 +2902,16 @@
       "reasoning": true,
       "sourceId": "openai/gpt-5.5",
       "supportsTools": true,
+      "thinking": {
+        "defaultLevel": "medium",
+        "efforts": [
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "mode": "effort"
+      },
       "toolTypes": [
         "codex",
         "opencode",

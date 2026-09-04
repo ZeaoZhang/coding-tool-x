@@ -98,6 +98,34 @@ describe('model catalog synchronizer contract', () => {
     expect(result.snapshot.aliases['deepseek-v4-pro']).toBe('deepseek/deepseek-v4-pro');
   });
 
+  test('preserves legacy runtime fields when the source omits them', () => {
+    const result = buildSnapshot(source, {
+      policy,
+      previousSnapshot: {
+        aliases: {},
+        models: {
+          'gpt-5.5': {
+            id: 'gpt-5.5',
+            limit: { context: 1050000, output: 128000 },
+            pricing: { input: 5, output: 30, cacheRead: 0.5 },
+            thinking: {
+              mode: 'effort',
+              efforts: ['low', 'medium', 'high', 'xhigh'],
+              defaultLevel: 'medium'
+            }
+          }
+        }
+      },
+      updatedAt: '2026-09-04'
+    });
+
+    expect(result.snapshot.models['gpt-5.5'].thinking).toEqual({
+      mode: 'effort',
+      efforts: ['low', 'medium', 'high', 'xhigh'],
+      defaultLevel: 'medium'
+    });
+  });
+
   test('excludes non-text and unpriced entries and reports them', () => {
     const result = buildSnapshot(source, {
       policy,
