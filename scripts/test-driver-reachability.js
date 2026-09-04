@@ -12,6 +12,13 @@ const DYNAMIC_ENTRIES = new Set([
 ]);
 const COMPANION_FILES = new Set(['channels-implementation.js', 'native-config.js']);
 const DRIVER_FILES = new Set(['api-operations.js', 'channels.js', 'proxy.js', 'projects.js', 'sessions.js', 'statistics.js', 'resource-sync.js', 'prompts.js', 'mcp.js']);
+const MIGRATED_INTERACTIVE_FILES = Object.freeze([
+  'src/ui/menu.js',
+  'src/commands/list.js',
+  'src/commands/search.js',
+  'src/commands/workspace.js',
+  'src/commands/resume.js'
+]);
 const PLATFORM_BUSINESS_FILES = new Set([
   'api.js',
   'project-config.js',
@@ -45,9 +52,17 @@ function walk(directory) {
   return files;
 }
 
+function findDirectClaudeImports() {
+  return MIGRATED_INTERACTIVE_FILES.filter(relative => {
+    const source = fs.readFileSync(path.join(ROOT, relative), 'utf8');
+    return /(?:platforms[\\/])?drivers[\\/]claude[\\/]/.test(source);
+  });
+}
+
 function main() {
   const registry = getPlatformRegistry();
   const runtime = getPlatformRuntime();
+  const directClaudeImports = findDirectClaudeImports();
   const reachable = [];
   const orphan = [];
 
@@ -90,10 +105,11 @@ function main() {
       legacyDriverRegistry: fs.existsSync(path.join(ROOT, 'src/platforms/drivers/legacy.js'))
     },
     dynamicEntries: [...DYNAMIC_ENTRIES],
-    orphan
+    orphan,
+    directClaudeImports
   };
   console.log(JSON.stringify(result, null, 2));
-  if (orphan.length) process.exitCode = 1;
+  if (orphan.length || directClaudeImports.length) process.exitCode = 1;
 }
 
 main();

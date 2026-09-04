@@ -1,44 +1,47 @@
-const SUPPORTED_PLATFORMS = Object.freeze([
-  'claude',
-  'codex',
-  'gemini',
-  'opencode',
-  'omp'
-]);
+const { resolvePlatform, createPlatformAccessError } = require('../../platforms/access');
 
 function resolveManagedPlatform(rawPlatform, options = {}) {
-  const fallback = options.fallback || 'claude';
   const raw = rawPlatform == null ? '' : String(rawPlatform);
   const normalized = raw.trim().toLowerCase();
+  const fallback = options.fallback === undefined ? 'claude' : options.fallback;
 
-  if (!normalized) {
+  try {
+    if (!normalized) {
+      const resolved = resolvePlatform('', { ...options, fallback });
+      return {
+        platform: resolved.key,
+        warning: null,
+        deprecated: false
+      };
+    }
+
+    if (normalized === 'pi') {
+      const resolved = resolvePlatform('omp', options);
+      return {
+        platform: resolved.key,
+        warning: 'Platform "pi" is deprecated; use "omp".',
+        deprecated: true
+      };
+    }
+
+    const resolved = resolvePlatform(normalized, options);
     return {
-      platform: fallback,
+      platform: resolved.key,
       warning: null,
       deprecated: false
     };
+  } catch (error) {
+    if (error?.code === 'not_found') {
+      throw createPlatformAccessError('invalid', {
+        platform: raw.trim() || raw,
+        message: `Invalid platform: ${raw.trim() || raw}`,
+        cause: error
+      });
+    }
+    throw error;
   }
-
-  if (normalized === 'pi') {
-    return {
-      platform: 'omp',
-      warning: 'Platform "pi" is deprecated; use "omp".',
-      deprecated: true
-    };
-  }
-
-  if (!SUPPORTED_PLATFORMS.includes(normalized)) {
-    throw new Error(`Invalid platform: ${raw.trim() || raw}`);
-  }
-
-  return {
-    platform: normalized,
-    warning: null,
-    deprecated: false
-  };
 }
 
 module.exports = {
-  SUPPORTED_PLATFORMS,
   resolveManagedPlatform
 };

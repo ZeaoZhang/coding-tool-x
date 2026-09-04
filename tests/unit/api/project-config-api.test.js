@@ -177,3 +177,38 @@ test('toggles a project Skill through the effective control service', async () =
     false
   );
 });
+
+test('keeps Claude as the default when platform is absent', async () => {
+  const res = await request(buildApp()).get('/?projectPath=%2Ftmp%2Fproject');
+
+  expect(res.status).toBe(200);
+  expect(res.body.platform).toBe('claude');
+  expect(projectConfigService.getSnapshot).toHaveBeenCalledWith('/tmp/project', 'claude');
+});
+
+test('rejects an unknown non-empty platform without touching the Claude service', async () => {
+  const res = await request(buildApp()).get('/?projectPath=%2Ftmp%2Fproject&platform=missing');
+
+  expect(res.status).toBe(404);
+  expect(res.body.success).toBe(false);
+  expect(projectConfigService.getSnapshot).not.toHaveBeenCalled();
+});
+
+test('routes a registered custom platform to the project config service', async () => {
+  const runtime = require('../../../src/platforms/runtime');
+  const definition = { key: 'demo-cli', label: 'Demo CLI' };
+  const registry = {
+    resolve: vi.fn(key => key === 'demo-cli' ? definition : null)
+  };
+  const registrySpy = vi.spyOn(runtime, 'getPlatformRegistry').mockReturnValue(registry);
+
+  try {
+    const res = await request(buildApp()).get('/?projectPath=%2Ftmp%2Fproject&platform=demo-cli');
+
+    expect(res.status).toBe(200);
+    expect(res.body.platform).toBe('demo-cli');
+    expect(projectConfigService.getSnapshot).toHaveBeenCalledWith('/tmp/project', 'demo-cli');
+  } finally {
+    registrySpy.mockRestore();
+  }
+});

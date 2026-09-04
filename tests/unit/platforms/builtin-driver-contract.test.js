@@ -165,7 +165,9 @@ describe('built-in session and statistics Driver contracts', () => {
       requireImpl: () => service
     });
 
-    for (const operation of ['listSessions', 'recent', 'search', 'delete', 'fork']) {
+    const operations = ['listSessions', 'recent', 'search', 'delete', 'fork'];
+    if (platform === 'claude') operations.push('launch');
+    for (const operation of operations) {
       expect(typeof driver[operation]).toBe('function');
     }
   });

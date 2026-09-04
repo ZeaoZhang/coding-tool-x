@@ -6,24 +6,34 @@
 
 const express = require('express');
 const { CommandsService } = require('../../platforms/commands-service');
+const { resolvePlatform, createPlatformAccessError } = require('../../platforms/access');
 const { sendApiError } = require('./validation-errors');
 
 const router = express.Router();
-const SUPPORTED_PLATFORMS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
 const commandServices = new Map();
 
-function resolvePlatform(rawPlatform) {
-  return SUPPORTED_PLATFORMS.includes(rawPlatform) ? rawPlatform : 'claude';
+function getRawPlatform(req) {
+  const queryPlatform = typeof req.query?.platform === 'string' ? req.query.platform.trim() : '';
+  const bodyPlatform = typeof req.body?.platform === 'string' ? req.body.platform.trim() : '';
+  return queryPlatform || bodyPlatform || '';
 }
 
 function getPlatform(req) {
-  return resolvePlatform(req.query?.platform || req.body?.platform);
+  return resolvePlatform(getRawPlatform(req), { fallback: 'claude' }).key;
 }
 
 function getCommandsService(req) {
   const platform = getPlatform(req);
   if (!commandServices.has(platform)) {
-    commandServices.set(platform, new CommandsService(platform));
+    const service = new CommandsService(platform);
+    if (!service || typeof service.listCommands !== 'function') {
+      throw createPlatformAccessError('unsupported', {
+        platform,
+        capability: 'commands',
+        message: `Commands are not supported for ${platform}`
+      });
+    }
+    commandServices.set(platform, service);
   }
   return { platform, service: commandServices.get(platform) };
 }
