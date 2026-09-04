@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 const { getAllSessions, parseSessionInfoFast } = require('../../../utils/session');
 const { loadAliases, setAlias } = require('../../../server/services/alias');
@@ -511,6 +512,7 @@ module.exports = {
   deleteSession,
   forkSession,
   launch,
+  getRecentSessions,
   getProjectOrder,
   saveProjectOrder,
   getSessionOrder,
