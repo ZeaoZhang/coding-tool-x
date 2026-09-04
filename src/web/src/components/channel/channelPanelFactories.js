@@ -1785,10 +1785,9 @@ const channelPanelFactories = {
           offline: liveOptions.length === 0,
           source: liveOptions.length > 0 ? 'channel' : 'Models.dev'
         }
-        if (result.error) {
-          form.modelsFetchError = result.error
-          form.modelsFetchErrorHint = result.errorHint
-            || (offlineOptions.length ? '已使用 Models.dev 离线模型列表' : '请手动填写模型名称')
+        if (result.error || (liveOptions.length === 0 && offlineOptions.length > 0)) {
+          form.modelsFetchError = result.error || '无法自动获取模型列表'
+          form.modelsFetchErrorHint = result.errorHint || '已使用 Models.dev 离线模型列表'
         }
       } catch (error) {
         form.availableModels = offlineOptions
@@ -1818,7 +1817,10 @@ const channelPanelFactories = {
       form.modelDefinitionsJson = formatJson([...byId.values()].filter(model => model.id), [])
       form.modelMetadataMode = 'hybrid'
       const warningCount = Array.isArray(result.warnings) ? result.warnings.length : 0
-      form.modelMetadataStatus = `已读取 ${result.models?.length || 0} 个模型${warningCount ? `，${warningCount} 条兼容提示` : ''}`
+      const sourceName = result.source?.name === 'models.dev'
+        ? 'Models.dev'
+        : (result.source?.name || 'Models.dev')
+      form.modelMetadataStatus = `已读取 ${result.models?.length || 0} 个模型（${sourceName} 离线快照）${warningCount ? `，${warningCount} 条兼容提示` : ''}`
     },
     testFn: testOmpChannelSpeed,
     api: {

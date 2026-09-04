@@ -263,9 +263,7 @@
       "id": "alibaba/qwen-omni-turbo",
       "input": [
         "text",
-        "image",
-        "audio",
-        "video"
+        "image"
       ],
       "limit": {
         "context": 32768,
@@ -289,8 +287,7 @@
       "id": "alibaba/qwen-omni-turbo-realtime",
       "input": [
         "text",
-        "image",
-        "audio"
+        "image"
       ],
       "limit": {
         "context": 32768,
@@ -523,9 +520,7 @@
       "id": "alibaba/qwen2-5-omni-7b",
       "input": [
         "text",
-        "image",
-        "audio",
-        "video"
+        "image"
       ],
       "limit": {
         "context": 32768,
@@ -850,9 +845,7 @@
       "id": "alibaba/qwen3-omni-flash",
       "input": [
         "text",
-        "image",
-        "audio",
-        "video"
+        "image"
       ],
       "limit": {
         "context": 65536,
@@ -876,9 +869,7 @@
       "id": "alibaba/qwen3-omni-flash-realtime",
       "input": [
         "text",
-        "image",
-        "audio",
-        "video"
+        "image"
       ],
       "limit": {
         "context": 65536,
@@ -974,9 +965,7 @@
       "id": "alibaba/qwen3.5-122b-a10b",
       "input": [
         "text",
-        "image",
-        "video",
-        "audio"
+        "image"
       ],
       "limit": {
         "context": 262144,
@@ -1000,9 +989,7 @@
       "id": "alibaba/qwen3.5-27b",
       "input": [
         "text",
-        "image",
-        "video",
-        "audio"
+        "image"
       ],
       "limit": {
         "context": 262144,
@@ -1026,9 +1013,7 @@
       "id": "alibaba/qwen3.5-35b-a3b",
       "input": [
         "text",
-        "image",
-        "video",
-        "audio"
+        "image"
       ],
       "limit": {
         "context": 262144,
@@ -1052,9 +1037,7 @@
       "id": "alibaba/qwen3.5-397b-a17b",
       "input": [
         "text",
-        "image",
-        "video",
-        "audio"
+        "image"
       ],
       "limit": {
         "context": 262144,
@@ -1078,8 +1061,7 @@
       "id": "alibaba/qwen3.5-plus",
       "input": [
         "text",
-        "image",
-        "video"
+        "image"
       ],
       "limit": {
         "context": 1000000,
@@ -1103,9 +1085,7 @@
       "id": "alibaba/qwen3.6-27b",
       "input": [
         "text",
-        "image",
-        "video",
-        "audio"
+        "image"
       ],
       "limit": {
         "context": 262144,
@@ -1129,9 +1109,7 @@
       "id": "alibaba/qwen3.6-35b-a3b",
       "input": [
         "text",
-        "image",
-        "video",
-        "audio"
+        "image"
       ],
       "limit": {
         "context": 262144,
@@ -1155,8 +1133,7 @@
       "id": "alibaba/qwen3.6-flash",
       "input": [
         "text",
-        "image",
-        "video"
+        "image"
       ],
       "limit": {
         "context": 1000000,
@@ -1206,8 +1183,7 @@
       "id": "alibaba/qwen3.6-plus",
       "input": [
         "text",
-        "image",
-        "video"
+        "image"
       ],
       "limit": {
         "context": 1000000,
@@ -1258,8 +1234,7 @@
       "id": "alibaba/qwen3.7-plus",
       "input": [
         "text",
-        "image",
-        "video"
+        "image"
       ],
       "limit": {
         "context": 1000000,
@@ -1285,8 +1260,7 @@
       "id": "alibaba/qwen3.8-flash",
       "input": [
         "text",
-        "image",
-        "video"
+        "image"
       ],
       "limit": {
         "context": 1000000,
@@ -1312,9 +1286,7 @@
       "id": "alibaba/qwen3.8-max",
       "input": [
         "text",
-        "image",
-        "video",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1000000,
@@ -1340,8 +1312,7 @@
       "id": "claude-fable-5",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1000000,
@@ -1368,8 +1339,7 @@
       "id": "claude-fable-5-1",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1000000,
@@ -1396,8 +1366,7 @@
       "id": "claude-haiku-4-5",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 200000,
@@ -1424,8 +1393,7 @@
       "id": "claude-haiku-4-5-20251001",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 200000,
@@ -1452,8 +1420,7 @@
       "id": "claude-opus-4-5",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 200000,
@@ -1480,8 +1447,7 @@
       "id": "claude-opus-4-5-20251101",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 200000,
@@ -1508,8 +1474,7 @@
       "id": "claude-opus-4-6",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1000000,
@@ -1536,8 +1501,7 @@
       "id": "claude-opus-4-7",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1000000,
@@ -1564,8 +1528,7 @@
       "id": "claude-opus-4-8",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1000000,
@@ -1592,8 +1555,7 @@
       "id": "claude-opus-5",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1000000,
@@ -1620,8 +1582,7 @@
       "id": "claude-sonnet-4-5",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1000000,
@@ -1648,8 +1609,7 @@
       "id": "claude-sonnet-4-5-20250929",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1000000,
@@ -1676,8 +1636,7 @@
       "id": "claude-sonnet-4-6",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1000000,
@@ -1704,8 +1663,7 @@
       "id": "claude-sonnet-5",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1000000,
@@ -1830,10 +1788,7 @@
       "id": "gemini-2.5-flash",
       "input": [
         "text",
-        "image",
-        "audio",
-        "video",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1048576,
@@ -1859,10 +1814,7 @@
       "id": "gemini-2.5-flash-lite",
       "input": [
         "text",
-        "image",
-        "audio",
-        "video",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1048576,
@@ -1888,10 +1840,7 @@
       "id": "gemini-2.5-pro",
       "input": [
         "text",
-        "image",
-        "audio",
-        "video",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1048576,
@@ -1917,10 +1866,7 @@
       "id": "gemini-3-flash-preview",
       "input": [
         "text",
-        "image",
-        "video",
-        "audio",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1048576,
@@ -1957,10 +1903,7 @@
       "id": "gemini-3.1-flash-lite",
       "input": [
         "text",
-        "image",
-        "video",
-        "audio",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1048576,
@@ -2011,9 +1954,7 @@
       "id": "gemini-3.1-flash-live-preview",
       "input": [
         "text",
-        "image",
-        "video",
-        "audio"
+        "image"
       ],
       "limit": {
         "context": 131072,
@@ -2071,10 +2012,7 @@
       "id": "gemini-3.1-pro-preview",
       "input": [
         "text",
-        "image",
-        "video",
-        "audio",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1048576,
@@ -2100,10 +2038,7 @@
       "id": "gemini-3.1-pro-preview-customtools",
       "input": [
         "text",
-        "image",
-        "video",
-        "audio",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1048576,
@@ -2129,10 +2064,7 @@
       "id": "gemini-3.5-flash",
       "input": [
         "text",
-        "image",
-        "video",
-        "audio",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1048576,
@@ -2158,10 +2090,7 @@
       "id": "gemini-3.5-flash-lite",
       "input": [
         "text",
-        "image",
-        "video",
-        "audio",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1048576,
@@ -2187,10 +2116,7 @@
       "id": "gemini-3.6-flash",
       "input": [
         "text",
-        "image",
-        "video",
-        "audio",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1048576,
@@ -2216,10 +2142,7 @@
       "id": "gemini-3.7-flash",
       "input": [
         "text",
-        "image",
-        "video",
-        "audio",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1048576,
@@ -2245,10 +2168,7 @@
       "id": "gemini-3.8-flash",
       "input": [
         "text",
-        "image",
-        "video",
-        "audio",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1048576,
@@ -2274,10 +2194,7 @@
       "id": "gemini-flash-latest",
       "input": [
         "text",
-        "image",
-        "video",
-        "audio",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1048576,
@@ -2303,10 +2220,7 @@
       "id": "gemini-flash-lite-latest",
       "input": [
         "text",
-        "image",
-        "video",
-        "audio",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1048576,
@@ -2332,8 +2246,7 @@
       "id": "gpt-4.1",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1047576,
@@ -2359,8 +2272,7 @@
       "id": "gpt-4.1-mini",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1047576,
@@ -2386,8 +2298,7 @@
       "id": "gpt-4o",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 128000,
@@ -2465,8 +2376,7 @@
       "id": "gpt-4o-mini",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 128000,
@@ -2727,8 +2637,7 @@
       "id": "gpt-5.3-codex",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 400000,
@@ -2754,8 +2663,7 @@
       "id": "gpt-5.3-codex-spark",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 128000,
@@ -2781,8 +2689,7 @@
       "id": "gpt-5.4",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1050000,
@@ -2885,8 +2792,7 @@
       "id": "gpt-5.5",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1050000,
@@ -2922,8 +2828,7 @@
       "id": "gpt-5.5-pro",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1050000,
@@ -2948,8 +2853,7 @@
       "id": "gpt-5.6",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1050000,
@@ -2976,8 +2880,7 @@
       "id": "gpt-5.6-luna",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1050000,
@@ -3004,8 +2907,7 @@
       "id": "gpt-5.6-sol",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1050000,
@@ -3032,8 +2934,7 @@
       "id": "gpt-5.6-terra",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1050000,
@@ -3060,7 +2961,6 @@
       "id": "gpt-realtime-2.1",
       "input": [
         "text",
-        "audio",
         "image"
       ],
       "limit": {
@@ -3492,8 +3392,7 @@
       "id": "moonshotai/kimi-k2.5",
       "input": [
         "text",
-        "image",
-        "video"
+        "image"
       ],
       "limit": {
         "context": 262144,
@@ -3518,8 +3417,7 @@
       "id": "moonshotai/kimi-k2.6",
       "input": [
         "text",
-        "image",
-        "video"
+        "image"
       ],
       "limit": {
         "context": 262144,
@@ -3544,8 +3442,7 @@
       "id": "moonshotai/kimi-k2.7-code",
       "input": [
         "text",
-        "image",
-        "video"
+        "image"
       ],
       "limit": {
         "context": 262144,
@@ -3570,8 +3467,7 @@
       "id": "moonshotai/kimi-k2.7-code-highspeed",
       "input": [
         "text",
-        "image",
-        "video"
+        "image"
       ],
       "limit": {
         "context": 262144,
@@ -3596,8 +3492,7 @@
       "id": "moonshotai/kimi-k3",
       "input": [
         "text",
-        "image",
-        "video"
+        "image"
       ],
       "limit": {
         "context": 1048576,
@@ -3622,8 +3517,7 @@
       "id": "o3",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 200000,
@@ -3674,8 +3568,7 @@
       "id": "xai/grok-4.20-0309-non-reasoning",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1000000,
@@ -3700,8 +3593,7 @@
       "id": "xai/grok-4.20-0309-reasoning",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1000000,
@@ -3726,8 +3618,7 @@
       "id": "xai/grok-4.3",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1000000,
@@ -3752,8 +3643,7 @@
       "id": "xai/grok-4.5",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 500000,
@@ -3778,8 +3668,7 @@
       "id": "xai/grok-4.6",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 500000,
@@ -3804,8 +3693,7 @@
       "id": "xai/grok-build-0.1",
       "input": [
         "text",
-        "image",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 256000,
@@ -3905,8 +3793,7 @@
       "id": "zai/glm-4.5v",
       "input": [
         "text",
-        "image",
-        "video"
+        "image"
       ],
       "limit": {
         "context": 64000,
@@ -3955,8 +3842,7 @@
       "id": "zai/glm-4.6v",
       "input": [
         "text",
-        "image",
-        "video"
+        "image"
       ],
       "limit": {
         "context": 128000,
@@ -4180,9 +4066,7 @@
       "id": "zai/glm-5.3-flash",
       "input": [
         "text",
-        "image",
-        "video",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 1000000,
@@ -4208,9 +4092,7 @@
       "id": "zai/glm-5v-turbo",
       "input": [
         "text",
-        "image",
-        "video",
-        "pdf"
+        "image"
       ],
       "limit": {
         "context": 200000,

@@ -16,10 +16,11 @@ describe('OMP channels Driver', () => {
       warnings: [],
       source: { name: 'models.dev' }
     };
+    const getCatalogMetadata = vi.fn().mockReturnValue(catalog);
     const driver = createDriver({
       requireImpl: () => ({
         getChannels: () => [],
-        getCatalogMetadata: vi.fn().mockReturnValue(catalog)
+        getCatalogMetadata
       })
     });
 
@@ -30,5 +31,6 @@ describe('OMP channels Driver', () => {
       operation: 'catalogMetadata',
       data: catalog
     });
+    expect(getCatalogMetadata).toHaveBeenCalledWith({ providerKey: 'deepseek' });
   });
 });

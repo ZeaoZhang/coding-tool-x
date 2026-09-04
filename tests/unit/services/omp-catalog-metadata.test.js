@@ -7,7 +7,7 @@ vi.mock('child_process', async () => ({
   execFileSync
 }));
 
-const channels = require('../../../../src/platforms/drivers/omp/channels-implementation');
+const channels = require('../../../src/platforms/drivers/omp/channels-implementation');
 
 describe('OMP offline catalog metadata', () => {
   beforeEach(() => {
@@ -20,7 +20,7 @@ describe('OMP offline catalog metadata', () => {
   });
 
   test('filters the bundled OMP catalog without invoking CLI or network', () => {
-    const result = channels.getCatalogMetadata({ body: { providerKey: 'deepseek' } });
+    const result = channels.getCatalogMetadata({ providerKey: 'deepseek' });
 
     expect(result.source).toMatchObject({
       name: 'models.dev',
@@ -35,8 +35,18 @@ describe('OMP offline catalog metadata', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  test('retains explicitly requested models alongside provider matches', () => {
+    const result = channels.getCatalogMetadata({
+      providerKey: 'deepseek',
+      models: [{ id: 'gpt-5.5' }]
+    });
+
+    expect(result.models.some(model => model.id === 'gpt-5.5')).toBe(true);
+    expect(result.models.some(model => model.provider === 'deepseek')).toBe(true);
+  });
+
   test('falls back to the complete bundled OMP catalog for unknown providers', () => {
-    const result = channels.getCatalogMetadata({ body: { providerKey: 'unknown-provider' } });
+    const result = channels.getCatalogMetadata({ providerKey: 'unknown-provider' });
 
     expect(result.models.length).toBeGreaterThan(1);
     expect(new Set(result.models.map(model => model.provider)).size).toBeGreaterThan(1);
