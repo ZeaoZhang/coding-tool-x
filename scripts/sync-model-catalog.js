@@ -198,10 +198,6 @@ function normalizeModel(providerId, rule, model, rawModelId, warnings) {
     output.pricing.cacheCreation = cost.cache_write;
   }
 
-  if (EXPIRED_STATUSES.has(status)) {
-    warnings.push(`${sourceId}: excluded because upstream status is ${status}`);
-    return null;
-  }
 
   const ignoredCostFields = getIgnoredCostFields(cost);
   if (ignoredCostFields.length > 0) {
@@ -221,6 +217,22 @@ function normalizeModel(providerId, rule, model, rawModelId, warnings) {
 
 function modelIsEqual(left, right) {
   return stableStringify(left) === stableStringify(right);
+}
+
+const LEGACY_RUNTIME_FIELDS = ['reasoning', 'thinking', 'input', 'supportsTools'];
+
+function preserveLegacyRuntimeFields(metadata, previousModels, runtimeId) {
+  const previousId = Object.keys(previousModels || {}).find(id => id.toLowerCase() === runtimeId.toLowerCase());
+  const previous = previousId ? previousModels[previousId] : null;
+  if (!isPlainObject(previous)) return metadata;
+
+  const result = { ...metadata };
+  for (const field of LEGACY_RUNTIME_FIELDS) {
+    if (result[field] === undefined && previous[field] !== undefined) {
+      result[field] = clone(previous[field]);
+    }
+  }
+  return result;
 }
 
 function buildNativeDefaults(previousSnapshot, selectedRecords, allModels) {
@@ -400,6 +412,7 @@ function buildSnapshot(payload, {
         throw new Error(`duplicate runtime model id: ${record.runtimeId} from ${existingSource} and ${record.sourceId}`);
       }
       runtimeSources.set(record.runtimeId.toLowerCase(), record.sourceId);
+      record.metadata = preserveLegacyRuntimeFields(record.metadata, previousModels, record.runtimeId);
       selectedRecords.push(record);
       selectedModels[record.runtimeId] = record.metadata;
     }
