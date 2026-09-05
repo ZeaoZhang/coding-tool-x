@@ -576,7 +576,6 @@ function buildOmpSyncCandidate(modelsConfig, selection, channels, options = {}) 
   const authMode = options.authMode === 'oauth'
     ? 'oauth'
     : resolveOmpAuthMode(provider, sourceProvider, existing);
-    : resolveOmpAuthMode(provider, sourceProvider, existing);
 
   let credential = resolveApiKeyValue(sourceProvider.apiKey || sourceProvider.api_key || '');
   if (!credential.value) {
