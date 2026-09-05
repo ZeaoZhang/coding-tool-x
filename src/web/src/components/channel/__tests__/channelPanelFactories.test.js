@@ -5,6 +5,7 @@ const {
   fetchCodexChannels,
   fetchGeminiChannels,
   fetchOpenCodeChannels,
+  fetchOmpChannels,
   fetchOmpCatalogMetadata,
   fetchOmpChannelModels,
   fetchOpenCodeChannelModels,
@@ -17,6 +18,7 @@ const {
   fetchCodexChannels: vi.fn(),
   fetchGeminiChannels: vi.fn(),
   fetchOpenCodeChannels: vi.fn(),
+  fetchOmpChannels: vi.fn(),
   fetchOmpCatalogMetadata: vi.fn(),
   fetchOmpChannelModels: vi.fn(),
   fetchOpenCodeChannelModels: vi.fn(),
@@ -32,6 +34,7 @@ vi.mock('../../../api/channels', async () => ({
   getCodexChannels: fetchCodexChannels,
   getGeminiChannels: fetchGeminiChannels,
   getOpenCodeChannels: fetchOpenCodeChannels,
+  getOmpChannels: fetchOmpChannels,
   fetchOmpCatalogMetadata,
   fetchOmpChannelModels,
   fetchOpenCodeChannelModels,
@@ -50,6 +53,7 @@ describe('channel panel model catalogs', () => {
     loadDefaultModels.mockReset().mockResolvedValue(undefined)
     fetchClaudeChannels.mockReset().mockResolvedValue([{ id: 'claude-1' }])
     fetchCodexChannels.mockReset().mockResolvedValue([{ id: 'codex-1' }])
+    fetchOmpChannels.mockReset().mockResolvedValue([{ id: 'omp-1' }])
     fetchGeminiChannels.mockReset().mockResolvedValue([{ id: 'gemini-1' }])
     fetchOpenCodeChannels.mockReset().mockResolvedValue([{ id: 'opencode-1' }])
     getAllModelsByToolType.mockImplementation(toolType => ({
@@ -82,6 +86,14 @@ describe('channel panel model catalogs', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1)
     }
   })
+  it('normalizes array responses for OMP while preserving auth metadata', async () => {
+    await expect(channelPanelFactories.omp().api.fetch()).resolves.toEqual({
+      channels: [{ id: 'omp-1' }],
+      authProviderMeta: null
+    })
+    expect(fetchOmpChannels).toHaveBeenCalledTimes(1)
+  })
+
 
 
   it('uses the offline snapshot for OpenCode when no base URL is configured', async () => {

@@ -1907,8 +1907,8 @@ const channelPanelFactories = {
       fetch: async () => {
         const data = await getOmpChannels()
         return {
-          channels: data.channels || [],
-          authProviderMeta: data.authProviderMeta || null
+          channels: normalizeChannelList(data),
+          authProviderMeta: Array.isArray(data) ? null : (data.authProviderMeta || null)
         }
       },
       syncCurrent: syncCurrentOmpChannel,
