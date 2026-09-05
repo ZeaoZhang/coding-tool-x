@@ -2,22 +2,42 @@
 
 const { ok, unsupported, invalid, failed } = require('./driver-result');
 
-const SECRET_KEYS = new Set(['apiKey', 'key', 'token', 'secret', 'password', 'accessToken', 'refreshToken']);
+const SECRET_KEYS = new Set(['apiKey', 'key', 'token', 'secret', 'password', 'accessToken', 'refreshToken', 'idToken', 'credential', 'raw']);
 const COMMON_KEYS = new Set([
   'id', 'name', 'baseUrl', 'enabled', 'weight', 'maxConcurrency',
   'routingGroup', 'providerKey', 'providerApi', 'model', 'wireApi',
-  'gatewaySourceType', 'websiteUrl', 'createdAt', 'updatedAt'
+  'gatewaySourceType', 'websiteUrl', 'createdAt', 'updatedAt',
+  'authMode', 'authRef', 'authSource', 'authStatus', 'oauthProviderId'
 ]);
+
+function isSecretKey(key) {
+  return SECRET_KEYS.has(key) || /token|secret|password|credential/i.test(key);
+}
+
+function sanitizeValue(value) {
+  if (Array.isArray(value)) return value.map(sanitizeValue);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !isSecretKey(key))
+    .map(([key, child]) => [key, sanitizeValue(child)]));
+}
 
 function sanitizeChannel(channel) {
   if (!channel || typeof channel !== 'object' || Array.isArray(channel)) return channel;
   const common = {};
   const extra = {};
   for (const [key, value] of Object.entries(channel)) {
-    if (SECRET_KEYS.has(key)) continue;
-    (COMMON_KEYS.has(key) ? common : extra)[key] = value;
+    if (isSecretKey(key)) continue;
+    if (COMMON_KEYS.has(key)) common[key] = sanitizeValue(value);
+    else extra[key] = sanitizeValue(value);
   }
-  return Object.keys(extra).length ? { ...common, extra } : common;
+  if (Object.keys(extra).length) common.extra = extra;
+  if (common.authRef) {
+    const ref = common.authRef;
+    common.authRef = Object.fromEntries(['credentialId', 'providerId', 'accountId', 'identityKey', 'accountEmail']
+      .map(key => [key, String(ref[key] || '')]));
+  }
+  return common;
 }
 
 function sanitizeChannels(value) {

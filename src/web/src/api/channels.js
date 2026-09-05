@@ -24,6 +24,25 @@ export async function deletePlatformChannel(platform, channelId) {
   return response.data
 }
 
+export async function getChannelAuth(tool, channelId = '') {
+  const path = channelId
+    ? `${platformChannelPath(tool)}/auth?channelId=${encodeURIComponent(channelId)}`
+    : `${platformChannelPath(tool)}/auth`
+  const response = await client.get(path)
+  return response.data
+}
+
+export async function syncLocalChannelAuth(tool, channelId = '') {
+  const response = await client.post(`${platformChannelPath(tool)}/auth/sync-local`, channelId ? { channelId } : {})
+  return response.data
+}
+
+export async function fetchChannelAuthQuota(tool, channelId, refresh = false) {
+  const suffix = refresh ? '?refresh=true' : ''
+  const response = await client.get(`${platformChannelPath(tool)}/${encodeURIComponent(channelId)}/auth/quota${suffix}`)
+  return response.data
+}
+
 // Claude channels
 export async function getChannels() {
   const response = await client.get('/channels')

@@ -3,7 +3,7 @@
 const { createChannelDriver } = require('../../../shared/channel-driver');
 
 function createDriver(context = {}) {
-  return createChannelDriver({
+  const driver = createChannelDriver({
     ...context,
     platform: 'gemini',
     servicePath: './gemini/channels-implementation',
@@ -29,6 +29,11 @@ function createDriver(context = {}) {
     },
     formatCliChannelDetails: channel => channel.model ? [`model ${channel.model}`] : []
   });
+  const auth = require('../../channel-auth-service');
+  driver.getAuth = context => auth.getChannelAuth('gemini', { channelId: context?.params?.channelId || context?.query?.channelId || '' });
+  driver.syncLocalAuth = context => auth.syncLocalChannelAuth('gemini', { channelId: context?.body?.channelId || context?.params?.channelId || context?.query?.channelId || '' });
+  driver.getAuthQuota = context => auth.fetchChannelAuthQuota('gemini', context?.params?.channelId, { refresh: context?.query?.refresh === 'true' });
+  return driver;
 }
 
 module.exports = { createDriver };

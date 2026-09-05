@@ -387,7 +387,11 @@ export default function useChannelManager(config) {
 
   function openAddDialog() {
     state.editingChannel = null
-    state.formData = config.getInitialForm()
+    state.formData = {
+      authMode: 'api_key',
+      authRef: { credentialId: '', providerId: '', accountId: '', identityKey: '', accountEmail: '' },
+      ...(config.getInitialForm() || {})
+    }
     state.formData._showChannelBalance = state.showChannelBalance
     clearValidation()
     state.showDialog = true
@@ -397,13 +401,14 @@ export default function useChannelManager(config) {
     state.showDialog = false
     state.editingChannel = null
     state.formData = config.getInitialForm()
-    state.formData._showChannelBalance = state.showChannelBalance
-    clearValidation()
   }
-
   function handleEdit(channel) {
     state.editingChannel = channel
-    state.formData = config.mapChannelToForm(channel)
+    state.formData = {
+      authMode: channel.authMode || 'api_key',
+      authRef: { credentialId: '', providerId: '', accountId: '', identityKey: '', accountEmail: '', ...(channel.authRef || {}) },
+      ...(config.mapChannelToForm(channel) || {})
+    }
     state.formData._showChannelBalance = state.showChannelBalance
     clearValidation()
     state.showDialog = true
@@ -437,7 +442,11 @@ export default function useChannelManager(config) {
     config.formSections.forEach(section => {
       const sectionVisible = isSectionVisible(section)
       section.fields.forEach(field => {
-        if (!sectionVisible || !isFieldVisible(field)) {
+        if (
+          !sectionVisible
+          || !isFieldVisible(field)
+          || (state.formData.authMode === 'oauth' && ['baseUrl', 'apiKey', 'providerApi', 'gatewaySourceType'].includes(field.key))
+        ) {
           clearFieldValidation(field)
           return
         }

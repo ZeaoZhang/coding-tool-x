@@ -898,7 +898,6 @@ function syncManagedOmpVisibility(channels = [], modelsConfig = { providers: {} 
     : captureOriginalVisibility(settings);
   const before = JSON.stringify(settings);
   const settingsBackupPath = createModelsBackupIfNeeded(settingsPath, options);
-
   settings.enabledModels = visibility.managedEnabledModelsForSettings;
   settings.disabledProviders = uniqueStrings([
     ...collectUserDisabledProviders(settings, previousState),

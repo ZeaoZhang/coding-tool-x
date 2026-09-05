@@ -165,9 +165,14 @@ function parseProviderConfig(value) {
 function buildAuthPayload(form) {
   const shouldKeepManualBalanceCredential = form._showChannelBalance !== true || shouldShowManualBalanceCredential(form)
   const authMode = ['api_key', 'oauth', 'none'].includes(form.authMode) ? form.authMode : 'api_key'
+  const authRef = authMode === 'oauth'
+    ? Object.fromEntries(['credentialId', 'providerId', 'accountId', 'identityKey', 'accountEmail']
+      .map(key => [key, String(form.authRef?.[key] || '').trim()]))
+    : undefined
   return {
-    apiKey: authMode === 'none' ? '' : (form.apiKey || ''),
+    apiKey: authMode === 'oauth' || authMode === 'none' ? '' : (form.apiKey || ''),
     authMode,
+    ...(authRef ? { authRef, authSource: 'synced-local', authStatus: form.authStatus || 'available' } : {}),
     oauthProviderId: authMode === 'oauth' ? (form.oauthProviderId || form.providerKey || '') : '',
     balanceToken: shouldKeepManualBalanceCredential ? (form.balanceToken || '') : '',
     balanceUserId: shouldKeepManualBalanceCredential ? (form.balanceUserId || null) : null
@@ -364,6 +369,7 @@ const channelPanelFactories = {
       {
         title: '基本信息',
         fields: [
+          { key: 'authMode', label: '认证方式', type: 'channel-auth' },
           { key: 'name', label: '渠道名称', type: 'text', required: true, placeholder: '输入渠道名称' },
           {
             key: 'baseUrl',
@@ -716,6 +722,7 @@ const channelPanelFactories = {
       {
         title: '基本信息',
         fields: [
+          { key: 'authMode', label: '认证方式', type: 'channel-auth' },
           { key: 'name', label: '渠道名称', type: 'text', required: true, placeholder: '显示名称' },
           {
             key: 'providerKey',
@@ -978,6 +985,7 @@ const channelPanelFactories = {
       {
         title: '基本信息',
         fields: [
+          { key: 'authMode', label: '认证方式', type: 'channel-auth' },
           { key: 'name', label: '渠道名称', type: 'text', required: true, placeholder: '显示名称' },
           { key: 'model', label: 'Model', type: 'text', required: true, placeholder: '例如 gemini-2.5-pro' },
           {
@@ -1546,6 +1554,7 @@ const channelPanelFactories = {
       {
         title: '基本信息',
         fields: [
+          { key: 'authMode', label: '认证方式', type: 'channel-auth' },
           { key: 'name', label: '渠道名称', type: 'text', required: true, placeholder: '显示名称' },
           {
             key: 'providerKey',

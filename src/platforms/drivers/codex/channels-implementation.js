@@ -140,6 +140,7 @@ class CodexChannelService extends BaseChannelService {
       platform: 'codex',
       channelsFilePath: PATHS.channels.codex,
       defaultGatewaySource: 'codex',
+      oauthChannelPolicy: 'single-enabled',
       isProxyRunning: () => isProxyConfig(),
     });
   }

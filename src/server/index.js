@@ -224,7 +224,6 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
 
   // 配置导出/导入 API
   app.use('/api/config-export', require('./api/config-export'));
-  app.use('/api/oauth-credentials', require('./api/oauth-credentials'));
 
   // 配置同步 API
   app.use('/api/config-sync', require('./api/config-sync'));

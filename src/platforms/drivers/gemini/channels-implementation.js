@@ -237,24 +237,61 @@ function getChannels() {
   };
 }
 
+function normalizeAuthConfig(extraConfig = {}, existing = null) {
+  const unsafeField = Object.keys(extraConfig).find(key => /token|secret|password|refresh|access/i.test(key));
+  if (unsafeField) {
+    const error = new Error('Invalid OAuth auth payload');
+    error.statusCode = 400;
+    error.code = 'invalid_auth_payload';
+    throw error;
+  }
+  const mode = extraConfig.authMode || existing?.authMode || 'api_key';
+  if (!['api_key', 'oauth', 'none'].includes(mode)) {
+    const error = new Error('Invalid auth mode');
+    error.statusCode = 400;
+    error.code = 'invalid_auth_payload';
+    throw error;
+  }
+  if (existing && extraConfig.authMode && extraConfig.authMode !== (existing.authMode || 'api_key')) {
+    const error = new Error('Channel authMode is immutable');
+    error.statusCode = 409;
+    error.code = 'auth_mode_immutable';
+    throw error;
+  }
+  if (mode === 'oauth') {
+    const allowed = ['credentialId', 'providerId', 'accountId', 'identityKey', 'accountEmail'];
+    const ref = extraConfig.authRef || existing?.authRef;
+    if (!ref || Object.keys(ref).some(key => !allowed.includes(key)) || !ref.credentialId) {
+      const error = new Error('OAuth reference unavailable');
+      error.statusCode = 422;
+      error.code = 'oauth_reference_unavailable';
+      throw error;
+    }
+    return { authMode: mode, authRef: Object.fromEntries(allowed.map(key => [key, String(ref[key] || '')])), authSource: 'synced-local', authStatus: existing?.authStatus || 'available' };
+  }
+  return { authMode: mode };
+}
+
 // 添加渠道
 function createChannel(name, baseUrl, apiKey, model = 'gemini-2.5-pro', extraConfig = {}) {
   const data = loadChannels();
-
-  // 检查名称是否已存在
+  const auth = normalizeAuthConfig(extraConfig);
   const existing = data.channels.find(c => c.name === name);
-  if (existing) {
-    throw new Error(`Channel name "${name}" already exists`);
+  if (existing) throw new Error(`Channel name "${name}" already exists`);
+  if (auth.authMode !== 'oauth' && auth.authMode !== 'none' && (!baseUrl || !apiKey)) {
+    const error = new Error('Base URL and API key are required');
+    error.statusCode = 400;
+    throw error;
   }
-
   const newChannel = {
     id: crypto.randomUUID(),
     name,
-    baseUrl,
-    apiKey,
+    baseUrl: auth.authMode === 'oauth' ? '' : baseUrl,
+    apiKey: auth.authMode === 'oauth' || auth.authMode === 'none' ? '' : apiKey,
     model,
+    ...auth,
     websiteUrl: extraConfig.websiteUrl || '',
-    enabled: extraConfig.enabled !== false, // 默认启用
+    enabled: auth.authMode === 'oauth' ? false : extraConfig.enabled !== false,
     weight: extraConfig.weight || 1,
     maxConcurrency: extraConfig.maxConcurrency || null,
     balanceToken: extraConfig.balanceToken || '',
@@ -267,17 +304,10 @@ function createChannel(name, baseUrl, apiKey, model = 'gemini-2.5-pro', extraCon
     updatedAt: Date.now()
   };
   newChannel.websiteUrl = resolveChannelWebsiteUrl('gemini', newChannel);
-
   data.channels.push(newChannel);
   saveChannels(data);
-
-  // 仅在非动态切换模式下写入 Gemini 配置文件
   const { getGeminiProxyStatus } = require('./proxy-implementation');
-  const proxyStatus = getGeminiProxyStatus();
-  if (!proxyStatus.running) {
-    writeGeminiConfigForMultiChannel(data.channels);
-  }
-
+  if (!getGeminiProxyStatus().running) writeGeminiConfigForMultiChannel(data.channels);
   return newChannel;
 }
 
@@ -291,6 +321,18 @@ function updateChannel(channelId, updates) {
   }
 
   const oldChannel = data.channels[index];
+  const auth = normalizeAuthConfig(updates, oldChannel);
+  if (auth.authMode === 'oauth' && updates.enabled !== false) {
+    const conflict = data.channels.find(channel => channel.id !== channelId && channel.authMode === 'oauth' && channel.enabled !== false);
+    if (conflict) {
+      const error = new Error(`OAuth channel conflicts with ${conflict.name || conflict.id}`);
+      error.statusCode = 409;
+      error.code = 'oauth_channel_conflict';
+      error.conflictingChannelId = conflict.id;
+      error.conflictingChannelName = conflict.name || conflict.id;
+      throw error;
+    }
+  }
 
   // 检查名称冲突
   if (updates.name && updates.name !== oldChannel.name) {
@@ -300,11 +342,13 @@ function updateChannel(channelId, updates) {
     }
   }
 
-  const merged = { ...oldChannel, ...updates };
+  const merged = { ...oldChannel, ...updates, ...auth };
   const nextChannel = {
     ...merged,
-    id: channelId, // 保持 ID 不变
-    createdAt: oldChannel.createdAt, // 保持创建时间
+    id: channelId,
+    createdAt: oldChannel.createdAt,
+    baseUrl: auth.authMode === 'oauth' ? '' : (merged.baseUrl || ''),
+    apiKey: auth.authMode === 'oauth' || auth.authMode === 'none' ? '' : merged.apiKey,
     modelRedirects: updates.modelRedirects !== undefined ? updates.modelRedirects : (oldChannel.modelRedirects || []),
     speedTestModel: updates.speedTestModel !== undefined ? updates.speedTestModel : (oldChannel.speedTestModel || null),
     apiFormat: updates.apiFormat !== undefined ? normalizeGeminiApiFormat(updates.apiFormat) : normalizeGeminiApiFormat(oldChannel.apiFormat),
@@ -313,10 +357,6 @@ function updateChannel(channelId, updates) {
     gatewaySourceType: normalizeGatewaySourceType(merged.gatewaySourceType, 'gemini'),
     updatedAt: Date.now()
   };
-  nextChannel.websiteUrl = resolveChannelWebsiteUrl('gemini', nextChannel);
-  data.channels[index] = nextChannel;
-
-  // Get proxy status
   const { getGeminiProxyStatus } = require('./proxy-implementation');
   const proxyStatus = getGeminiProxyStatus();
   const isProxyRunning = proxyStatus.running;

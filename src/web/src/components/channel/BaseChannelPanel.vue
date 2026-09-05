@@ -98,6 +98,19 @@
               :validation-status="getValidationStatus(field.key)"
               :feedback="getValidationMessage(field.key)"
             >
+              <ChannelAuthSection
+                v-if="field.type === 'channel-auth'"
+                :platform="type"
+                :channel-id="state.editingChannel?.id || ''"
+                :form-data="state.formData"
+                :auth-meta="state.authMeta"
+                @update-auth="candidate => {
+                  state.formData.authMode = 'oauth'
+                  state.formData.authRef = candidate.authRef
+                  state.formData.authSource = candidate.authSource
+                  state.formData.authStatus = candidate.authStatus
+                }"
+              />
               <!-- 预设选择器 -->
               <n-select
                 v-if="field.type === 'preset'"
@@ -272,6 +285,7 @@ import {
 import { AddOutline } from '@vicons/ionicons5'
 import ChannelCard from './ChannelCard.vue'
 import ModelRedirectEditor from './ModelRedirectEditor.vue'
+import ChannelAuthSection from './ChannelAuthSection.vue'
 import channelPanelFactories from './channelPanelFactories'
 import useChannelManager from '../../composables/useChannelManager'
 import { useChannelScheduler } from '../../composables/useChannelScheduler'
