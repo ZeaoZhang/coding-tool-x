@@ -45,7 +45,7 @@ const API_ROUTE_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 
 const CAPABILITY_OPERATIONS = Object.freeze({
   api: new Set(['getConfig', 'getConfigAuthProviders', 'getConfigCapabilities', 'getConfigResources']),
-  channels: new Set(['applyToSettings', 'bestForRestore', 'catalogMetadata', 'create', 'current', 'enabled', 'list', 'models', 'order', 'poolStatus', 'probeModels', 'remove', 'resetHealth', 'speedTest', 'speedTestAll', 'sync', 'update']),
+  channels: new Set(['applyToSettings', 'bestForRestore', 'catalogMetadata', 'create', 'current', 'enabled', 'getAuth', 'getAuthQuota', 'list', 'models', 'order', 'poolStatus', 'probeModels', 'remove', 'resetHealth', 'speedTest', 'speedTestAll', 'sync', 'syncLocalAuth', 'update']),
   health: new Set(['healthCheck']),
   hooks: new Set(['getHooks', 'saveHooks', 'testHooks']),
   projects: new Set(['createProject', 'deleteProject', 'listProjects', 'saveProjectOrder']),
@@ -103,6 +103,28 @@ const schema = {
           properties: {
             mode: { enum: ['native-copy', 'native-filter', 'unsupported'] },
             format: { anyOf: [{ type: 'null' }, { type: 'string', pattern: '^[a-z][a-z0-9-]*-skill-v[0-9]+$' }] }
+          }
+        }
+      }
+    },
+    auth: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        modes: {
+          type: 'array',
+          minItems: 1,
+          uniqueItems: true,
+          items: { enum: ['api_key', 'oauth', 'none'] }
+        },
+        oauth: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['adapter', 'policy'],
+          properties: {
+            adapter: { type: 'string', pattern: '^[a-z][a-z0-9_-]*$' },
+            policy: { enum: ['single-enabled', 'mixed'] },
+            quota: { type: 'string', pattern: '^[a-z][a-z0-9_-]*$' }
           }
         }
       }

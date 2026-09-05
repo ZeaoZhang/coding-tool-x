@@ -44,6 +44,10 @@ function createDriver(context = {}) {
       return failed('omp', 'channels', operation, error);
     }
   };
+  const auth = require('../../channel-auth-service');
+  driver.getAuth = context => auth.getChannelAuth('omp', { channelId: context?.params?.channelId || context?.query?.channelId || '' });
+  driver.syncLocalAuth = context => auth.syncLocalChannelAuth('omp', { channelId: context?.body?.channelId || context?.params?.channelId || context?.query?.channelId || '' });
+  driver.getAuthQuota = context => auth.fetchChannelAuthQuota('omp', context?.params?.channelId, { refresh: context?.query?.refresh === 'true' });
   return driver;
 }
 

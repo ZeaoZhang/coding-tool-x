@@ -6,6 +6,10 @@
   "iconToken": "code",
   "color": "#3b82f6",
   "defaultVisible": true,
+  "auth": {
+    "modes": ["api_key", "oauth", "none"],
+    "oauth": { "adapter": "codex", "policy": "single-enabled", "quota": "codex" }
+  },
   "helpLabel": "Codex",
   "terminalColor": "green",
   "cliSelectable": true,
@@ -235,6 +239,30 @@
         "path": "/channels/best-for-restore",
         "capability": "channels",
         "operation": "bestForRestore",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/channels/auth",
+        "capability": "channels",
+        "operation": "getAuth",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/channels/auth/sync-local",
+        "capability": "channels",
+        "operation": "syncLocalAuth",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/channels/:channelId/auth/quota",
+        "capability": "channels",
+        "operation": "getAuthQuota",
         "request": "default",
         "response": "default"
       },
