@@ -46,6 +46,10 @@ class BaseChannelService {
     this._channelCache = { value: null, mtimeMs: 0, invalidated: true };
   }
 
+  _generateId() {
+    return crypto.randomUUID();
+  }
+
 
   // ── 文件 I/O ──
 

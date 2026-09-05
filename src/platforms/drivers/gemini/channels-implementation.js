@@ -357,6 +357,7 @@ function updateChannel(channelId, updates) {
     gatewaySourceType: normalizeGatewaySourceType(merged.gatewaySourceType, 'gemini'),
     updatedAt: Date.now()
   };
+  data.channels[index] = nextChannel;
   const { getGeminiProxyStatus } = require('./proxy-implementation');
   const proxyStatus = getGeminiProxyStatus();
   const isProxyRunning = proxyStatus.running;
