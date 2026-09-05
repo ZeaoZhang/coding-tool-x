@@ -573,8 +573,8 @@ function buildOmpSyncCandidate(modelsConfig, selection, channels, options = {}) 
   )
     ? existing?.baseUrl || ''
     : providerBaseUrl || existing?.baseUrl || managedBaseUrl;
-  const authMode = options.authMode && options.authMode !== 'all'
-    ? options.authMode
+  const authMode = options.authMode === 'oauth'
+    ? 'oauth'
     : resolveOmpAuthMode(provider, sourceProvider, existing);
 
   let credential = resolveApiKeyValue(sourceProvider.apiKey || sourceProvider.api_key || '');
@@ -603,7 +603,7 @@ function buildOmpSyncCandidate(modelsConfig, selection, channels, options = {}) 
     return {
       skip: true,
       channel: existing || null,
-      warning: `OMP 当前 provider "${providerId}" 缺少可解析的上游 Base URL 或 API Key，已跳过同步。`
+      warning: `OMP 当前 provider "${providerId}" 缺少可解析的上游 Base URL 或 API Key；如使用本地 OAuth，请通过显式 OAuth 同步。`
     };
   }
 
@@ -715,7 +715,10 @@ function syncCurrentOmpChannel(options = {}) {
   if (selections.length === 0) return createSkippedResult('omp', 'OMP 当前配置未明确 provider，无法同步当前渠道。');
   const candidates = selections
     .map(selection => buildOmpSyncCandidate(modelsConfig, selection, channels, { authMode }))
-    .filter(candidate => authMode === 'all' || candidate.authMode === authMode || candidate.skip);
+    .filter(candidate => authMode === 'all'
+      || candidate.authMode === authMode
+      || (authMode === 'api_key' && candidate.authMode === 'none')
+      || candidate.skip);
   return upsertSyncedChannels({
     toolType: 'omp',
     loadChannels: () => service.loadChannels(),
