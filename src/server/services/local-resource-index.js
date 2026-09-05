@@ -10,7 +10,7 @@ const path = require('path');
  * expensive/full file reads in `detailFile`, which is called by `get()`.
  */
 class LocalResourceIndex {
-  constructor({ key, roots, scanFile, detailFile, ttlMs = 1000 } = {}) {
+  constructor({ key, roots, scanFile, detailFile, ttlMs = 5000 } = {}) {
     if (!key) throw new TypeError('LocalResourceIndex requires a key');
     if (typeof scanFile !== 'function') throw new TypeError('LocalResourceIndex requires scanFile');
     if (typeof detailFile !== 'function') throw new TypeError('LocalResourceIndex requires detailFile');
