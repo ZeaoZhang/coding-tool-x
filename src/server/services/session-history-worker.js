@@ -153,10 +153,11 @@ function runInventoryWorker(source, indexDbPath, options = {}) {
       env: {
         ...process.env,
         CC_TOOL_SESSION_HISTORY_WORKER: '1',
+        CC_TOOL_SESSION_HISTORY_CHILD: '1',
         CC_TOOL_SESSION_HISTORY_SOURCE: source,
         CC_TOOL_SESSION_HISTORY_DB: indexDbPath,
         CC_TOOL_SESSION_HISTORY_FORCE: options.force === true ? '1' : '0',
-        CC_TOOL_SESSION_HISTORY_PROJECTS_DIR: options.projectsDir || '',
+        CC_TOOL_SESSION_HISTORY_PROJECTS_DIR: options.projectsDir || ''
       },
       silent: true,
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],

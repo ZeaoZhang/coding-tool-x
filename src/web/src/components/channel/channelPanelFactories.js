@@ -65,6 +65,10 @@ const URL_REQUIRE_HTTP = /^https?:\/\//i
 const PROVIDER_KEY_PATTERN = /^[a-z0-9_-]+$/i
 const MANUAL_BALANCE_CREDENTIAL_PLATFORMS = new Set(['anyrouter', 'newcli'])
 
+function normalizeChannelList(data) {
+  return Array.isArray(data) ? data : (data?.channels || [])
+}
+
 function normalizeConcurrency(value) {
   const num = Number(value)
   if (!Number.isFinite(num) || num <= 0) return null
@@ -179,6 +183,37 @@ function buildAuthPayload(form) {
   }
 }
 
+function buildAuthRequestFields(authPayload) {
+  return {
+    authMode: authPayload.authMode,
+    ...(authPayload.authRef
+      ? {
+          authRef: authPayload.authRef,
+          authSource: authPayload.authSource,
+          authStatus: authPayload.authStatus
+        }
+      : {}),
+    ...(authPayload.oauthProviderId ? { oauthProviderId: authPayload.oauthProviderId } : {})
+  }
+}
+
+function isOAuthForm(form = {}) {
+  return form.authMode === 'oauth'
+}
+
+function showApiCredentialField(form) {
+  return !isOAuthForm(form)
+}
+
+function buildOAuthAuthField() {
+  return {
+    key: 'authMode',
+    label: '本地登录',
+    type: 'channel-auth',
+    showWhen: isOAuthForm
+  }
+}
+
 function detectBalancePlatform(form = {}) {
   const text = [
     form.presetId,
@@ -202,7 +237,7 @@ function buildBalanceCredentialField(label = '余额凭据') {
     key: 'balanceToken',
     label,
     type: 'password',
-    showWhen: shouldShowManualBalanceCredential,
+    showWhen: (form) => showApiCredentialField(form) && shouldShowManualBalanceCredential(form),
     placeholder: '选填：余额接口需要的会话 Token / Cookie（NewCLI 可填完整 Cookie）'
   }
 }
@@ -214,13 +249,9 @@ function buildBalanceUserIdField() {
     type: 'number',
     min: 1,
     clearable: true,
-    showWhen: shouldShowManualBalanceCredential,
+    showWhen: (form) => showApiCredentialField(form) && shouldShowManualBalanceCredential(form),
     placeholder: '选填：New API / AnyRouter 需要 New-Api-User 时填写'
   }
-}
-
-function applyPresetAuth(form) {
-  return { ...form }
 }
 
 function formatAllowedModels(channel = {}) {
@@ -237,6 +268,27 @@ function formatOpenCodeGatewaySourceType(value) {
   if (normalized === 'claude') return 'Claude Code'
   if (normalized === 'gemini') return 'Gemini'
   return 'Codex'
+}
+function applyPresetAuth(form, preset) {
+  if (preset?.authMode === 'oauth') {
+    return {
+      ...form,
+      authMode: 'oauth',
+      baseUrl: '',
+      apiKey: '',
+      websiteUrl: '',
+      oauthProviderId: preset.oauthProviderId || form.providerKey || ''
+    }
+  }
+
+  return {
+    ...form,
+    authMode: 'api_key',
+    authRef: undefined,
+    authSource: undefined,
+    authStatus: undefined,
+    oauthProviderId: ''
+  }
 }
 
 function buildModelOptions(models = []) {
@@ -369,10 +421,11 @@ const channelPanelFactories = {
       {
         title: '基本信息',
         fields: [
-          { key: 'authMode', label: '认证方式', type: 'channel-auth' },
+          buildOAuthAuthField(),
           { key: 'name', label: '渠道名称', type: 'text', required: true, placeholder: '输入渠道名称' },
           {
             key: 'baseUrl',
+            showWhen: showApiCredentialField,
             label: '接口地址',
             type: 'text',
             required: true,
@@ -381,6 +434,7 @@ const channelPanelFactories = {
           },
           {
             key: 'apiKey',
+            showWhen: showApiCredentialField,
             label: '接口密钥',
             type: 'password',
             required: true,
@@ -390,6 +444,7 @@ const channelPanelFactories = {
           buildBalanceUserIdField(),
           {
             key: 'websiteUrl',
+            showWhen: showApiCredentialField,
             label: '官网链接',
             type: 'text',
             placeholder: 'https://（选填）',
@@ -397,6 +452,7 @@ const channelPanelFactories = {
           },
           {
             key: 'speedTestModel',
+            showWhen: showApiCredentialField,
             label: '测速模型',
             type: 'select',
             placeholder: '选择用于测速的模型（留空则自动检测）',
@@ -439,7 +495,7 @@ const channelPanelFactories = {
         title: '模型配置',
         description: '代理关闭时：模型映射（写入 settings.json）；代理开启时：模型重定向（如 opus → sonnet 节省 token）',
         collapsible: true,
-        showWhen: (form) => form.presetId && form.presetId !== 'official',
+        showWhen: (form) => !isOAuthForm(form) && form.presetId && form.presetId !== 'official',
         fields: [
           {
             key: 'modelConfig.model',
@@ -557,7 +613,7 @@ const channelPanelFactories = {
         }
       }
 
-      return applyPresetAuth(newForm)
+      return applyPresetAuth(newForm, preset)
     },
     fetchModelsForChannel: async (channelId, form) => {
       await loadDefaultModels()
@@ -608,7 +664,7 @@ const channelPanelFactories = {
     api: {
       fetch: async () => {
         const data = await fetchClaudeChannels()
-        return data.channels || []
+        return normalizeChannelList(data)
       },
       syncCurrent: syncCurrentClaudeChannel,
       create: async (form) => {
@@ -629,6 +685,7 @@ const channelPanelFactories = {
             speedTestModel: form.speedTestModel || null,
             gatewaySourceType: form.gatewaySourceType || 'claude',
             targetApi: form.targetApi || 'responses',
+            ...buildAuthRequestFields(authPayload),
             balanceToken: authPayload.balanceToken,
             balanceUserId: authPayload.balanceUserId
           }
@@ -651,6 +708,7 @@ const channelPanelFactories = {
           speedTestModel: form.speedTestModel || null,
           gatewaySourceType: form.gatewaySourceType || 'claude',
           targetApi: form.targetApi || 'responses',
+          ...buildAuthRequestFields(authPayload),
           balanceToken: authPayload.balanceToken,
           balanceUserId: authPayload.balanceUserId
         })
@@ -722,10 +780,11 @@ const channelPanelFactories = {
       {
         title: '基本信息',
         fields: [
-          { key: 'authMode', label: '认证方式', type: 'channel-auth' },
+          buildOAuthAuthField(),
           { key: 'name', label: '渠道名称', type: 'text', required: true, placeholder: '显示名称' },
           {
             key: 'providerKey',
+            showWhen: showApiCredentialField,
             label: 'Provider Key',
             type: 'text',
             required: true,
@@ -735,6 +794,7 @@ const channelPanelFactories = {
           },
           {
             key: 'baseUrl',
+            showWhen: showApiCredentialField,
             label: 'Base URL',
             type: 'text',
             required: true,
@@ -743,6 +803,7 @@ const channelPanelFactories = {
           },
           {
             key: 'apiKey',
+            showWhen: showApiCredentialField,
             label: 'API Key',
             type: 'password',
             required: true,
@@ -752,6 +813,7 @@ const channelPanelFactories = {
           buildBalanceUserIdField(),
           {
             key: 'websiteUrl',
+            showWhen: showApiCredentialField,
             label: '官网链接',
             type: 'text',
             placeholder: 'https://（选填）',
@@ -759,6 +821,7 @@ const channelPanelFactories = {
           },
           {
             key: 'speedTestModel',
+            showWhen: showApiCredentialField,
             label: '测速模型',
             type: 'select',
             placeholder: '选择用于测速的模型（留空则使用默认）',
@@ -831,11 +894,11 @@ const channelPanelFactories = {
 
       const newForm = { ...form, presetId }
       newForm.name = preset.name
-      newForm.baseUrl = preset.baseUrl
       newForm.websiteUrl = preset.websiteUrl || ''
       newForm.providerKey = preset.providerKey || ''
+      newForm.baseUrl = preset.baseUrl
       newForm.gatewaySourceType = preset.gatewaySourceType || newForm.gatewaySourceType || 'codex'
-      return applyPresetAuth(newForm)
+      return applyPresetAuth(newForm, preset)
     },
     fetchModelsForChannel: async (channelId, form) => {
       await loadDefaultModels()
@@ -878,7 +941,7 @@ const channelPanelFactories = {
     api: {
       fetch: async () => {
         const data = await getCodexChannels()
-        return data.channels || []
+        return normalizeChannelList(data)
       },
       syncCurrent: syncCurrentCodexChannel,
       create: async (form) => {
@@ -897,6 +960,7 @@ const channelPanelFactories = {
             speedTestModel: form.speedTestModel || null,
             presetId: form.presetId || null,
             gatewaySourceType: form.gatewaySourceType || 'codex',
+            ...buildAuthRequestFields(authPayload),
             balanceToken: authPayload.balanceToken,
             balanceUserId: authPayload.balanceUserId
           }
@@ -916,6 +980,7 @@ const channelPanelFactories = {
           speedTestModel: form.speedTestModel || null,
           presetId: form.presetId || null,
           gatewaySourceType: form.gatewaySourceType || 'codex',
+          ...buildAuthRequestFields(authPayload),
           balanceToken: authPayload.balanceToken,
           balanceUserId: authPayload.balanceUserId
         })
@@ -985,11 +1050,12 @@ const channelPanelFactories = {
       {
         title: '基本信息',
         fields: [
-          { key: 'authMode', label: '认证方式', type: 'channel-auth' },
+          buildOAuthAuthField(),
           { key: 'name', label: '渠道名称', type: 'text', required: true, placeholder: '显示名称' },
           { key: 'model', label: 'Model', type: 'text', required: true, placeholder: '例如 gemini-2.5-pro' },
           {
             key: 'baseUrl',
+            showWhen: showApiCredentialField,
             label: 'Base URL',
             type: 'text',
             required: true,
@@ -998,6 +1064,7 @@ const channelPanelFactories = {
           },
           {
             key: 'apiKey',
+            showWhen: showApiCredentialField,
             label: 'API Key',
             type: 'password',
             required: true,
@@ -1007,6 +1074,7 @@ const channelPanelFactories = {
           buildBalanceUserIdField(),
           {
             key: 'websiteUrl',
+            showWhen: showApiCredentialField,
             label: '官网链接',
             type: 'text',
             placeholder: 'https://（选填）',
@@ -1014,6 +1082,7 @@ const channelPanelFactories = {
           },
           {
             key: 'speedTestModel',
+            showWhen: showApiCredentialField,
             label: '测速模型',
             type: 'select',
             placeholder: '选择用于测速的模型（留空则使用 model 字段）',
@@ -1088,11 +1157,12 @@ const channelPanelFactories = {
 
       const newForm = { ...form, presetId }
       newForm.name = preset.name
-      newForm.baseUrl = preset.baseUrl
+      if (preset.model) newForm.model = preset.model
       newForm.websiteUrl = preset.websiteUrl || ''
+      newForm.baseUrl = preset.baseUrl
       newForm.apiFormat = preset.apiFormat || 'gemini_api'
       newForm.gatewaySourceType = preset.gatewaySourceType || newForm.gatewaySourceType || 'gemini'
-      return applyPresetAuth(newForm)
+      return applyPresetAuth(newForm, preset)
     },
     fetchModelsForChannel: async (channelId, form) => {
       await loadDefaultModels()
@@ -1135,7 +1205,7 @@ const channelPanelFactories = {
     api: {
       fetch: async () => {
         const data = await getGeminiChannels()
-        return data.channels || []
+        return normalizeChannelList(data)
       },
       syncCurrent: syncCurrentGeminiChannel,
       create: async (form) => {
@@ -1155,6 +1225,7 @@ const channelPanelFactories = {
             presetId: form.presetId || null,
             apiFormat: form.apiFormat || 'gemini_api',
             gatewaySourceType: form.gatewaySourceType || 'gemini',
+            ...buildAuthRequestFields(authPayload),
             balanceToken: authPayload.balanceToken,
             balanceUserId: authPayload.balanceUserId
           }
@@ -1176,6 +1247,7 @@ const channelPanelFactories = {
           presetId: form.presetId || null,
           apiFormat: form.apiFormat || 'gemini_api',
           gatewaySourceType: form.gatewaySourceType || 'gemini',
+          ...buildAuthRequestFields(authPayload),
           balanceToken: authPayload.balanceToken,
           balanceUserId: authPayload.balanceUserId
         })
@@ -1358,14 +1430,13 @@ const channelPanelFactories = {
     onPresetChange: (presetId, form) => {
       const preset = getOpenCodePresetById(presetId)
       if (!preset) return form
-
       const newForm = { ...form, presetId }
       newForm.name = preset.name
-      newForm.baseUrl = preset.baseUrl
       newForm.websiteUrl = preset.websiteUrl || ''
+      newForm.baseUrl = preset.baseUrl
       newForm.wireApi = preset.wireApi || 'openai'
       newForm.gatewaySourceType = preset.gatewaySourceType || newForm.gatewaySourceType || 'codex'
-      return applyPresetAuth(newForm)
+      return applyPresetAuth(newForm, preset)
     },
     fetchModelsForChannel: async (channelId, form, { forceRefresh = false } = {}) => {
       await loadDefaultModels()
@@ -1442,7 +1513,7 @@ const channelPanelFactories = {
     api: {
       fetch: async () => {
         const data = await getOpenCodeChannels()
-        return data.channels || []
+        return normalizeChannelList(data)
       },
       syncCurrent: syncCurrentOpenCodeChannel,
       create: async (form) => {
@@ -1463,6 +1534,7 @@ const channelPanelFactories = {
             presetId: form.presetId || null,
             websiteUrl: form.websiteUrl || '',
             allowedModels: form.allowedModels || [],
+            ...buildAuthRequestFields(authPayload),
             balanceToken: authPayload.balanceToken,
             balanceUserId: authPayload.balanceUserId
           }
@@ -1485,6 +1557,7 @@ const channelPanelFactories = {
           speedTestModel: form.speedTestModel || null,
           presetId: form.presetId || null,
           allowedModels: form.allowedModels || [],
+          ...buildAuthRequestFields(authPayload),
           balanceToken: authPayload.balanceToken,
           balanceUserId: authPayload.balanceUserId
         })
@@ -1554,7 +1627,6 @@ const channelPanelFactories = {
       {
         title: '基本信息',
         fields: [
-          { key: 'authMode', label: '认证方式', type: 'channel-auth' },
           { key: 'name', label: '渠道名称', type: 'text', required: true, placeholder: '显示名称' },
           {
             key: 'providerKey',
@@ -1725,11 +1797,10 @@ const channelPanelFactories = {
         .replace(/[^a-z0-9_-]+/g, '-')
         .replace(/^-|-$/g, '')
       newForm.baseUrl = preset.baseUrl
-      newForm.websiteUrl = preset.websiteUrl || ''
       newForm.wireApi = preset.wireApi || 'openai'
       newForm.providerApi = preset.providerApi || 'openai-completions'
       newForm.gatewaySourceType = preset.gatewaySourceType || newForm.gatewaySourceType || 'openai_compatible'
-      return applyPresetAuth(newForm)
+      return applyPresetAuth(newForm, preset)
     },
     fetchModelsForChannel: async (channelId, form, { forceRefresh = false } = {}) => {
       await loadDefaultModels()
@@ -1860,6 +1931,7 @@ const channelPanelFactories = {
           presetId: form.presetId || null,
           websiteUrl: form.websiteUrl || '',
           allowedModels: form.allowedModels || [],
+          ...buildAuthRequestFields(authPayload),
           balanceToken: authPayload.balanceToken,
           balanceUserId: authPayload.balanceUserId,
           models: parseModelDefinitions(form.modelDefinitionsJson),
@@ -1889,6 +1961,7 @@ const channelPanelFactories = {
           speedTestModel: form.speedTestModel || null,
           presetId: form.presetId || null,
           allowedModels: form.allowedModels || [],
+          ...buildAuthRequestFields(authPayload),
           balanceToken: authPayload.balanceToken,
           balanceUserId: authPayload.balanceUserId,
           models: parseModelDefinitions(form.modelDefinitionsJson),

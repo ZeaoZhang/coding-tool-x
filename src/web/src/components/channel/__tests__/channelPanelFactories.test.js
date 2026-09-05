@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
+  fetchClaudeChannels,
+  fetchCodexChannels,
+  fetchGeminiChannels,
+  fetchOpenCodeChannels,
   fetchOmpCatalogMetadata,
   fetchOmpChannelModels,
   fetchOpenCodeChannelModels,
@@ -9,6 +13,10 @@ const {
   probeOmpChannelModels,
   probeOpenCodeChannelModels
 } = vi.hoisted(() => ({
+  fetchClaudeChannels: vi.fn(),
+  fetchCodexChannels: vi.fn(),
+  fetchGeminiChannels: vi.fn(),
+  fetchOpenCodeChannels: vi.fn(),
   fetchOmpCatalogMetadata: vi.fn(),
   fetchOmpChannelModels: vi.fn(),
   fetchOpenCodeChannelModels: vi.fn(),
@@ -20,6 +28,10 @@ const {
 
 vi.mock('../../../api/channels', async () => ({
   ...(await vi.importActual('../../../api/channels')),
+  getChannels: fetchClaudeChannels,
+  getCodexChannels: fetchCodexChannels,
+  getGeminiChannels: fetchGeminiChannels,
+  getOpenCodeChannels: fetchOpenCodeChannels,
   fetchOmpCatalogMetadata,
   fetchOmpChannelModels,
   fetchOpenCodeChannelModels,
@@ -36,6 +48,10 @@ import channelPanelFactories from '../channelPanelFactories'
 describe('channel panel model catalogs', () => {
   beforeEach(() => {
     loadDefaultModels.mockReset().mockResolvedValue(undefined)
+    fetchClaudeChannels.mockReset().mockResolvedValue([{ id: 'claude-1' }])
+    fetchCodexChannels.mockReset().mockResolvedValue([{ id: 'codex-1' }])
+    fetchGeminiChannels.mockReset().mockResolvedValue([{ id: 'gemini-1' }])
+    fetchOpenCodeChannels.mockReset().mockResolvedValue([{ id: 'opencode-1' }])
     getAllModelsByToolType.mockImplementation(toolType => ({
       codex: ['gpt-5.5'],
       opencode: ['deepseek/deepseek-v4-pro'],
@@ -51,6 +67,22 @@ describe('channel panel model catalogs', () => {
     probeOmpChannelModels.mockReset()
     probeOpenCodeChannelModels.mockReset()
   })
+  it('keeps array channel responses from the platform API', async () => {
+    const cases = [
+      ['claude', fetchClaudeChannels],
+      ['codex', fetchCodexChannels],
+      ['gemini', fetchGeminiChannels],
+      ['opencode', fetchOpenCodeChannels]
+    ]
+
+    for (const [platform, fetchMock] of cases) {
+      await expect(channelPanelFactories[platform]().api.fetch()).resolves.toEqual([
+        { id: `${platform}-1` }
+      ])
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    }
+  })
+
 
   it('uses the offline snapshot for OpenCode when no base URL is configured', async () => {
     const form = {
@@ -121,5 +153,39 @@ describe('channel panel model catalogs', () => {
     expect(fetchOmpCatalogMetadata).toHaveBeenCalledWith('', expect.any(Object))
     expect(form.modelDefinitionsJson).toContain('deepseek/deepseek-v4-pro')
     expect(form.modelMetadataStatus).toBe('已读取 1 个模型（Models.dev 离线快照）')
+  })
+
+  it('uses presets to select OAuth and hides API-only fields', () => {
+    const cases = [
+      ['claude', 'claude_oauth'],
+      ['codex', 'codex_oauth'],
+      ['gemini', 'gemini_oauth']
+    ]
+
+    for (const [platform, presetId] of cases) {
+      const config = channelPanelFactories[platform]()
+      const fields = config.formSections.flatMap(section => section.fields)
+      const oauthField = fields.find(field => field.type === 'channel-auth')
+      const oauthPreset = config.getPresetById(presetId)
+      const form = config.onPresetChange(presetId, config.getInitialForm())
+
+      expect(fields.some(field => field.label === '认证方式')).toBe(false)
+      expect(oauthPreset).toEqual(expect.objectContaining({
+        id: presetId,
+        authMode: 'oauth',
+        oauthProviderId: platform
+      }))
+      expect(form).toEqual(expect.objectContaining({
+        presetId,
+        authMode: 'oauth',
+        baseUrl: '',
+        apiKey: ''
+      }))
+      expect(oauthField?.showWhen(form)).toBe(true)
+
+      for (const field of fields.filter(item => ['baseUrl', 'apiKey', 'providerKey', 'websiteUrl', 'speedTestModel'].includes(item.key))) {
+        expect(field.showWhen(form)).toBe(false)
+      }
+    }
   })
 })

@@ -12,6 +12,17 @@ export const geminiPresets = [
     apiFormat: 'gemini_api'
   },
   {
+    id: 'gemini_oauth',
+    name: 'Gemini OAuth',
+    category: 'oauth',
+    description: '使用本地 Gemini 登录凭据',
+    websiteUrl: '',
+    baseUrl: '',
+    model: 'gemini-2.5-pro',
+    authMode: 'oauth',
+    oauthProviderId: 'gemini'
+  },
+  {
     id: 'vertex_ai_v1',
     name: 'Vertex AI v1',
     category: 'official',
@@ -32,6 +43,7 @@ export const geminiPresets = [
 // 预设分类
 export const geminiPresetCategories = {
   official: '官方',
+  oauth: 'OAuth',
   custom: '自定义'
 }
 

@@ -13,6 +13,17 @@ export const claudePresets = [
     env: {}
   },
   {
+    id: 'claude_oauth',
+    name: 'Claude OAuth',
+    category: 'oauth',
+    description: '使用本地 Claude 登录凭据',
+    websiteUrl: '',
+    baseUrl: '',
+    authMode: 'oauth',
+    oauthProviderId: 'claude',
+    env: {}
+  },
+  {
     id: 'openai',
     name: 'OpenAI',
     category: 'third_party',
@@ -116,6 +127,7 @@ export const presetCategories = {
   cn_official: '国内官方',
   aggregator: '聚合服务',
   third_party: '第三方',
+  oauth: 'OAuth',
   custom: '自定义'
 }
 

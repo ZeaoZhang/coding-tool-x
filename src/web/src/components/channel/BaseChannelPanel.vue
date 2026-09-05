@@ -113,7 +113,7 @@
               />
               <!-- 预设选择器 -->
               <n-select
-                v-if="field.type === 'preset'"
+                v-else-if="field.type === 'preset'"
                 :value="state.formData.presetId"
                 :options="presetOptions"
                 :placeholder="field.placeholder"
@@ -420,7 +420,9 @@ function isModelConsumer(field) {
 }
 
 function sectionHasModelConsumers(section) {
-  return section.fields?.some(isModelConsumer) && Boolean(config.fetchModelsForChannel)
+  return section.fields?.some(field => (
+    (!field.showWhen || field.showWhen(state.formData)) && isModelConsumer(field)
+  )) && Boolean(config.fetchModelsForChannel)
 }
 
 async function handleModelCatalogAction() {

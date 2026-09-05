@@ -1,10 +1,6 @@
 <template>
   <div class="channel-auth-section">
-    <n-radio-group v-if="!readonly" :value="formData.authMode || 'api_key'" @update:value="value => formData.authMode = value">
-      <n-space><n-radio value="api_key">API Key</n-radio><n-radio value="oauth">本地 OAuth</n-radio><n-radio value="none">无认证</n-radio></n-space>
-    </n-radio-group>
-    <n-tag v-else type="success" :bordered="false">本地 OAuth</n-tag>
-    <div v-if="formData.authMode === 'oauth'" class="oauth-content">
+    <div class="oauth-content">
       <n-button size="small" type="primary" :loading="loading" @click="sync">同步本地 OAuth</n-button>
       <n-alert v-if="warning" type="warning" :show-icon="false">{{ warning }}</n-alert>
       <n-radio-group v-if="candidates.length" :value="selectedKey" @update:value="select">
@@ -28,12 +24,11 @@
 </template>
 <script setup>
 import { computed, toRef } from 'vue'
-import { NAlert, NButton, NRadio, NRadioGroup, NSpace, NTag } from 'naive-ui'
+import { NAlert, NButton, NRadio, NRadioGroup, NSpace } from 'naive-ui'
 import { useChannelAuth } from '../../composables/useChannelAuth'
 
 const props = defineProps({ platform: String, channelId: String, formData: Object, authMeta: Object })
 const emit = defineEmits(['update-auth'])
-const readonly = computed(() => Boolean(props.channelId))
 function candidateKey(candidate) {
   const ref = candidate.authRef || candidate
   return `${ref.credentialId || ref.providerId}:${ref.accountId || ref.identityKey || ref.accountEmail || 'account'}`

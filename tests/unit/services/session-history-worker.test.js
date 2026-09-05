@@ -406,4 +406,38 @@ describe('session-history-worker error IPC helpers', () => {
       }
     }
   });
+  it('completes production Worker startup without recursive child failure', () => {
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const { spawnSync } = require('child_process');
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'coding-tool-x-worker-'));
+
+    try {
+      const dbPath = path.join(tempDir, 'history.sqlite');
+      const projectsDir = path.join(tempDir, 'projects');
+      fs.mkdirSync(projectsDir);
+      const result = spawnSync(process.execPath, [
+        '-e',
+        `const { runInventoryWorker } = require(${JSON.stringify(workerPath)});
+runInventoryWorker('codex', ${JSON.stringify(dbPath)}, {
+  force: true,
+  projectsDir: ${JSON.stringify(projectsDir)}
+}).then(() => process.exit(0)).catch(error => {
+  console.error(error.stack || error);
+  process.exit(1);
+});`
+      ], {
+        env: { ...process.env, NODE_ENV: 'production', CC_TOOL_SESSION_HISTORY_CHILD: '0' },
+        encoding: 'utf8',
+        timeout: 10_000
+      });
+
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(0);
+      expect(result.stderr).not.toContain('runInventoryWorker is not a function');
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
  });
