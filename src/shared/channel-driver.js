@@ -7,7 +7,8 @@ const COMMON_KEYS = new Set([
   'id', 'name', 'baseUrl', 'enabled', 'weight', 'maxConcurrency',
   'routingGroup', 'providerKey', 'providerApi', 'model', 'wireApi',
   'gatewaySourceType', 'websiteUrl', 'createdAt', 'updatedAt',
-  'authMode', 'authRef', 'authSource', 'authStatus', 'oauthProviderId'
+  'authMode', 'authRef', 'authSource', 'authStatus', 'oauthProviderId',
+  'transport', 'providerConfig'
 ]);
 
 function isSecretKey(key) {

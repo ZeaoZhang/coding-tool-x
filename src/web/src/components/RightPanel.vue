@@ -57,6 +57,14 @@
           </n-tooltip>
         </template>
         <div class="toolbar-divider" />
+        <n-tooltip v-if="nativeOAuthTool" trigger="hover">
+          <template #trigger>
+            <n-button text size="small" class="toolbar-btn" @click="nativeOAuthVisible = true">
+              <template #icon><n-icon :size="18"><KeyOutline /></n-icon></template>
+            </n-button>
+          </template>
+          {{ nativeOAuthTool === 'omp' ? 'OMP' : 'OpenCode' }} 原生 OAuth
+        </n-tooltip>
         <!-- 通用功能 -->
         <n-tooltip v-if="supportsCapability('sessions')" trigger="hover">
           <template #trigger>
@@ -68,6 +76,15 @@
         </n-tooltip>
       </div>
     </div>
+
+    <NativeOAuthManager
+      v-if="nativeOAuthTool"
+      :tool="nativeOAuthTool"
+      :visible="nativeOAuthVisible"
+      @update:visible="nativeOAuthVisible = $event"
+      @changed="handleNativeOAuthChanged"
+    />
+
 
 
     <!-- 渠道管理区域 -->
@@ -134,6 +151,7 @@ import {
   PersonOutline,
   CubeOutline,
   SyncOutline,
+  KeyOutline
 } from '@vicons/ionicons5'
 import ClaudeChannelPanel from './channel/ClaudeChannelPanel.vue'
 import CodexChannelPanel from './channel/CodexChannelPanel.vue'
@@ -141,6 +159,7 @@ import GeminiChannelPanel from './channel/GeminiChannelPanel.vue'
 import OpenCodeChannelPanel from './channel/OpenCodeChannelPanel.vue'
 import OmpChannelPanel from './channel/OmpChannelPanel.vue'
 import BaseChannelPanel from './channel/BaseChannelPanel.vue'
+import NativeOAuthManager from './NativeOAuthManager.vue'
 import ProxyLogs from './ProxyLogs.vue'
 import { getSkills } from '../api/skills'
 import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
@@ -175,6 +194,7 @@ const currentPlatform = computed(() => getPlatform(currentChannel.value))
 const currentPanelRef = ref(null)
 const syncingCurrentChannel = ref(false)
 const installedSkillsCount = ref(0)
+const nativeOAuthVisible = ref(false)
 
 const panelComponents = {
   claude: ClaudeChannelPanel,
@@ -211,6 +231,9 @@ const pluginChannel = computed(() => supportsResource('plugins'))
 const agentsChannel = computed(() => supportsResource('agents'))
 const proxyToggleLabel = computed(() => (
   currentPlatform.value?.proxyLabels?.toggle || '动态切换'
+))
+const nativeOAuthTool = computed(() => (
+  ['opencode', 'omp'].includes(currentChannel.value) ? currentChannel.value : ''
 ))
 
 
@@ -256,6 +279,13 @@ async function handleSyncCurrentClick() {
 
 function refreshChannelPanel() {
   currentPanelRef.value?.refresh?.()
+}
+function handleNativeOAuthChanged() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('channel-management-refresh', {
+      detail: { channel: currentChannel.value }
+    }))
+  }
 }
 
 function handleChannelManagementRefresh(event) {

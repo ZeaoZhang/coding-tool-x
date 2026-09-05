@@ -180,7 +180,11 @@ function prepareManagedOmpChannels(channels = [], gateway = {}) {
     throw new Error('OMP gateway secret is required before managed providers can be generated');
   }
 
-  const enabled = channels.filter(channel => channel && channel.enabled !== false && channel.baseUrl);
+  const enabled = channels.filter(channel => (
+    channel
+    && channel.enabled !== false
+    && (channel.baseUrl || normalizeText(channel.authMode) === 'oauth')
+  ));
   const groups = new Map();
   enabled.forEach((channel) => {
     const key = getGroupKey(channel);
@@ -211,13 +215,16 @@ function prepareManagedOmpChannels(channels = [], gateway = {}) {
     }
     const authMode = normalizeText(template.authMode) || 'api_key';
     const transport = normalizeText(template.transport || template.providerConfig?.transport);
-    const supportedOAuthIds = Array.isArray(gateway.supportedOAuthChannelIds)
-      ? new Set(gateway.supportedOAuthChannelIds)
-      : null;
+    const supportedOAuthIds = new Set(
+      Array.isArray(gateway.supportedOAuthChannelIds) ? gateway.supportedOAuthChannelIds : []
+    );
     const oauthGatewayUnavailable = authMode === 'oauth' && (
-      !normalizeText(template.apiKey)
-      || transport !== 'pi-native'
-      || (supportedOAuthIds && groupChannels.some(channel => !supportedOAuthIds.has(channel.id)))
+      groupChannels.some(channel => (
+        !normalizeText(channel.baseUrl)
+        || !normalizeText(channel.apiKey)
+        || normalizeText(channel.transport || channel.providerConfig?.transport) !== 'pi-native'
+        || !supportedOAuthIds.has(channel.id)
+      ))
     );
     if (oauthGatewayUnavailable) {
       groupChannels.forEach(channel => unsupportedChannels.push({

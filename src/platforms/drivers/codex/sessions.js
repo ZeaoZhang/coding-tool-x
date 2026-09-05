@@ -7,7 +7,7 @@ function createDriver(context = {}) {
     ...context,
     platform: 'codex',
     capability: 'sessions',
-    preservePayloadUpdatedAt: true,
+    parserVersion: 1,
     servicePath: './codex/sessions-implementation',
     localServicePath: '../platforms/drivers/codex/sessions-implementation',
     adapterLocalPath: '../platforms/drivers/codex/session-history-adapter',

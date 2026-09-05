@@ -12,8 +12,8 @@ function createCapabilityDriver({
   adapterPath,
   adapterLocalPath,
   adapterMethods = {},
-  onSuccess,
   preservePayloadUpdatedAt = false,
+  parserVersion = 1,
   requireImpl,
   prependPlatform = false,
   context = {},
@@ -42,7 +42,7 @@ function createCapabilityDriver({
     }
     return service;
   };
-  const driver = { platform, capability, preservePayloadUpdatedAt, ...context };
+  const driver = { platform, capability, preservePayloadUpdatedAt, parserVersion, ...context };
   for (const [operation, methodName] of Object.entries(methods)) {
     driver[operation] = (...args) => {
       try {

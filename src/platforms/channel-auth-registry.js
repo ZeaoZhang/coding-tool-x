@@ -61,24 +61,45 @@ function scanNative(adapter) {
 
 function scanOmp() {
   const snapshot = getOmpAuthProviderSnapshot({ forceRefresh: true, accountCheck: true });
+  const hasAccounts = (snapshot.providers || []).some(provider => (
+    provider.loggedIn === true && Array.isArray(provider.accounts) && provider.accounts.length > 0
+  ));
+  let synced = null;
+  if (hasAccounts) {
+    try {
+      synced = oauthStore.syncLocalCredential('omp');
+    } catch {
+      synced = null;
+    }
+  }
+  const credentials = synced?.credentials || [];
   const candidates = [];
   for (const provider of snapshot.providers || []) {
-    if (provider.loggedIn !== true) continue;
-    for (const account of provider.accounts || [{}]) {
+    if (provider.loggedIn !== true || !Array.isArray(provider.accounts) || provider.accounts.length === 0) continue;
+    for (const account of provider.accounts) {
+      const accountId = account.id || account.accountId || account.index;
+      const accountEmail = account.email || account.accountEmail || account.identity;
+      const identityKey = account.identityKey || accountEmail || accountId;
+      const credential = credentials.find(item => (
+        item.providerId === provider.id
+        && (item.accountId === String(accountId || '') || item.accountEmail === String(accountEmail || ''))
+      ));
       const ref = safeRef({
+        credentialId: credential?.id,
         providerId: provider.id,
-        accountId: account.id || account.accountId,
-        identityKey: account.identityKey,
-        accountEmail: account.email || account.accountEmail
+        accountId,
+        identityKey,
+        accountEmail
       });
       if (!ref.accountId && !ref.identityKey && (provider.accounts || []).length > 1) continue;
       candidates.push({
-        id: `omp:${provider.id}:${ref.accountId || ref.identityKey || 'account'}`,
+        id: credential?.id || `omp:${provider.id}:${ref.accountId || ref.identityKey || 'account'}`,
         tool: 'omp',
         authMode: 'oauth',
         authRef: ref,
         authSource: 'synced-local',
         authStatus: ref.accountId || ref.identityKey ? 'available' : 'ambiguous',
+        oauthProviderId: provider.id,
         providerId: provider.id,
         accountId: ref.accountId,
         accountEmail: ref.accountEmail

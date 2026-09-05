@@ -1065,13 +1065,11 @@ function readAllOmpNativeOAuth() {
   return snapshot.providers
     .filter(provider => provider?.loggedIn || Number(provider?.accountCount || 0) > 0)
     .flatMap((provider) => {
-      const accounts = Array.isArray(provider.accounts) && provider.accounts.length > 0
-        ? provider.accounts
-        : [{ index: 1, identity: '' }];
+      const accounts = Array.isArray(provider.accounts) ? provider.accounts : [];
       return accounts.map((account) => ({
         providerId: provider.id,
-        accountId: String(account.index || '').trim(),
-        accountEmail: String(account.identity || '').trim(),
+        accountId: String(account.index || account.id || account.accountId || '').trim(),
+        accountEmail: String(account.identity || account.email || account.accountEmail || '').trim(),
         storage: 'auth-broker',
         primaryToken: ''
       }));

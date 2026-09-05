@@ -431,7 +431,9 @@ export default function useChannelManager(config) {
       }
       return value
     }
-    const isSectionVisible = (section) => !section.showWhen || section.showWhen(state.formData)
+    const getFieldLabel = (field) => (
+      typeof field.label === 'function' ? field.label(state.formData) : field.label
+    )
     const isFieldVisible = (field) => !field.showWhen || field.showWhen(state.formData)
     const clearFieldValidation = (field) => {
       const flatKey = field.key.replace(/\./g, '_')
@@ -445,7 +447,11 @@ export default function useChannelManager(config) {
         if (
           !sectionVisible
           || !isFieldVisible(field)
-          || (state.formData.authMode === 'oauth' && ['baseUrl', 'apiKey', 'providerApi', 'gatewaySourceType'].includes(field.key))
+          || (
+            state.formData.authMode === 'oauth'
+            && ['baseUrl', 'apiKey', 'providerApi', 'gatewaySourceType'].includes(field.key)
+            && field.skipOnOAuth !== false
+          )
         ) {
           clearFieldValidation(field)
           return
@@ -461,7 +467,7 @@ export default function useChannelManager(config) {
         if (field.required) {
           errorMessage = field.customRequiredMessage
             ? (value === null || value === undefined || value === '' ? field.customRequiredMessage : '')
-            : (value === null || value === undefined || value === '' ? `${field.label}不能为空` : '')
+            : (value === null || value === undefined || value === '' ? `${getFieldLabel(field)}不能为空` : '')
         }
         if (!errorMessage && typeof field.validate === 'function') {
           errorMessage = field.validate(value, state.formData) || ''

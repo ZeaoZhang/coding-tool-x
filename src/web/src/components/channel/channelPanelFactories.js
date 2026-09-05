@@ -15,6 +15,7 @@ import { claudePresets, presetCategories, getPresetById } from '../../config/cla
 import { codexPresets, codexPresetCategories, getCodexPresetById } from '../../config/codexPresets'
 import { geminiPresets, geminiPresetCategories, getGeminiPresetById } from '../../config/geminiPresets'
 import { opencodePresets, opencodePresetCategories, getOpenCodePresetById } from '../../config/opencodePresets'
+import { ompPresets, ompPresetCategories, getOmpPresetById } from '../../config/ompPresets'
 import {
   getCodexChannels,
   createCodexChannel,
@@ -183,6 +184,16 @@ function buildAuthPayload(form) {
   }
 }
 
+function buildOmpAuthPayload(form) {
+  const payload = buildAuthPayload(form)
+  if (payload.authMode !== 'oauth') return payload
+  return {
+    ...payload,
+    apiKey: String(form.apiKey || '').trim(),
+    transport: 'pi-native'
+  }
+}
+
 function buildAuthRequestFields(authPayload) {
   return {
     authMode: authPayload.authMode,
@@ -193,7 +204,8 @@ function buildAuthRequestFields(authPayload) {
           authStatus: authPayload.authStatus
         }
       : {}),
-    ...(authPayload.oauthProviderId ? { oauthProviderId: authPayload.oauthProviderId } : {})
+    ...(authPayload.oauthProviderId ? { oauthProviderId: authPayload.oauthProviderId } : {}),
+    ...(authPayload.transport ? { transport: authPayload.transport } : {})
   }
 }
 
@@ -1609,9 +1621,9 @@ const channelPanelFactories = {
     modalWidth: 600,
     formLabelWidth: 95,
     showApplyButton: false,
-    presets: opencodePresets,
-    presetCategories: opencodePresetCategories,
-    getPresetById: getOpenCodePresetById,
+    presets: ompPresets,
+    presetCategories: ompPresetCategories,
+    getPresetById: getOmpPresetById,
     formSections: [
       {
         title: '供应商预设',
@@ -1627,6 +1639,7 @@ const channelPanelFactories = {
       {
         title: '基本信息',
         fields: [
+          buildOAuthAuthField(),
           { key: 'name', label: '渠道名称', type: 'text', required: true, placeholder: '显示名称' },
           {
             key: 'providerKey',
@@ -1638,19 +1651,28 @@ const channelPanelFactories = {
           },
           {
             key: 'baseUrl',
-            label: 'Base URL',
+            label: form => isOAuthForm(form) ? 'Auth Gateway URL' : 'Base URL',
             type: 'text',
             required: true,
+            skipOnOAuth: false,
             placeholder: 'https://api.example.com/v1',
-            validate: (value) => validateHttpUrl('Base URL', value, { required: true })
+            validate: (value, form) => validateHttpUrl(
+              isOAuthForm(form) ? 'Auth Gateway URL' : 'Base URL',
+              value,
+              { required: true }
+            )
           },
           {
             key: 'apiKey',
-            label: 'API Key',
+            label: form => isOAuthForm(form) ? 'Gateway Token' : 'API Key',
             type: 'password',
             required: true,
+            skipOnOAuth: false,
             placeholder: 'sk-...',
-            validate: (value) => validateRequired('API Key', value)
+            validate: (value, form) => validateRequired(
+              isOAuthForm(form) ? 'Gateway Token' : 'API Key',
+              value
+            )
           },
           {
             key: 'routingGroup',
@@ -1733,6 +1755,12 @@ const channelPanelFactories = {
       wireApi: 'openai',
       providerApi: 'openai-completions',
       apiKey: '',
+      authMode: 'api_key',
+      authRef: undefined,
+      authSource: undefined,
+      authStatus: undefined,
+      oauthProviderId: '',
+      transport: '',
       routingGroup: '',
       balanceToken: '',
       balanceUserId: null,
@@ -1764,6 +1792,12 @@ const channelPanelFactories = {
       wireApi: channel.wireApi || 'openai',
       providerApi: channel.providerApi || channel.api || 'openai-completions',
       apiKey: channel.apiKey || '',
+      authMode: channel.authMode || 'api_key',
+      authRef: channel.authRef,
+      authSource: channel.authSource,
+      authStatus: channel.authStatus,
+      oauthProviderId: channel.oauthProviderId || '',
+      transport: channel.transport || channel.extra?.transport || channel.providerConfig?.transport || '',
       routingGroup: channel.routingGroup || '',
       balanceToken: channel.balanceToken || '',
       balanceUserId: channel.balanceUserId ?? null,
@@ -1788,7 +1822,7 @@ const channelPanelFactories = {
       modelsFetchMeta: null
     }),
     onPresetChange: (presetId, form) => {
-      const preset = getOpenCodePresetById(presetId)
+      const preset = getOmpPresetById(presetId)
       if (!preset) return form
       const newForm = { ...form, presetId }
       newForm.name = preset.name
@@ -1800,6 +1834,18 @@ const channelPanelFactories = {
       newForm.wireApi = preset.wireApi || 'openai'
       newForm.providerApi = preset.providerApi || 'openai-completions'
       newForm.gatewaySourceType = preset.gatewaySourceType || newForm.gatewaySourceType || 'openai_compatible'
+      newForm.transport = preset.transport || ''
+      if (preset.authMode === 'oauth') {
+        return {
+          ...newForm,
+          authMode: 'oauth',
+          apiKey: '',
+          authRef: undefined,
+          authSource: undefined,
+          authStatus: undefined,
+          oauthProviderId: preset.oauthProviderId || ''
+        }
+      }
       return applyPresetAuth(newForm, preset)
     },
     fetchModelsForChannel: async (channelId, form, { forceRefresh = false } = {}) => {
@@ -1820,8 +1866,9 @@ const channelPanelFactories = {
             baseUrl: form.baseUrl,
             apiKey: form.apiKey || '',
             gatewaySourceType: form.gatewaySourceType || 'openai_compatible',
-            authMode: 'api_key',
-            oauthProviderId: '',
+            authMode: form.authMode || 'api_key',
+            oauthProviderId: form.oauthProviderId || '',
+            transport: form.transport || (isOAuthForm(form) ? 'pi-native' : ''),
             model: form.model || null,
             speedTestModel: form.speedTestModel || null,
             allowedModels: Array.isArray(form.allowedModels) ? form.allowedModels : [],
@@ -1913,13 +1960,13 @@ const channelPanelFactories = {
       },
       syncCurrent: syncCurrentOmpChannel,
       create: async (form) => {
-        const authPayload = buildAuthPayload(form)
+        const authPayload = buildOmpAuthPayload(form)
+        const providerConfig = parseProviderConfig(form.providerConfigJson)
         return await createOmpChannel(form.name, form.baseUrl, authPayload.apiKey, {
           wireApi: form.wireApi || 'openai',
           providerApi: form.providerApi || 'openai-completions',
           providerKey: form.providerKey,
-          authMode: 'api_key',
-          oauthProviderId: '',
+          ...buildAuthRequestFields(authPayload),
           routingGroup: form.routingGroup || '',
           maxConcurrency: normalizeConcurrency(form.maxConcurrency),
           weight: normalizeWeight(form.weight),
@@ -1931,16 +1978,18 @@ const channelPanelFactories = {
           presetId: form.presetId || null,
           websiteUrl: form.websiteUrl || '',
           allowedModels: form.allowedModels || [],
-          ...buildAuthRequestFields(authPayload),
           balanceToken: authPayload.balanceToken,
           balanceUserId: authPayload.balanceUserId,
           models: parseModelDefinitions(form.modelDefinitionsJson),
           modelMetadataMode: 'hybrid',
-          providerConfig: parseProviderConfig(form.providerConfigJson)
+          providerConfig: authPayload.transport
+            ? { ...providerConfig, transport: authPayload.transport }
+            : providerConfig
         })
       },
       update: async (channel, form) => {
-        const authPayload = buildAuthPayload(form)
+        const authPayload = buildOmpAuthPayload(form)
+        const providerConfig = parseProviderConfig(form.providerConfigJson)
         return await updateOmpChannel(channel.id, {
           name: form.name,
           providerKey: form.providerKey,
@@ -1948,8 +1997,7 @@ const channelPanelFactories = {
           apiKey: authPayload.apiKey,
           wireApi: form.wireApi || 'openai',
           providerApi: form.providerApi || 'openai-completions',
-          authMode: 'api_key',
-          oauthProviderId: '',
+          ...buildAuthRequestFields(authPayload),
           routingGroup: form.routingGroup || '',
           websiteUrl: form.websiteUrl,
           model: form.model || null,
@@ -1961,12 +2009,13 @@ const channelPanelFactories = {
           speedTestModel: form.speedTestModel || null,
           presetId: form.presetId || null,
           allowedModels: form.allowedModels || [],
-          ...buildAuthRequestFields(authPayload),
           balanceToken: authPayload.balanceToken,
           balanceUserId: authPayload.balanceUserId,
           models: parseModelDefinitions(form.modelDefinitionsJson),
           modelMetadataMode: 'hybrid',
-          providerConfig: parseProviderConfig(form.providerConfigJson)
+          providerConfig: authPayload.transport
+            ? { ...providerConfig, transport: authPayload.transport }
+            : providerConfig
         })
       },
       toggle: async (channel, enabled) => updateOmpChannel(channel.id, { enabled }),

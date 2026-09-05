@@ -206,6 +206,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   app.use('/api/skills', require('./api/skills'));
   app.use('/api/project-config', require('./api/project-config'));
   app.use('/api/hooks', require('./api/hooks'));
+  app.use('/api/oauth-credentials', require('./api/oauth-credentials'));
 
   // 初始化 Claude hooks 默认配置（自动开启任务完成通知）
   notificationHooks.initDefaultHooks();

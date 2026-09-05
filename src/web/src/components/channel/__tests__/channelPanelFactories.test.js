@@ -9,6 +9,8 @@ const {
   fetchOmpCatalogMetadata,
   fetchOmpChannelModels,
   fetchOpenCodeChannelModels,
+  createOmpChannel,
+  updateOmpChannel,
   getAllModelsByToolType,
   loadDefaultModels,
   probeOmpChannelModels,
@@ -22,6 +24,8 @@ const {
   fetchOmpCatalogMetadata: vi.fn(),
   fetchOmpChannelModels: vi.fn(),
   fetchOpenCodeChannelModels: vi.fn(),
+  createOmpChannel: vi.fn(),
+  updateOmpChannel: vi.fn(),
   getAllModelsByToolType: vi.fn(),
   loadDefaultModels: vi.fn(),
   probeOmpChannelModels: vi.fn(),
@@ -38,6 +42,8 @@ vi.mock('../../../api/channels', async () => ({
   fetchOmpCatalogMetadata,
   fetchOmpChannelModels,
   fetchOpenCodeChannelModels,
+  createOmpChannel,
+  updateOmpChannel,
   probeOmpChannelModels,
   probeOpenCodeChannelModels
 }))
@@ -70,6 +76,8 @@ describe('channel panel model catalogs', () => {
     fetchOpenCodeChannelModels.mockReset()
     probeOmpChannelModels.mockReset()
     probeOpenCodeChannelModels.mockReset()
+    createOmpChannel.mockReset().mockResolvedValue({ id: 'created' })
+    updateOmpChannel.mockReset().mockResolvedValue({ id: 'updated' })
   })
   it('keeps array channel responses from the platform API', async () => {
     const cases = [
@@ -199,5 +207,44 @@ describe('channel panel model catalogs', () => {
         expect(field.showWhen(form)).toBe(false)
       }
     }
+  })
+  it('builds an explicit OMP OAuth gateway payload without dropping gateway credentials', async () => {
+    const config = channelPanelFactories.omp()
+    const form = {
+      ...config.getInitialForm(),
+      name: 'Codex Gateway',
+      presetId: 'omp_oauth_gateway',
+      providerKey: 'openai-codex',
+      baseUrl: 'http://127.0.0.1:4000',
+      apiKey: 'gateway-token',
+      authMode: 'oauth',
+      authRef: {
+        credentialId: 'credential-2',
+        providerId: 'openai-codex',
+        accountId: '2',
+        identityKey: 'second@example.com',
+        accountEmail: 'se***d@example.com'
+      },
+      authSource: 'synced-local',
+      authStatus: 'available',
+      oauthProviderId: 'openai-codex',
+      transport: 'pi-native'
+    }
+
+    await config.api.create(form)
+
+    expect(createOmpChannel).toHaveBeenCalledWith(
+      'Codex Gateway',
+      'http://127.0.0.1:4000',
+      'gateway-token',
+      expect.objectContaining({
+        authMode: 'oauth',
+        authRef: expect.objectContaining({ credentialId: 'credential-2', accountId: '2' }),
+        authSource: 'synced-local',
+        oauthProviderId: 'openai-codex',
+        transport: 'pi-native',
+        providerConfig: { transport: 'pi-native' }
+      })
+    )
   })
 })

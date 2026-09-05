@@ -18,14 +18,9 @@ const INDEX_INVENTORY_TTL_MS = 30000;
 /** @type {number} Maximum time a cold stale-ok read waits for inventory */
 const INDEX_COLD_WAIT_MS = 1500;
 const BUILTIN_SESSION_SOURCES = new Set(['claude', 'codex', 'gemini', 'omp']);
-const SESSION_PARSER_VERSIONS = Object.freeze({
-  claude: 2,
-  codex: 1,
-  gemini: 1,
-  omp: 1
-});
-function _parserVersionFor(source) {
-  return SESSION_PARSER_VERSIONS[source] || 1;
+function _parserVersionForDriver(driver) {
+  const version = Number(driver?.parserVersion);
+  return Number.isInteger(version) && version >= 1 ? version : 1;
 }
 function _isUsableRuntime(runtime) {
   return !!runtime && typeof runtime === 'object' && typeof runtime.getDriver === 'function';
@@ -315,6 +310,7 @@ function _adaptRuntimeSessionsDriver(driver) {
   if (!driver) return null;
   const unwrap = result => result && result.status === 'ok' ? result.data : result;
   return {
+    parserVersion: driver.parserVersion,
     inventory: async (...args) => unwrap(await driver.inventory(...args)),
     parse: async (descriptor, ...args) => _normalizeRuntimeParseResult(
       await unwrap(await driver.parse(descriptor, ...args)),
@@ -323,9 +319,6 @@ function _adaptRuntimeSessionsDriver(driver) {
     )
   };
 }
-
-
-// Core: createSessionHistoryIndex
 // ---------------------------------------------------------------------------
 
 /**
@@ -372,16 +365,15 @@ function createSessionHistoryIndex(opts = {}) {
     }
     return _db;
   }
-  function _hasParserMigrationPending(source) {
-    const row = _getDb().prepare(
-      'SELECT 1 AS pending FROM session_file WHERE source = ? AND parser_version <> ? LIMIT 1'
-    ).get(source, _parserVersionFor(source));
-    return Boolean(row);
+  function _parserVersionForSource(source, adapter = null) {
+    if (adapter) return _parserVersionForDriver(adapter);
+    if (explicitAdapters) return _parserVersionForDriver(adapters[source]);
+    const runtimeDriver = _getRuntimeSessionsDriver(runtime, source, indexConfig);
+    return _parserVersionForDriver(runtimeDriver);
   }
 
   /**
-   * Check only the persisted inventory timestamp and parser format. This
-   * deliberately does not touch source files; inventory owns file checks.
+   * Check only the persisted inventory timestamp. Inventory owns file checks.
    *
    * @param {string} source
    * @returns {boolean}
@@ -393,8 +385,15 @@ function createSessionHistoryIndex(opts = {}) {
     return Boolean(
       row?.last_inventory_ms
       && Date.now() - Number(row.last_inventory_ms) < INDEX_INVENTORY_TTL_MS
-      && !_hasParserMigrationPending(source)
+      && (!explicitAdapters || !_hasParserMigrationPending(source))
     );
+  }
+
+  function _hasParserMigrationPending(source) {
+    const row = _getDb().prepare(
+      'SELECT 1 AS pending FROM session_file WHERE source = ? AND parser_version <> ? LIMIT 1'
+    ).get(source, _parserVersionForSource(source));
+    return Boolean(row);
   }
 
   function _hasIndexedData(source) {
@@ -405,7 +404,7 @@ function createSessionHistoryIndex(opts = {}) {
   }
 
   function _hasUsableIndexedData(source) {
-    return _hasIndexedData(source) && !_hasParserMigrationPending(source);
+    return _hasIndexedData(source) && (!explicitAdapters || !_hasParserMigrationPending(source));
   }
 
   function _initSchema(db) {
@@ -510,7 +509,6 @@ function createSessionHistoryIndex(opts = {}) {
       if (!force && _isSourceFresh(source)) {
         return;
       }
-
       let adapter = null;
 
       if (explicitAdapters) {
@@ -529,13 +527,7 @@ function createSessionHistoryIndex(opts = {}) {
           throw _typedFailureToError(_typedSessionsUnsupported(source, new Error(`unsupported sessions source: ${source}`)));
         }
       }
-      if (!adapter || typeof adapter.inventory !== 'function' || typeof adapter.parse !== 'function') {
-        if (explicitAdapters) {
-          return;
-        }
-        throw _typedFailureToError(_typedSessionsUnsupported(source, new Error(`unsupported sessions source: ${source}`)));
-      }
-
+      const parserVersion = _parserVersionForSource(source, adapter);
       const inventoryResult = await adapter.inventory({ projectsDir: config.projectsDir });
       if (_isTypedFailureResult(inventoryResult)) {
         throw _typedFailureToError(inventoryResult);
@@ -569,13 +561,10 @@ function createSessionHistoryIndex(opts = {}) {
         if (!idx
           || idx.size !== d.size
           || idx.mtime_ms !== d.mtimeMs
-          || idx.parserVersion !== _parserVersionFor(source)) {
+          || idx.parserVersion !== parserVersion) {
           toParse.push(d);
         }
       }
-
-      // Parse concurrently with a fixed four-file limit. Individual failures
-      // are recorded below and do not cancel sibling parses.
       const parseDescriptor = async (d) => {
         const preFingerprint = { size: d.size, mtimeMs: d.mtimeMs };
         const parseResult = await adapter.parse({ ...d, projectsDir: config.projectsDir });
@@ -666,7 +655,7 @@ function createSessionHistoryIndex(opts = {}) {
         for (const item of parsed) {
           if (item?.value) {
             const { descriptor, parseResult } = item.value;
-            _insertSession({ deleteSession, insertFile, insertMessage }, source, descriptor, parseResult.session, parseResult.messages);
+            _insertSession({ deleteSession, insertFile, insertMessage }, source, descriptor, parseResult.session, parseResult.messages, parserVersion);
           }
         }
         db.exec('COMMIT');
@@ -696,7 +685,7 @@ function createSessionHistoryIndex(opts = {}) {
   }
 
 
-  function _insertSession(statements, source, descriptor, session, messages) {
+  function _insertSession(statements, source, descriptor, session, messages, parserVersion) {
     const { deleteSession, insertFile, insertMessage } = statements;
     deleteSession.run(source, session.sessionId);
     insertFile.run(
@@ -717,7 +706,7 @@ function createSessionHistoryIndex(opts = {}) {
       messages.length,
       session.usageJson || null,
       session.extraJson || null,
-      _parserVersionFor(source)
+      parserVersion
     );
 
     let ordinal = 0;
