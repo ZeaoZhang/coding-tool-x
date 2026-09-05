@@ -12,18 +12,30 @@ export const codexPresets = [
     providerKey: 'openai-official'
   },
   {
+    id: 'codex_oauth',
+    name: 'Codex OAuth',
+    category: 'oauth',
+    description: '使用本地 Codex 登录凭据',
+    websiteUrl: '',
+    baseUrl: '',
+    providerKey: 'codex-oauth',
+    authMode: 'oauth',
+    oauthProviderId: 'codex'
+  },
+  {
     id: 'custom',
     name: '自定义',
     category: 'custom',
     websiteUrl: '',
     baseUrl: '',
     providerKey: ''
-  }
+  },
 ]
 
 // 预设分类
 export const codexPresetCategories = {
   official: '官方',
+  oauth: 'OAuth',
   custom: '自定义'
 }
 
