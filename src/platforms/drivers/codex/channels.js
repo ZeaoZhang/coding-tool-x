@@ -21,6 +21,10 @@ function createDriver(context = {}) {
       ? [`provider ${channel.providerKey}`]
       : []
   });
+  const auth = require('../../channel-auth-service');
+  driver.getAuth = context => auth.getChannelAuth('codex', { channelId: context?.params?.channelId || context?.query?.channelId || '' });
+  driver.syncLocalAuth = context => auth.syncLocalChannelAuth('codex', { channelId: context?.body?.channelId || context?.params?.channelId || context?.query?.channelId || '' });
+  driver.getAuthQuota = context => auth.fetchChannelAuthQuota('codex', context?.params?.channelId, { refresh: context?.query?.refresh === 'true' });
   const callLegacy = (name, args) => driver._service()[name](...args);
   for (const name of [
     'getChannels', 'getEnabledChannels', 'createChannel', 'updateChannel',

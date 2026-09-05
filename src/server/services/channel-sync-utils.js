@@ -231,12 +231,24 @@ function sanitizeChannel(channel) {
   const sanitized = {
     id: channel.id,
     name: channel.name,
-    baseUrl: channel.baseUrl,
-    enabled: channel.enabled !== false
+    baseUrl: channel.authMode === 'oauth' ? '' : channel.baseUrl,
+    enabled: channel.enabled !== false,
+    authMode: channel.authMode || 'api_key'
   };
   if (channel.providerKey) sanitized.providerKey = channel.providerKey;
   if (channel.model) sanitized.model = channel.model;
   if (channel.credentialSource) sanitized.credentialSource = channel.credentialSource;
+  if (channel.authMode === 'oauth') {
+    sanitized.authRef = {
+      credentialId: String(channel.authRef?.credentialId || ''),
+      providerId: String(channel.authRef?.providerId || ''),
+      accountId: String(channel.authRef?.accountId || ''),
+      identityKey: String(channel.authRef?.identityKey || ''),
+      accountEmail: String(channel.authRef?.accountEmail || '')
+    };
+    sanitized.authSource = channel.authSource || 'synced-local';
+    sanitized.authStatus = channel.authStatus || 'available';
+  }
   return sanitized;
 }
 
@@ -272,26 +284,23 @@ function upsertSyncedChannels({
     channels: [],
     warnings: []
   };
-
   let changed = false;
   for (const rawCandidate of candidates || []) {
     const candidate = rawCandidate || {};
-    if (candidate.warning) {
-      result.warnings.push(candidate.warning);
-    }
+    if (candidate.warning) result.warnings.push(candidate.warning);
     if (candidate.skip) {
       result.skipped += 1;
       if (candidate.channel) result.channels.push(sanitizeChannel(candidate.channel));
       continue;
     }
-    if (!normalizeString(candidate.baseUrl)) {
+    if (candidate.authMode !== 'oauth' && !normalizeString(candidate.baseUrl)) {
       result.skipped += 1;
       result.warnings.push(`${toolType}: missing baseUrl, skipped current channel sync`);
       continue;
     }
-    if (!normalizeString(candidate.apiKey) && candidate.authMode !== 'none') {
+    if (!normalizeString(candidate.apiKey) && candidate.authMode !== 'oauth' && candidate.authMode !== 'none') {
       result.skipped += 1;
-      result.warnings.push(`${toolType}: missing API key or OAuth-only config, skipped current channel sync`);
+      result.warnings.push(`${toolType}: missing API key, skipped current channel sync`);
       continue;
     }
 
@@ -317,7 +326,7 @@ function upsertSyncedChannels({
     const now = Date.now();
     const created = applyDefaults ? applyDefaults({
       id: candidate.id || crypto.randomUUID(),
-      enabled: candidate.enabled !== false,
+      enabled: candidate.authMode === 'oauth' ? false : candidate.enabled !== false,
       weight: candidate.weight || 1,
       maxConcurrency: candidate.maxConcurrency || null,
       ...normalizedCandidate,
@@ -325,7 +334,7 @@ function upsertSyncedChannels({
       updatedAt: now
     }) : {
       id: candidate.id || crypto.randomUUID(),
-      enabled: candidate.enabled !== false,
+      enabled: candidate.authMode === 'oauth' ? false : candidate.enabled !== false,
       weight: candidate.weight || 1,
       maxConcurrency: candidate.maxConcurrency || null,
       ...normalizedCandidate,

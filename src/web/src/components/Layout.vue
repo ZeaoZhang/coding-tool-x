@@ -237,8 +237,6 @@
     <!-- Config Export/Import Drawer -->
     <ConfigExportDrawer v-if="isDrawerLoaded('config-export')" v-model:visible="showConfigExportDrawer" />
 
-    <!-- OAuth Credentials Drawer -->
-    <OAuthCredentialsDrawer v-if="isDrawerLoaded('oauth')" v-model:visible="showOAuthCredentialsDrawer" />
 
     <!-- Skills/Commands/Agents Drawers -->
     <SkillsDrawer v-if="isDrawerLoaded('skills')" v-model:visible="showSkillsDrawer" :platform="skillsDrawerPlatform" :project-path="skillsDrawerProjectPath" />
@@ -457,7 +455,6 @@ const PluginsDrawer = defineAsyncComponent(() => import('./PluginsDrawer.vue'))
 const WorkspaceDrawer = defineAsyncComponent(() => import('./WorkspaceDrawer.vue'))
 const ConfigTemplatesDrawer = defineAsyncComponent(() => import('./ConfigTemplatesDrawer.vue'))
 const ConfigExportDrawer = defineAsyncComponent(() => import('./ConfigExportDrawer.vue'))
-const OAuthCredentialsDrawer = defineAsyncComponent(() => import('./OAuthCredentialsDrawer.vue'))
 
 // 使用主题 composable
 const { isDark, toggleTheme } = useTheme()
@@ -481,7 +478,6 @@ const APP_NAME = 'coding-tool-x'
 const moreMenuOptions = [
   { label: '配置模板', key: 'config-templates' },
   { label: '配置导入/导出', key: 'config-export' },
-  { label: 'OAuth 凭证', key: 'oauth' },
   { label: '渠道速度测试', key: 'speed-test' },
   { type: 'divider', key: 'divider-1' },
   { label: '使用帮助', key: 'help' },
@@ -497,12 +493,6 @@ const routeViewKey = computed(() => route.path)
 const showChannels = ref(true)
 const showLogs = ref(true)
 
-// 切换到渠道页时关闭 OAuth 凭证抽屉
-watch(currentChannel, (val) => {
-  if (val) {
-    showOAuthCredentialsDrawer.value = false
-  }
-})
 
 // 是否显示右侧面板（首页不显示）
 const shouldShowRightPanel = computed(() => {
@@ -520,7 +510,6 @@ const showHelpModal = ref(false)
 const showWorkspaceDrawer = ref(false)
 const showConfigTemplatesDrawer = ref(false)
 const showConfigExportDrawer = ref(false)
-const showOAuthCredentialsDrawer = ref(false)
 const showSkillsDrawer = ref(false)
 const skillsDrawerPlatform = ref('')
 const skillsDrawerProjectPath = ref('')
@@ -760,10 +749,6 @@ function handleMoreMenuSelect(key) {
     openConfigExportDrawer()
     return
   }
-  if (key === 'oauth') {
-    openOAuthCredentialsDrawer()
-    return
-  }
   if (key === 'speed-test') {
     openSpeedTestDrawer()
     return
@@ -835,7 +820,6 @@ onMounted(() => {
   window.addEventListener('open-agents-drawer', openAgentsDrawer)
   window.addEventListener('open-plugins-drawer', openPluginsDrawer)
   window.addEventListener('open-gateway-convert-drawer', openGatewayConvertDrawer)
-  window.addEventListener('open-oauth-credentials-drawer', openOAuthCredentialsDrawer)
 
   // 检测环境变量冲突
   checkEnvConflictsOnLoad()
@@ -849,7 +833,6 @@ onUnmounted(() => {
   window.removeEventListener('open-agents-drawer', openAgentsDrawer)
   window.removeEventListener('open-plugins-drawer', openPluginsDrawer)
   window.removeEventListener('open-gateway-convert-drawer', openGatewayConvertDrawer)
-  window.removeEventListener('open-oauth-credentials-drawer', openOAuthCredentialsDrawer)
 })
 
 function openSkillsDrawer(event) {
@@ -858,9 +841,6 @@ function openSkillsDrawer(event) {
   openDrawer('skills', showSkillsDrawer)
 }
 
-function openOAuthCredentialsDrawer() {
-  openDrawer('oauth', showOAuthCredentialsDrawer)
-}
 
 function openCommandsDrawer(event) {
   commandsDrawerPlatform.value = event?.detail?.platform || ''

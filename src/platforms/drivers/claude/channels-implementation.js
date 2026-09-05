@@ -197,6 +197,7 @@ class ClaudeChannelService extends BaseChannelService {
       channelsFilePath: PATHS.channels.claude,
       defaultGatewaySource: 'claude',
       isProxyRunning: () => isProxyConfig(),
+      oauthChannelPolicy: 'single-enabled',
     });
     // Claude 特有：文件监听缓存
     this._cache = null;

@@ -11,7 +11,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { normalizeGatewaySourceType, normalizeNumber } = require('./proxy-utils');
 const { resolveChannelWebsiteUrl } = require('../config/channel-preset-websites');
-
+const { assertAuthMode, validateEnabledTransition } = require('./channel-auth-policy');
 function clearChannelBalanceCache(platform, channel) {
   try {
     require('../server/services/channel-balance').clearChannelBalanceCache(platform, channel);
@@ -41,6 +41,7 @@ class BaseChannelService {
     this.platform = config.platform;
     this.channelsFilePath = config.channelsFilePath;
     this.defaultGatewaySource = config.defaultGatewaySource || config.platform;
+    this.oauthChannelPolicy = config.oauthChannelPolicy || 'mixed';
     this._isProxyRunning = config.isProxyRunning || (() => false);
     this._channelCache = { value: null, mtimeMs: 0, invalidated: true };
   }
@@ -122,23 +123,22 @@ class BaseChannelService {
   }
 
   // ── CRUD ──
-
-  createChannel(fields) {
+  createChannel(fields = {}) {
     const data = this.loadChannels();
+    const normalizedFields = this._normalizeAuthFields(fields, data.channels);
 
-    // 子类可覆写的唯一性校验
-    this._validateUniqueness(data.channels, fields);
+    this._validateUniqueness(data.channels, normalizedFields);
 
     const channel = this._applyDefaults({
       id: this._generateId(),
-      ...fields,
+      ...normalizedFields,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     });
 
     data.channels.push(channel);
+    this._validateOAuthEnabledTransition(data.channels, channel, null);
 
-    // 单渠道强制：代理未运行时只允许一个渠道启用
     if (channel.enabled && !this._isProxyRunning()) {
       this._enforceSingleChannel(data.channels, data.channels.length - 1);
     }
@@ -147,27 +147,23 @@ class BaseChannelService {
     this._onAfterCreate(channel, data.channels);
     return channel;
   }
-  updateChannel(channelId, updates) {
+  updateChannel(channelId, updates = {}) {
     const data = this.loadChannels();
     const index = data.channels.findIndex(ch => ch.id === channelId);
-    if (index === -1) {
-      throw new Error('Channel not found');
-    }
+    if (index === -1) throw new Error('Channel not found');
 
     const oldChannel = data.channels[index];
-
-    // 子类可覆写的唯一性校验（排除自身）
-    this._validateUniqueness(data.channels, updates, channelId);
-
+    const normalizedUpdates = this._normalizeAuthFields(updates, data.channels, oldChannel);
+    this._validateUniqueness(data.channels, normalizedUpdates, channelId);
     const nextChannel = this._applyDefaults({
       ...oldChannel,
-      ...updates,
+      ...normalizedUpdates,
       id: channelId,
       updatedAt: Date.now(),
     });
+    this._validateOAuthEnabledTransition(data.channels, nextChannel, oldChannel);
     data.channels[index] = nextChannel;
 
-    // 单渠道强制
     const isProxyRunning = this._isProxyRunning();
     if (!isProxyRunning && nextChannel.enabled && !oldChannel.enabled) {
       this._enforceSingleChannel(data.channels, index);
@@ -251,9 +247,67 @@ class BaseChannelService {
   }
 
   // ── 内部方法 ──
+  _normalizeAuthFields(fields = {}, channels = [], existing = null) {
+    const next = { ...fields };
+    const unsafeField = Object.keys(fields).find(key => /token|secret|password|refresh|access/i.test(key));
+    if (unsafeField) {
+      const error = new Error('Invalid OAuth auth payload');
+      error.code = 'invalid_auth_payload';
+      error.statusCode = 400;
+      throw error;
+    }
+    const currentMode = existing?.authMode || (existing ? 'api_key' : null);
+    const authMode = next.authMode || currentMode || 'api_key';
+    assertAuthMode(authMode);
+    if (currentMode && next.authMode && next.authMode !== currentMode) {
+      const error = new Error('Channel authMode is immutable');
+      error.code = 'auth_mode_immutable';
+      error.statusCode = 409;
+      throw error;
+    }
+    if (next.authRef && typeof next.authRef === 'object') {
+      const allowed = ['credentialId', 'providerId', 'accountId', 'identityKey', 'accountEmail'];
+      const unsafe = Object.keys(next.authRef).find(key => !allowed.includes(key));
+      if (unsafe) {
+        const error = new Error('Invalid OAuth auth payload');
+        error.code = 'invalid_auth_payload';
+        error.statusCode = 400;
+        throw error;
+      }
+      next.authRef = Object.fromEntries(allowed.map(key => [key, String(next.authRef[key] || '').trim()]));
+    } else if (next.authRef !== undefined && next.authRef !== null) {
+      const error = new Error('Invalid OAuth auth payload');
+      error.code = 'invalid_auth_payload';
+      error.statusCode = 400;
+      throw error;
+    }
+    if (authMode === 'oauth') {
+      if ((next.authSource || existing?.authSource) !== 'synced-local') {
+        const error = new Error('OAuth channels must use synced-local auth');
+        error.code = 'invalid_auth_payload';
+        error.statusCode = 400;
+        throw error;
+      }
+      next.authSource = 'synced-local';
+      if (!next.authRef && !existing?.authRef) {
+        const error = new Error('OAuth reference unavailable');
+        error.code = 'oauth_reference_unavailable';
+        error.statusCode = 422;
+        throw error;
+      }
+      next.apiKey = '';
+      next.baseUrl = next.baseUrl || '';
+    } else if (authMode === 'none') {
+      next.apiKey = '';
+      next.authRef = undefined;
+      next.authSource = undefined;
+    }
+    next.authMode = authMode;
+    return next;
+  }
 
-  _generateId() {
-    return crypto.randomUUID();
+  _validateOAuthEnabledTransition(channels, channel) {
+    validateEnabledTransition(channels, channel, this.oauthChannelPolicy);
   }
 
   _enforceSingleChannel(channels, enabledIndex) {
@@ -278,6 +332,20 @@ class BaseChannelService {
     }
     normalized.weight = normalizeNumber(normalized.weight, 1, 100);
     // maxConcurrency: null 表示不限制并发；只有用户显式设置正整数时才生效
+    normalized.authMode = ['api_key', 'oauth', 'none'].includes(normalized.authMode)
+      ? normalized.authMode
+      : 'api_key';
+    if (normalized.authMode === 'oauth') {
+      normalized.authSource = normalized.authSource || 'synced-local';
+      normalized.authRef = {
+        credentialId: String(normalized.authRef?.credentialId || '').trim(),
+        providerId: String(normalized.authRef?.providerId || '').trim(),
+        accountId: String(normalized.authRef?.accountId || '').trim(),
+        identityKey: String(normalized.authRef?.identityKey || '').trim(),
+        accountEmail: String(normalized.authRef?.accountEmail || '').trim()
+      };
+      normalized.apiKey = '';
+    }
     const rawConcurrency = normalized.maxConcurrency;
     normalized.maxConcurrency = (rawConcurrency !== null && rawConcurrency !== undefined && Number(rawConcurrency) > 0)
       ? Number(rawConcurrency)

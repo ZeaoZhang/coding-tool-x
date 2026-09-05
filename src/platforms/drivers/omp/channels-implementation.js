@@ -166,6 +166,7 @@ class OmpChannelService extends BaseChannelService {
       platform: 'omp',
       channelsFilePath: PATHS.channels.omp,
       defaultGatewaySource: 'openai_compatible',
+      oauthChannelPolicy: 'mixed',
       isProxyRunning: () => isManagedOmpModeEnabled()
     });
   }
@@ -543,7 +544,7 @@ function resolveOmpAuthMode(provider = {}, sourceProvider = {}, existing = null)
   return 'api_key';
 }
 
-function buildOmpSyncCandidate(modelsConfig, selection, channels) {
+function buildOmpSyncCandidate(modelsConfig, selection, channels, options = {}) {
   const providers = getOmpProviders(modelsConfig);
   const providerId = selection?.providerId || '';
   const provider = providers[providerId] || null;
@@ -572,7 +573,9 @@ function buildOmpSyncCandidate(modelsConfig, selection, channels) {
   )
     ? existing?.baseUrl || ''
     : providerBaseUrl || existing?.baseUrl || managedBaseUrl;
-  const authMode = resolveOmpAuthMode(provider, sourceProvider, existing);
+  const authMode = options.authMode && options.authMode !== 'all'
+    ? options.authMode
+    : resolveOmpAuthMode(provider, sourceProvider, existing);
 
   let credential = resolveApiKeyValue(sourceProvider.apiKey || sourceProvider.api_key || '');
   if (!credential.value) {
@@ -596,13 +599,11 @@ function buildOmpSyncCandidate(modelsConfig, selection, channels) {
   const preferredModel = selection?.roleModelIds?.[0]
     || selectedModelIds[0]
     || existing?.model
-    || allowedModels[0]
-    || null;
-  if (!baseUrl || (authMode !== 'none' && !apiKey)) {
+  if (authMode !== 'oauth' && (!baseUrl || (authMode !== 'none' && !apiKey))) {
     return {
       skip: true,
       channel: existing || null,
-      warning: `OMP 当前 provider "${providerId}" 缺少可解析的上游 Base URL 或 API Key，OAuth/登录态渠道不支持同步导入。`
+      warning: `OMP 当前 provider "${providerId}" 缺少可解析的上游 Base URL 或 API Key，已跳过同步。`
     };
   }
 
@@ -625,11 +626,19 @@ function buildOmpSyncCandidate(modelsConfig, selection, channels) {
   return {
     name: existing?.name || originalProviderId || providerId,
     providerKey: originalProviderId || providerId,
-    baseUrl,
-    apiKey: authMode === 'none' ? '' : apiKey,
+    baseUrl: authMode === 'oauth' ? '' : baseUrl,
+    apiKey: authMode === 'oauth' || authMode === 'none' ? '' : apiKey,
     providerApi,
     wireApi: providerApi,
     authMode,
+    authRef: authMode === 'oauth' ? {
+      credentialId: '',
+      providerId: providerId || originalProviderId,
+      accountId: sourceProvider.accountId || sourceProvider.account_id || '',
+      identityKey: sourceProvider.identityKey || sourceProvider.identity_key || '',
+      accountEmail: sourceProvider.accountEmail || sourceProvider.email || ''
+    } : undefined,
+    authSource: authMode === 'oauth' ? 'synced-local' : undefined,
     oauthProviderId: authMode === 'oauth' ? (existing?.oauthProviderId || originalProviderId || providerId) : '',
     model: preferredModel,
     allowedModels,
@@ -690,7 +699,8 @@ function getCatalogMetadata({
   };
 }
 
-function syncCurrentOmpChannel() {
+function syncCurrentOmpChannel(options = {}) {
+  const authMode = options.authMode || 'api_key';
   let modelsConfig = { providers: {} };
   let settings = {};
   try {
@@ -699,19 +709,13 @@ function syncCurrentOmpChannel() {
   } catch (error) {
     return createSkippedResult('omp', `OMP 配置读取失败：${error.message}`);
   }
-
   const data = service.loadChannels();
   const channels = Array.isArray(data.channels) ? data.channels : [];
   const selections = collectOmpSyncSelections(modelsConfig, settings);
-  if (selections.length === 0) {
-    const active = resolveExistingActiveChannel('omp', channels);
-    if (active) {
-      return createSkippedResult('omp', 'OMP 当前配置未明确 provider；已找到当前面板中的 active 渠道，未重复导入。', active);
-    }
-    return createSkippedResult('omp', 'OMP 当前配置未明确 provider，无法同步当前渠道。');
-  }
-  const candidates = selections.map(selection => buildOmpSyncCandidate(modelsConfig, selection, channels));
-
+  if (selections.length === 0) return createSkippedResult('omp', 'OMP 当前配置未明确 provider，无法同步当前渠道。');
+  const candidates = selections
+    .map(selection => buildOmpSyncCandidate(modelsConfig, selection, channels, { authMode }))
+    .filter(candidate => authMode === 'all' || candidate.authMode === authMode || candidate.skip);
   return upsertSyncedChannels({
     toolType: 'omp',
     loadChannels: () => service.loadChannels(),
@@ -719,7 +723,9 @@ function syncCurrentOmpChannel() {
     applyDefaults: channel => service._applyDefaults(channel),
     candidates,
     matchers: [
-      (channel, current) => channel.providerKey && channel.providerKey === current.providerKey,
+      (channel, current) => channel.providerKey === current.providerKey
+        && channel.authMode === current.authMode
+        && (channel.model || '') === (current.model || ''),
       (channel, current) => channel.baseUrl === current.baseUrl && channel.apiKey === current.apiKey
     ]
   });

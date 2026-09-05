@@ -889,45 +889,74 @@ async function fetchGeminiUsage(accessToken) {
   }
 }
 
+function clampPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  const percent = number >= 0 && number <= 1 ? number * 100 : number;
+  return Math.max(0, Math.min(100, percent));
+}
+
+function normalizeWindow(window, label) {
+  if (!window || typeof window !== 'object') return null;
+  const usedPercent = clampPercent(window.used_percent ?? window.utilization);
+  if (usedPercent === null) return null;
+  return {
+    label,
+    remainingPercent: Math.max(0, Math.min(100, 100 - usedPercent)),
+    usedPercent,
+    resetsAt: window.reset_at || window.resetAt || null
+  };
+}
+
+function normalizeOAuthQuota(tool, raw) {
+  const value = raw && typeof raw === 'object' ? raw : {};
+  let primary = normalizeWindow(value.five_hour || value.fiveHour, '5h');
+  let secondary = normalizeWindow(value.seven_day || value.sevenDay, '7d');
+  const rateLimit = value.rate_limit || value.rateLimit;
+  if (rateLimit) {
+    primary = primary || normalizeWindow(rateLimit.primary_window || rateLimit.primaryWindow, '5h');
+    secondary = secondary || normalizeWindow(rateLimit.secondary_window || rateLimit.secondaryWindow, '7d');
+  }
+  if (!primary && !secondary) {
+    return { quota: null, status: 'unsupported', warning: `${tool}: provider did not return 5h/7d quota windows` };
+  }
+  return { quota: { status: 'available', primary, secondary }, status: 'available' };
+}
+
 async function fetchCredentialUsage(tool, credentialId) {
   const entry = findStoredCredential(tool, credentialId);
   const secrets = entry.secrets || {};
   const accessToken = secrets.accessToken || secrets.primaryToken || '';
+  if (!accessToken) return { error: '无有效 token' };
 
-  if (!accessToken) {
-    return { error: '无有效 token' };
-  }
-
+  let response;
   switch (tool) {
     case 'claude':
-      return await fetchClaudeUsage(accessToken);
+      response = await fetchClaudeUsage(accessToken);
+      break;
     case 'codex':
-      return await fetchCodexUsage(secrets.idToken || accessToken);
+      response = await fetchCodexUsage(secrets.idToken || accessToken);
+      break;
     case 'gemini':
-      return await fetchGeminiUsage(accessToken);
-    case 'opencode': {
-      const providerId = entry.providerId || 'openai';
-      if (providerId.includes('claude') || providerId.includes('anthropic')) {
-        return await fetchClaudeUsage(accessToken);
-      } else if (providerId.includes('gemini') || providerId.includes('google')) {
-        return await fetchGeminiUsage(accessToken);
-      } else {
-        return await fetchCodexUsage(accessToken);
-      }
-    }
+      response = await fetchGeminiUsage(accessToken);
+      break;
     case 'omp': {
       const providerId = entry.providerId || secrets.providerId || '';
-      if (providerId.includes('claude') || providerId.includes('anthropic')) {
-        return await fetchClaudeUsage(accessToken);
-      } else if (providerId.includes('gemini') || providerId.includes('google')) {
-        return await fetchGeminiUsage(accessToken);
-      } else {
-        return await fetchCodexUsage(accessToken);
-      }
+      response = providerId.includes('claude') || providerId.includes('anthropic')
+        ? await fetchClaudeUsage(accessToken)
+        : providerId.includes('gemini') || providerId.includes('google')
+          ? await fetchGeminiUsage(accessToken)
+          : await fetchCodexUsage(accessToken);
+      break;
     }
     default:
-      return { error: `不支持的工具: ${tool}` };
+      return { quota: null, status: 'unsupported', error: `不支持的工具: ${tool}` };
   }
+  if (response?.error) return { quota: null, status: 'unavailable', error: response.error };
+  if (response?.statusCode === 401 || response?.statusCode === 403) {
+    return { quota: null, status: 'unauthorized', error: '上游 OAuth 授权已失效' };
+  }
+  return normalizeOAuthQuota(tool, response?.raw);
 }
 
 module.exports = {
@@ -941,5 +970,6 @@ module.exports = {
   applyStoredCredential,
   disableStoredCredential,
   clearNativeOAuthState,
+  normalizeOAuthQuota,
   fetchCredentialUsage
 };

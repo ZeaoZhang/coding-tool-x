@@ -19,6 +19,11 @@ function createDriver(context = {}) {
     cliMetadata: { supportsCliCreate: true, supportsCliToggle: true, defaultPort: 20088 },
     dashboardChannelShape: 'array'
   });
+  const callLegacy = (name, args) => driver._service()[name](...args);
+  const auth = require('../../channel-auth-service');
+  driver.getAuth = context => auth.getChannelAuth('claude', { channelId: context?.params?.channelId || context?.query?.channelId || '' });
+  driver.syncLocalAuth = context => auth.syncLocalChannelAuth('claude', { channelId: context?.body?.channelId || context?.params?.channelId || context?.query?.channelId || '' });
+  driver.getAuthQuota = context => auth.fetchChannelAuthQuota('claude', context?.params?.channelId, { refresh: context?.query?.refresh === 'true' });
   for (const name of [
     'getAllChannels', 'getCurrentChannel', 'getCurrentSettings', 'createChannel',
     'updateChannel', 'markChannelAsRecentlyUsed', 'deleteChannel',

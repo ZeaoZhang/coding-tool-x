@@ -69,14 +69,6 @@
       </div>
     </div>
 
-    <!-- OAuth 控制提示 -->
-    <div v-if="isOAuthControlled" class="oauth-banner">
-      <n-icon :size="14" color="#2080f0"><KeyOutline /></n-icon>
-      <span>{{ oauthBannerText }}</span>
-      <n-button text size="small" type="primary" @click="openOAuthCredentialsDrawer">
-        凭证管理 →
-      </n-button>
-    </div>
 
     <!-- 渠道管理区域 -->
     <div
@@ -141,7 +133,6 @@ import {
   TerminalOutline,
   PersonOutline,
   CubeOutline,
-  KeyOutline,
   SyncOutline,
 } from '@vicons/ionicons5'
 import ClaudeChannelPanel from './channel/ClaudeChannelPanel.vue'
@@ -152,7 +143,6 @@ import OmpChannelPanel from './channel/OmpChannelPanel.vue'
 import BaseChannelPanel from './channel/BaseChannelPanel.vue'
 import ProxyLogs from './ProxyLogs.vue'
 import { getSkills } from '../api/skills'
-import { getOAuthCredentialSummaries } from '../api/oauth-credentials'
 import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
 import { getRoutePlatform } from '../config/platformCatalog'
 
@@ -185,7 +175,6 @@ const currentPlatform = computed(() => getPlatform(currentChannel.value))
 const currentPanelRef = ref(null)
 const syncingCurrentChannel = ref(false)
 const installedSkillsCount = ref(0)
-const oauthSummaries = ref({})
 
 const panelComponents = {
   claude: ClaudeChannelPanel,
@@ -224,32 +213,6 @@ const proxyToggleLabel = computed(() => (
   currentPlatform.value?.proxyLabels?.toggle || '动态切换'
 ))
 
-// 当前渠道是否处于 OAuth 控制模式
-const isOAuthControlled = computed(() => {
-  const tool = currentChannel.value
-  const state = oauthSummaries.value?.[tool]?.nativeState
-  return !!(state?.oauthPresent && state?.mode === 'oauth')
-})
-
-const oauthBannerText = computed(() => {
-  if (currentChannel.value === 'opencode') {
-    return '检测到 OAuth 凭证。OpenCode 支持保留 OAuth 与 API providers 并存。'
-  }
-  return '当前由 OAuth 控制。写入渠道或开启动态切换时，会自动退出 OAuth 控制。'
-})
-
-async function loadOAuthSummaries() {
-  try {
-    const result = await getOAuthCredentialSummaries()
-    oauthSummaries.value = result.tools || {}
-  } catch {
-    // 静默失败，不影响渠道功能
-  }
-}
-
-function openOAuthCredentialsDrawer() {
-  window.dispatchEvent(new CustomEvent('open-oauth-credentials-drawer'))
-}
 
 // 加载已安装技能数量
 async function loadInstalledSkillsCount() {
@@ -300,7 +263,6 @@ function handleChannelManagementRefresh(event) {
   if (!targetChannel || targetChannel === currentChannel.value) {
     refreshChannelPanel()
   }
-  loadOAuthSummaries()
 }
 
 // 处理代理切换
@@ -343,7 +305,6 @@ function handleShowPlugins(event) {
 
 onMounted(() => {
   loadInstalledSkillsCount()
-  loadOAuthSummaries()
   if (typeof window !== 'undefined') {
     window.addEventListener('channel-management-refresh', handleChannelManagementRefresh)
   }
@@ -351,11 +312,9 @@ onMounted(() => {
 
 watch(() => currentChannel.value, () => {
   loadInstalledSkillsCount()
-  loadOAuthSummaries()
 })
 
 watch(() => props.proxyRunning, () => {
-  loadOAuthSummaries()
 })
 
 onUnmounted(() => {

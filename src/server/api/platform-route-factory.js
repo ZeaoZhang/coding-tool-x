@@ -2,7 +2,7 @@
 
 const { applyRequestCodec, applyResponseCodec } = require('./platform-api-config');
 
-const STATUS_CODES = Object.freeze({ ok: 200, invalid: 400, unsupported: 404, unavailable: 503, failed: 500 });
+const STATUS_CODES = Object.freeze({ ok: 200, invalid: 400, conflict: 409, unprocessable: 422, unsupported: 404, unavailable: 503, failed: 500 });
 
 const DEFAULT_ROUTES = Object.freeze([
   { method: 'GET', path: '/projects', capability: 'projects', operation: 'listProjects', request: 'projects-list', response: 'projects-list' },
@@ -34,14 +34,20 @@ function addContext(value, { platform, capability, operation }) {
 
 function makeFailure(context, error) {
   const cause = error instanceof Error ? error : new Error(safeText(error, 'Platform route failed'));
+  const status = cause.statusCode === 409 ? 'conflict'
+    : cause.statusCode === 422 ? 'unprocessable'
+      : cause.statusCode === 400 ? 'invalid'
+        : cause.statusCode === 503 ? 'unavailable' : 'failed';
   const result = {
-    status: 'failed',
-    code: 'failed',
+    status,
+    code: cause.code || status,
     platform: context.platform,
     capability: context.capability,
     operation: context.operation,
     error: safeText(cause.message, 'Platform route failed')
   };
+  if (cause.conflictingChannelId) result.conflictingChannelId = cause.conflictingChannelId;
+  if (cause.conflictingChannelName) result.conflictingChannelName = cause.conflictingChannelName;
   Object.defineProperty(result, 'cause', { value: cause, enumerable: false });
   return result;
 }

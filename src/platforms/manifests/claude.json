@@ -6,6 +6,10 @@
   "iconToken": "claude",
   "color": "#18a058",
   "defaultVisible": true,
+  "auth": {
+    "modes": ["api_key", "oauth", "none"],
+    "oauth": { "adapter": "claude", "policy": "single-enabled", "quota": "claude" }
+  },
   "helpLabel": "Claude",
   "terminalColor": "cyan",
   "cliSelectable": true,
@@ -243,6 +247,30 @@
         "path": "/channels/best-for-restore",
         "capability": "channels",
         "operation": "bestForRestore",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/channels/auth",
+        "capability": "channels",
+        "operation": "getAuth",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/channels/auth/sync-local",
+        "capability": "channels",
+        "operation": "syncLocalAuth",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/channels/:channelId/auth/quota",
+        "capability": "channels",
+        "operation": "getAuthQuota",
         "request": "default",
         "response": "default"
       },
