@@ -358,7 +358,6 @@ function updateChannel(channelId, updates) {
     updatedAt: Date.now()
   };
   data.channels[index] = nextChannel;
-
   const { getGeminiProxyStatus } = require('./proxy-implementation');
   const proxyStatus = getGeminiProxyStatus();
   const isProxyRunning = proxyStatus.running;
