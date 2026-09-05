@@ -716,14 +716,10 @@ function syncCurrentOmpChannel(options = {}) {
   if (selections.length === 0) return createSkippedResult('omp', 'OMP 当前配置未明确 provider，无法同步当前渠道。');
   const candidates = selections
     .map(selection => buildOmpSyncCandidate(modelsConfig, selection, channels, { authMode }))
-<<<<<<< HEAD
     .filter(candidate => authMode === 'all'
       || candidate.authMode === authMode
       || (authMode === 'api_key' && candidate.authMode === 'none')
       || candidate.skip);
-=======
-    .filter(candidate => authMode === 'all' || candidate.authMode === authMode || candidate.skip);
->>>>>>> origin/develop
   return upsertSyncedChannels({
     toolType: 'omp',
     loadChannels: () => service.loadChannels(),
