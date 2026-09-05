@@ -567,6 +567,37 @@ describe('native-oauth-adapters high level flows', () => {
     }));
   });
 
+  test('keeps multiple OMP provider accounts as separate native credentials', () => {
+    getOmpAuthProviderSnapshotMock.mockReturnValue({
+      available: true,
+      providers: [
+        {
+          id: 'openai-codex',
+          loggedIn: true,
+          accountCount: 2,
+          accounts: [
+            { index: 1, identity: 'fi***t@example.com' },
+            { index: 2, identity: 'se***d@example.com' }
+          ]
+        }
+      ]
+    });
+
+    expect(nativeAdapters.readAllNativeOAuth('omp')).toEqual([
+      expect.objectContaining({ providerId: 'openai-codex', accountId: '1', accountEmail: 'fi***t@example.com' }),
+      expect.objectContaining({ providerId: 'openai-codex', accountId: '2', accountEmail: 'se***d@example.com' })
+    ]);
+  });
+
+  test('does not create an empty OMP credential when a provider has no accounts', () => {
+    getOmpAuthProviderSnapshotMock.mockReturnValue({
+      available: true,
+      providers: [{ id: 'openai-codex', loggedIn: true, accountCount: 0, accounts: [] }]
+    });
+
+    expect(nativeAdapters.readAllNativeOAuth('omp')).toEqual([]);
+  });
+
   test('clears OpenCode OAuth and retargets model to a remaining managed provider', () => {
     const configPath = path.join(testDir, '.opencode', 'config.json');
     opencodeConfig = {

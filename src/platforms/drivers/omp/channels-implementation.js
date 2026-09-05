@@ -172,6 +172,10 @@ class OmpChannelService extends BaseChannelService {
   }
 
   _applyDefaults(channel) {
+    const isOAuthGateway = channel?.authMode === 'oauth'
+      && String(channel?.transport || channel?.providerConfig?.transport || '').trim() === 'pi-native';
+    const gatewayUrl = String(channel?.baseUrl || '').trim();
+    const gatewayToken = String(channel?.apiKey || '').trim();
     const normalized = super._applyDefaults(channel);
     normalized.providerKey = normalized.providerKey || normalized.provider || normalized.name || normalized.id;
     normalized.providerApi = normalizeProviderApi(
@@ -184,7 +188,15 @@ class OmpChannelService extends BaseChannelService {
     normalized.routingGroup = String(normalized.routingGroup || '').trim();
     normalized.oauthProviderId = normalized.oauthProviderId || (normalized.authMode === 'oauth' ? normalized.providerKey : '');
     if (normalized.authMode === 'oauth') {
-      normalized.apiKey = normalized.apiKey || '';
+      normalized.apiKey = isOAuthGateway ? gatewayToken : '';
+      normalized.baseUrl = isOAuthGateway ? gatewayUrl : '';
+      if (isOAuthGateway) {
+        normalized.transport = 'pi-native';
+        normalized.providerConfig = {
+          ...(normalized.providerConfig || {}),
+          transport: 'pi-native'
+        };
+      }
     } else if (normalized.authMode === 'none') {
       normalized.apiKey = '';
       normalized.oauthProviderId = '';
@@ -202,6 +214,35 @@ class OmpChannelService extends BaseChannelService {
     normalized.allowedModels = Array.isArray(normalized.allowedModels) ? normalized.allowedModels : [];
     normalized.speedTestModel = normalized.speedTestModel || null;
     normalized.modelRedirects = Array.isArray(normalized.modelRedirects) ? normalized.modelRedirects : [];
+    return normalized;
+  }
+
+  _normalizeAuthFields(fields = {}, channels = [], existing = null) {
+    const isOAuthGateway = fields?.authMode === 'oauth'
+      && String(fields?.transport || fields?.providerConfig?.transport || existing?.transport || existing?.providerConfig?.transport || '').trim() === 'pi-native';
+    const gatewayUrl = String(fields?.baseUrl ?? existing?.baseUrl ?? '').trim();
+    const gatewayToken = String(fields?.apiKey ?? existing?.apiKey ?? '').trim();
+    const normalized = super._normalizeAuthFields(fields, channels, existing);
+    if (!isOAuthGateway) return normalized;
+    if (!gatewayUrl) {
+      const error = new Error('OMP OAuth Auth Gateway URL is required');
+      error.code = 'oauth_auth_gateway_url_required';
+      error.statusCode = 400;
+      throw error;
+    }
+    if (!gatewayToken) {
+      const error = new Error('OMP OAuth Gateway Token is required');
+      error.code = 'oauth_auth_gateway_token_required';
+      error.statusCode = 400;
+      throw error;
+    }
+    normalized.baseUrl = gatewayUrl;
+    normalized.apiKey = gatewayToken;
+    normalized.transport = 'pi-native';
+    normalized.providerConfig = {
+      ...(normalized.providerConfig || {}),
+      transport: 'pi-native'
+    };
     return normalized;
   }
 

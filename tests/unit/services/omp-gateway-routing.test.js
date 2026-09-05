@@ -283,6 +283,40 @@ describe('OMP gateway routing', () => {
     })]);
   });
 
+  it('rejects OAuth gateways with missing URL or gateway token', () => {
+    const prepared = prepareManagedOmpChannels([
+      {
+        id: 'oauth-without-url',
+        name: 'Missing URL',
+        providerKey: 'openai-codex',
+        providerApi: 'openai-codex-responses',
+        authMode: 'oauth',
+        apiKey: 'gateway-token',
+        providerConfig: { transport: 'pi-native' },
+        enabled: true
+      },
+      {
+        id: 'oauth-without-token',
+        name: 'Missing Token',
+        providerKey: 'anthropic',
+        providerApi: 'anthropic-messages',
+        authMode: 'oauth',
+        baseUrl: 'http://127.0.0.1:4000',
+        providerConfig: { transport: 'pi-native' },
+        enabled: true
+      }
+    ], {
+      ...gateway(),
+      supportedOAuthChannelIds: ['oauth-without-url', 'oauth-without-token']
+    });
+
+    expect(prepared.routes).toEqual([]);
+    expect(prepared.unsupportedChannels).toEqual([
+      expect.objectContaining({ id: 'oauth-without-url', reason: 'oauth-auth-gateway-unavailable' }),
+      expect.objectContaining({ id: 'oauth-without-token', reason: 'oauth-auth-gateway-unavailable' })
+    ]);
+  });
+
   it('does not generate a route for an unknown provider API', () => {
     const prepared = prepareManagedOmpChannels([{
       id: 'unknown-api',

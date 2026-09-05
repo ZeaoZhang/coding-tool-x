@@ -91,8 +91,7 @@
             <n-form-item
               v-for="field in section.fields"
               v-show="!field.showWhen || field.showWhen(state.formData)"
-              :key="field.key"
-              :label="field.label"
+              :label="getFieldLabel(field)"
               :label-style="field.fullWidth ? { display: 'none' } : undefined"
               :required="field.required"
               :validation-status="getValidationStatus(field.key)"
@@ -109,6 +108,7 @@
                   state.formData.authRef = candidate.authRef
                   state.formData.authSource = candidate.authSource
                   state.formData.authStatus = candidate.authStatus
+                  state.formData.oauthProviderId = candidate.oauthProviderId || candidate.authRef?.providerId || ''
                 }"
               />
               <!-- 预设选择器 -->
@@ -315,6 +315,9 @@ const configFactory = channelPanelFactories[props.type]
 const config = configFactory()
 const { state, validation, actions } = useChannelManager(config)
 const { getChannelInflight } = useChannelScheduler(config.schedulerSource)
+function getFieldLabel(field) {
+  return typeof field.label === 'function' ? field.label(state.formData) : field.label
+}
 
 // 模型列表属于远端探测，按需加载，避免打开弹窗时阻塞渠道管理。
 function stableSignatureValue(value) {

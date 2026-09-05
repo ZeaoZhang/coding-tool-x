@@ -222,8 +222,22 @@ function cleanStubs() {
   paths.forEach(p => delete require.cache[p]);
 }
 
-function flushDashboardSnapshots() {
-  return new Promise(resolve => setTimeout(resolve, 100));
+async function flushDashboardSnapshots() {
+  const configured = loadUIConfig();
+  const enabled = Array.isArray(configured?.enabledCliPlatforms)
+    ? configured.enabledCliPlatforms
+    : platformDefinitions.map(platform => platform.key);
+  const registered = new Set(platformDefinitions
+    .map(platform => String(platform?.key || '').trim().toLowerCase())
+    .filter(Boolean));
+  const expectedSources = new Set(enabled
+    .map(source => String(source || '').trim().toLowerCase())
+    .filter(source => registered.has(source))).size;
+
+  await vi.waitFor(() => {
+    expect(runDashboardSourceWorker).toHaveBeenCalledTimes(expectedSources);
+  }, { timeout: 5000 });
+  await new Promise(resolve => setImmediate(resolve));
 }
 
 // ---------------------------------------------------------------------------

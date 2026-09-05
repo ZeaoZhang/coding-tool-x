@@ -168,6 +168,38 @@ function makeChannel(id, overrides = {}) {
   };
 }
 
+  it('preserves OAuth gateway URL, token, transport, and provider reference', () => {
+    seedChannels([makeChannel('oauth-gateway', {
+      providerKey: 'openai-codex',
+      authMode: 'oauth',
+      authRef: {
+        credentialId: 'credential-2',
+        providerId: 'openai-codex',
+        accountId: '2',
+        identityKey: 'second@example.com',
+        accountEmail: 'se***d@example.com'
+      },
+      authSource: 'synced-local',
+      oauthProviderId: 'openai-codex',
+      baseUrl: 'http://127.0.0.1:4000',
+      apiKey: 'gateway-token',
+      transport: 'pi-native',
+      providerConfig: { transport: 'pi-native' }
+    })]);
+
+    const channel = service.getChannels().channels[0];
+
+    expect(channel).toEqual(expect.objectContaining({
+      authMode: 'oauth',
+      authRef: expect.objectContaining({ credentialId: 'credential-2', accountId: '2' }),
+      oauthProviderId: 'openai-codex',
+      baseUrl: 'http://127.0.0.1:4000',
+      apiKey: 'gateway-token',
+      transport: 'pi-native',
+      providerConfig: { transport: 'pi-native' }
+    }));
+  });
+
 describe('managed provider activation lifecycle', () => {
   it('persists managed mode intent independently from ctx provider files', () => {
     expect(service.isManagedOmpModeEnabled()).toBe(false);

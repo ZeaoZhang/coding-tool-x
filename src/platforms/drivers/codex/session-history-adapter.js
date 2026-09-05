@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { getCodexDir } = require('./config');
-const { extractSessionMeta, extractMessages, extractTokenUsage, readJSONL } = require('./parser');
+const { parseSession } = require('./parser');
 
 /**
  * Scan all Codex session files recursively.
@@ -85,12 +85,10 @@ async function inventory({ projectsDir } = {}) {
  */
 async function parse(descriptor) {
   const { filePath, size, mtimeMs, sessionId } = descriptor;
-  const lines = readJSONL(filePath);
-
-  const meta = extractSessionMeta(lines);
-  const messages = extractMessages(lines);
-  const tokenUsage = extractTokenUsage(lines);
-
+  const parsed = parseSession(filePath);
+  const meta = parsed?.meta;
+  const messages = parsed?.messages || [];
+  const tokenUsage = parsed?.tokens;
   const projectName = extractCodexProjectName(meta);
   const usageJson = tokenUsage ? JSON.stringify(tokenUsage) : null;
 

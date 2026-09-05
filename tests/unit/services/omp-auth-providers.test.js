@@ -84,6 +84,39 @@ describe('omp-auth-providers', () => {
     );
   });
 
+  test('keeps multiple masked accounts for one provider independently selectable', () => {
+    const commandRunner = buildRunner();
+    commandRunner.mockImplementation((_command, args) => {
+      const key = args.join(' ');
+      if (key === 'auth-broker list --json') {
+        return {
+          status: 0,
+          stdout: JSON.stringify([{ id: 'openai-codex', name: 'ChatGPT Plus/Pro' }]),
+          stderr: ''
+        };
+      }
+      if (key === 'token openai-codex --list') {
+        return { status: 0, stdout: '1 first@example.com\n2 second@example.com\n', stderr: '' };
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    });
+
+    const snapshot = service.getOmpAuthProviderSnapshot({
+      commandRunner,
+      runtime: { runtime: 'omp', installed: true, command: 'omp' },
+      includeStatus: false
+    });
+
+    expect(snapshot.providers[0]).toEqual(expect.objectContaining({
+      id: 'openai-codex',
+      accountCount: 2,
+      accounts: [
+        { index: 1, identity: 'fi***t@example.com' },
+        { index: 2, identity: 'se***d@example.com' }
+      ]
+    }));
+  });
+
   test('resolves common provider aliases without exposing raw secrets', () => {
     const snapshot = {
       providers: [

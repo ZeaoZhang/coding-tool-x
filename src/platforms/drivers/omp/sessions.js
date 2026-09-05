@@ -7,7 +7,7 @@ function createDriver(context = {}) {
     ...context,
     platform: 'omp',
     capability: 'sessions',
-    preservePayloadUpdatedAt: true,
+    parserVersion: 2,
     servicePath: './omp/sessions-implementation',
     localServicePath: '../platforms/drivers/omp/sessions-implementation',
     adapterLocalPath: '../platforms/drivers/omp/session-history-adapter',

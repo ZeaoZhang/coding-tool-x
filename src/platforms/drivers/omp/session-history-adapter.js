@@ -185,7 +185,11 @@ async function parse(descriptor) {
   const { filePath, size, mtimeMs } = descriptor;
   const entries = readJsonLines(filePath);
   const header = entries.find(entry => entry?.type === 'session') || {};
-  const cwd = header.cwd || '';
+  const cwd = header.cwd
+    || header.project?.cwd
+    || entries.find(entry => typeof entry?.cwd === 'string')?.cwd
+    || entries.find(entry => typeof entry?.message?.cwd === 'string')?.message.cwd
+    || '';
   const sessionId = header.id || parseOmpSessionId(filePath) || descriptor.sessionId;
 
   const parsedMessages = entries.map((entry, idx) => convertOmpEntry(entry, idx)).filter(Boolean);
