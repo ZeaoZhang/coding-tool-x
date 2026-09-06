@@ -701,7 +701,8 @@ function getCatalogMetadata({
   model = '',
   speedTestModel = '',
   allowedModels = [],
-  models = []
+  models = [],
+  availableModels = []
 } = {}) {
   const requestedIds = [
     model,
@@ -714,6 +715,11 @@ function getCatalogMetadata({
     ...(Array.isArray(allowedModels)
       ? allowedModels.map(item => (
         item && typeof item === 'object' && !Array.isArray(item) ? item.id || item.name : item
+      ))
+      : []),
+    ...(Array.isArray(availableModels)
+      ? availableModels.map(item => (
+        item && typeof item === 'object' && !Array.isArray(item) ? item.value || item.id || item.name : item
       ))
       : [])
   ]
@@ -734,10 +740,9 @@ function getCatalogMetadata({
     String(entry.provider || '').toLowerCase() === normalizedProviderKey
     || String(entry.sourceId || '').toLowerCase().startsWith(`${normalizedProviderKey}/`)
   );
-  const providerEntries = normalizedProviderKey
-    ? allEntries.filter(entry => matchesRequestedId(entry) || matchesProvider(entry))
-    : [];
-  const entries = normalizedProviderKey && providerEntries.length > 0 ? providerEntries : allEntries;
+  const requestedEntries = requestedIds.length > 0 ? allEntries.filter(matchesRequestedId) : [];
+  const providerEntries = normalizedProviderKey ? allEntries.filter(matchesProvider) : [];
+  const entries = requestedIds.length > 0 ? requestedEntries : providerEntries;
 
   return {
     models: entries,

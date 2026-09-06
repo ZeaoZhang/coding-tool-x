@@ -159,18 +159,21 @@ describe('channel panel model catalogs', () => {
     expect(form.modelsFetchErrorHint).toBe('已使用 Models.dev 离线模型列表')
   })
 
-  it('allows OMP metadata lookup without a provider key', async () => {
+  it('passes the visible OMP model options to metadata lookup', async () => {
     const form = {
       providerKey: '',
       model: '',
       speedTestModel: '',
       allowedModels: [],
+      availableModels: [{ label: 'deepseek/deepseek-v4-pro', value: 'deepseek/deepseek-v4-pro' }],
       modelDefinitionsJson: '[]'
     }
 
     await channelPanelFactories.omp().fetchModelMetadataForChannel(form)
 
-    expect(fetchOmpCatalogMetadata).toHaveBeenCalledWith('', expect.any(Object))
+    expect(fetchOmpCatalogMetadata).toHaveBeenCalledWith('', expect.objectContaining({
+      availableModels: ['deepseek/deepseek-v4-pro']
+    }))
     expect(form.modelDefinitionsJson).toContain('deepseek/deepseek-v4-pro')
     expect(form.modelMetadataStatus).toBe('已读取 1 个模型（Models.dev 离线快照）')
   })
@@ -208,15 +211,14 @@ describe('channel panel model catalogs', () => {
       }
     }
   })
-  it('builds an explicit OMP OAuth gateway payload without dropping gateway credentials', async () => {
+  it('preserves imported OMP OAuth gateway credentials when editing a channel', async () => {
     const config = channelPanelFactories.omp()
     const form = {
-      name: 'Codex Gateway',
+      name: 'Codex OAuth',
       providerKey: 'openai-codex',
       baseUrl: 'http://127.0.0.1:4000',
       apiKey: 'gateway-token',
       authMode: 'oauth',
-      oauthGatewayMode: true,
       authRef: {
         credentialId: 'credential-2',
         providerId: 'openai-codex',
@@ -230,13 +232,13 @@ describe('channel panel model catalogs', () => {
       transport: 'pi-native'
     }
 
-    await config.api.create(form)
+    await config.api.update({ id: 'omp-oauth' }, form)
 
-    expect(createOmpChannel).toHaveBeenCalledWith(
-      'Codex Gateway',
-      'http://127.0.0.1:4000',
-      'gateway-token',
+    expect(updateOmpChannel).toHaveBeenCalledWith(
+      'omp-oauth',
       expect.objectContaining({
+        baseUrl: 'http://127.0.0.1:4000',
+        apiKey: 'gateway-token',
         authMode: 'oauth',
         authRef: expect.objectContaining({ credentialId: 'credential-2', accountId: '2' }),
         authSource: 'synced-local',
@@ -246,17 +248,19 @@ describe('channel panel model catalogs', () => {
       })
     )
   })
-  it('hides gateway-only fields for native OAuth and keeps them for explicit gateway mode', () => {
+
+  it('removes the native OAuth gateway preset but keeps local OAuth sync', () => {
     const config = channelPanelFactories.omp()
     const fields = config.formSections.flatMap(section => section.fields)
     const byKey = key => fields.find(field => field.key === key)
-    const gatewayForm = config.onPresetChange('omp_oauth_gateway', config.getInitialForm())
+    const form = config.getInitialForm()
 
-    expect(gatewayForm.oauthGatewayMode).toBe(true)
-    expect(byKey('baseUrl').showWhen({ authMode: 'oauth', oauthGatewayMode: false })).toBe(false)
-    expect(byKey('apiKey').showWhen({ authMode: 'oauth', oauthGatewayMode: false })).toBe(false)
-    expect(byKey('providerKey').showWhen({ authMode: 'oauth', oauthGatewayMode: false })).toBe(false)
-    expect(byKey('baseUrl').showWhen(gatewayForm)).toBe(true)
-    expect(byKey('apiKey').showWhen(gatewayForm)).toBe(true)
+    expect(config.getPresetById('omp_oauth_gateway')).toBeUndefined()
+    expect(config.presetCategories).not.toHaveProperty('oauth')
+    expect(form.authMode).toBe('api_key')
+    expect(form.oauthGatewayMode).toBeUndefined()
+    expect(fields.find(field => field.type === 'channel-auth')?.showWhen({ authMode: 'oauth' })).toBe(true)
+    expect(byKey('baseUrl').showWhen({ authMode: 'oauth' })).toBe(false)
+    expect(byKey('apiKey').showWhen({ authMode: 'oauth' })).toBe(false)
   })
 })

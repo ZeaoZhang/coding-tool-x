@@ -925,7 +925,7 @@ class SkillService {
     const generation = this._cacheGeneration;
     const rawSkills = [
       ...this._artifactSkills(normalizedOptions),
-      ...this._legacyCachedSkills(normalizedOptions)
+      ...(options.includeRemote === true ? this._legacyCachedSkills(normalizedOptions) : [])
     ];
     const prepared = this.prepareSkills(rawSkills, normalizedOptions);
     const controlled = this._applyControlState(prepared, normalizedOptions);

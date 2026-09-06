@@ -1017,6 +1017,31 @@ describe('SkillService cache scheduling', () => {
     ]));
     expect(fetchRepos).not.toHaveBeenCalled();
   });
+  it('hides legacy remote metadata during the default local skill scan', async () => {
+    const { PATHS } = require('../../../src/config/paths');
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    fs.mkdirSync(path.dirname(PATHS.skillCaches.claude), { recursive: true });
+    fs.writeFileSync(
+      PATHS.skillCaches.claude,
+      JSON.stringify({
+        fetchedAt: Date.now(),
+        skills: [{
+          name: 'gitlab-skill',
+          directory: 'gitlab-skill',
+          source: 'remote',
+          sourceProvider: 'gitlab',
+          repoProvider: 'gitlab'
+        }]
+      }),
+      'utf8'
+    );
+
+    const result = await new SkillService('claude').scanSkills({ scope: 'user' });
+
+    expect(result.skills).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'gitlab-skill' })
+    ]));
+  });
 });
 
 describe('OMP discovery cache', () => {

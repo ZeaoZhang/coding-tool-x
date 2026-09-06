@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 
 const api = vi.hoisted(() => ({
   getSkills: vi.fn(),
+  getProjectSkills: vi.fn(),
   refreshSkills: vi.fn(),
   getSkillRefreshTask: vi.fn(),
   toggleSkill: vi.fn()
@@ -16,6 +17,7 @@ vi.mock('../../api/skills', () => ({
 }))
 
 vi.mock('../../api/project-config', () => ({
+  getProjectSkills: api.getProjectSkills,
   setProjectSkillEnabled: vi.fn()
 }))
 
@@ -35,15 +37,22 @@ import SkillsPanel from '../SkillsPanel.vue'
 
 beforeEach(() => {
   api.getSkills.mockReset()
+  api.getProjectSkills.mockReset()
   api.getSkills.mockResolvedValue({
     success: true,
     skills: [],
     refresh: { state: 'never_fetched', taskId: null, fetchedAt: null, error: null }
   })
+  api.getProjectSkills.mockResolvedValue({
+    supported: true,
+    project: [{ name: 'project-skill', sourceScope: 'project', scope: 'project' }],
+    inherited: [{ name: 'user-skill', sourceScope: 'user', scope: 'user' }],
+    path: '.omp/skills'
+  })
 })
 
-it('loads Skills with project scope and cwd', async () => {
-  mount(SkillsPanel, {
+it('loads project Skills through project config without a generic cwd scan', async () => {
+  const wrapper = mount(SkillsPanel, {
     props: {
       inDrawer: true,
       drawerVisible: true,
@@ -53,6 +62,10 @@ it('loads Skills with project scope and cwd', async () => {
     },
     global: {
       stubs: {
+        SkillCard: {
+          props: ['skill'],
+          template: '<div>{{ skill.name }}</div>'
+        },
         SkillRepoManager: true,
         SkillCreateModal: true,
         SkillDetailDrawer: true,
@@ -61,8 +74,8 @@ it('loads Skills with project scope and cwd', async () => {
     }
   })
 
-  await vi.waitFor(() => expect(api.getSkills).toHaveBeenCalledWith('codex', {
-    cwd: '/tmp/project',
-    scope: 'project'
-  }))
+  await vi.waitFor(() => expect(api.getProjectSkills).toHaveBeenCalledWith('/tmp/project', 'codex'))
+  expect(api.getSkills).not.toHaveBeenCalled()
+  await vi.waitFor(() => expect(wrapper.text()).toContain('project-skill'))
+  expect(wrapper.text()).toContain('user-skill')
 })

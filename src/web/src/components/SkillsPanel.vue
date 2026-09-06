@@ -151,7 +151,7 @@ import { useRoute } from 'vue-router'
 import { NButton, NIcon, NInput, NSelect, NSpin, NEmpty, useMessage } from 'naive-ui'
 import { ArrowBackOutline, AddOutline, GitBranchOutline, RefreshOutline, SearchOutline, ExtensionPuzzleOutline, InformationCircleOutline, CloudDownloadOutline, SettingsOutline } from '@vicons/ionicons5'
 import { getSkills, refreshSkills, getSkillRefreshTask, toggleSkill, setSkillTrust } from '../api/skills'
-import { setProjectSkillEnabled } from '../api/project-config'
+import { getProjectSkills, setProjectSkillEnabled } from '../api/project-config'
 import { importFromClaude } from '../api/config-registry'
 import SkillCard from './SkillCard.vue'
 import SkillRepoManager from './SkillRepoManager.vue'
@@ -267,8 +267,15 @@ async function scanLocalSkills({ notifyError = true } = {}) {
   }
   loading.value = true
   try {
-    const skillsRes = await getSkills(platform, scopeOptions.value)
-    const loadedSkills = validateOmpSkillListResponse(skillsRes)
+    const skillsRes = props.scope === 'project'
+      ? await getProjectSkills(props.projectPath, platform)
+      : await getSkills(platform, scopeOptions.value)
+    const loadedSkills = props.scope === 'project'
+      ? [
+          ...(Array.isArray(skillsRes?.project) ? skillsRes.project : []),
+          ...(Array.isArray(skillsRes?.inherited) ? skillsRes.inherited : [])
+        ]
+      : validateOmpSkillListResponse(skillsRes)
     if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return false
 
     skills.value = loadedSkills
