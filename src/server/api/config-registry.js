@@ -7,13 +7,14 @@
 
 const express = require('express');
 const path = require('path');
-const { ConfigRegistryService, CONFIG_TYPES, SUPPORTED_PLATFORMS } = require('../services/config-registry-service');
+const { ConfigRegistryService, CONFIG_TYPES } = require('../services/config-registry-service');
 const { ConfigSyncManager } = require('../services/config-sync-manager');
 const { ControlManifestStore } = require('../services/control-manifest-store');
 const { EffectiveControlService } = require('../services/effective-control-service');
 const { PATHS } = require('../../config/paths');
 const { SkillProjectionService } = require('../services/skill-projection-service');
 const { validateKnownProjectCwd } = require('../services/project-path-validation');
+const { getPlatformCatalog } = require('../services/platform-catalog');
 const { getPlatformContext } = require('../platform-context');
 
 let effectiveControlService;
@@ -55,10 +56,7 @@ const syncManager = new ConfigSyncManager();
 const VALID_TYPES = CONFIG_TYPES;
 
 function getValidPlatforms() {
-  const registry = getPlatformContext().registry;
-  return (registry?.list?.() || [])
-    .map(platform => platform && String(platform.key || '').trim().toLowerCase())
-    .filter(Boolean);
+  return getPlatformCatalog().keys();
 }
 
 /**
@@ -106,23 +104,8 @@ function normalizeRegistryName(name) {
   return normalized;
 }
 
-const PLATFORM_SYNC_METHODS = {
-  claude: { sync: 'syncToClaude', remove: 'removeFromClaude' },
-  codex: { sync: 'syncToCodex', remove: 'removeFromCodex' },
-  gemini: { sync: 'syncToGemini', remove: 'removeFromGemini' },
-  opencode: { sync: 'syncToOpenCode', remove: 'removeFromOpenCode' },
-  omp: { sync: 'syncToOmp', remove: 'removeFromOmp' }
-};
-
 async function syncPlatform(type, name, platform) {
-  if (typeof syncManager.syncToPlatform === 'function') {
-    return syncManager.syncToPlatform(platform, type, name);
-  }
-  const method = PLATFORM_SYNC_METHODS[platform]?.sync;
-  if (method && typeof syncManager[method] === 'function') {
-    return syncManager[method](type, name);
-  }
-  return { status: 'unsupported', platform, operation: 'sync' };
+  return syncManager.syncToPlatform(platform, type, name);
 }
 
 async function removePlatform(type, name, platform) {
@@ -147,10 +130,9 @@ function getEffectiveSkillRegistryItems() {
 
   return Object.fromEntries(Object.entries(items || {}).map(([rawName, item]) => {
     const name = normalizeRegistryName(rawName);
-    const platforms = { ...(item.platforms || {}) };
     const controlKeys = {};
     let hasControl = false;
-    for (const platform of VALID_PLATFORMS) {
+    for (const platform of getValidPlatforms()) {
       const controlKey = item.controlKey || fallbackSkillControlKey(name, platform, { scope: 'user', projectPath: null });
       const control = controlService.getSkill(controlKey, { scope: 'user' });
       if (!control) continue;
@@ -183,7 +165,7 @@ router.get('/stats', async (req, res) => {
         enabled: effectiveSkills.filter(item => item.enabled).length,
         disabled: effectiveSkills.filter(item => !item.enabled).length
       };
-      for (const platform of VALID_PLATFORMS) {
+      for (const platform of getValidPlatforms()) {
         skillStats[platform] = effectiveSkills.filter(item => item.platforms?.[platform]).length;
         stats.byPlatform[platform] += skillStats[platform] - (stats.byType.skills[platform] || 0);
       }
@@ -482,7 +464,7 @@ router.post('/:type/sync', async (req, res) => {
       const results = [];
       const errors = [];
       for (const [name, item] of Object.entries(items || {})) {
-        for (const platform of VALID_PLATFORMS) {
+        for (const platform of getValidPlatforms()) {
           if (!item?.platforms?.[platform]) continue;
           try {
             results.push(controlService.setSkillEnabled({

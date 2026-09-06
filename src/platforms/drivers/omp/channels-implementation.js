@@ -218,8 +218,14 @@ class OmpChannelService extends BaseChannelService {
   }
 
   _normalizeAuthFields(fields = {}, channels = [], existing = null) {
+    const hasTransport = Object.prototype.hasOwnProperty.call(fields, 'transport')
+    const hasProviderTransport = fields.providerConfig
+      && Object.prototype.hasOwnProperty.call(fields.providerConfig, 'transport')
+    const transport = hasTransport
+      ? fields.transport
+      : (hasProviderTransport ? fields.providerConfig.transport : existing?.transport || existing?.providerConfig?.transport)
     const isOAuthGateway = fields?.authMode === 'oauth'
-      && String(fields?.transport || fields?.providerConfig?.transport || existing?.transport || existing?.providerConfig?.transport || '').trim() === 'pi-native';
+      && String(transport || '').trim() === 'pi-native';
     const gatewayUrl = String(fields?.baseUrl ?? existing?.baseUrl ?? '').trim();
     const gatewayToken = String(fields?.apiKey ?? existing?.apiKey ?? '').trim();
     const normalized = super._normalizeAuthFields(fields, channels, existing);

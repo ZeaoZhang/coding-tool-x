@@ -187,6 +187,7 @@ function buildAuthPayload(form) {
 function buildOmpAuthPayload(form) {
   const payload = buildAuthPayload(form)
   if (payload.authMode !== 'oauth') return payload
+  if (!isOmpOAuthGatewayForm(form)) return { ...payload, transport: '' }
   return {
     ...payload,
     apiKey: String(form.apiKey || '').trim(),
@@ -205,7 +206,9 @@ function buildAuthRequestFields(authPayload) {
         }
       : {}),
     ...(authPayload.oauthProviderId ? { oauthProviderId: authPayload.oauthProviderId } : {}),
-    ...(authPayload.transport ? { transport: authPayload.transport } : {})
+    ...(Object.prototype.hasOwnProperty.call(authPayload, 'transport')
+      ? { transport: authPayload.transport }
+      : {})
   }
 }
 
@@ -224,6 +227,17 @@ function buildOAuthAuthField() {
     type: 'channel-auth',
     showWhen: isOAuthForm
   }
+}
+function isOmpOAuthGatewayForm(form = {}) {
+  return isOAuthForm(form) && form.oauthGatewayMode === true
+}
+
+function showOmpAuthField(form = {}) {
+  return !isOAuthForm(form) || isOmpOAuthGatewayForm(form)
+}
+
+function showOmpNonAuthField(form = {}) {
+  return !isOAuthForm(form)
 }
 
 function detectBalancePlatform(form = {}) {
@@ -1643,6 +1657,7 @@ const channelPanelFactories = {
           { key: 'name', label: '渠道名称', type: 'text', required: true, placeholder: '显示名称' },
           {
             key: 'providerKey',
+            showWhen: showOmpAuthField,
             label: 'Provider Key',
             type: 'text',
             required: true,
@@ -1651,6 +1666,7 @@ const channelPanelFactories = {
           },
           {
             key: 'baseUrl',
+            showWhen: showOmpAuthField,
             label: form => isOAuthForm(form) ? 'Auth Gateway URL' : 'Base URL',
             type: 'text',
             required: true,
@@ -1664,6 +1680,7 @@ const channelPanelFactories = {
           },
           {
             key: 'apiKey',
+            showWhen: showOmpAuthField,
             label: form => isOAuthForm(form) ? 'Gateway Token' : 'API Key',
             type: 'password',
             required: true,
@@ -1676,6 +1693,7 @@ const channelPanelFactories = {
           },
           {
             key: 'routingGroup',
+            showWhen: showOmpAuthField,
             label: '路由组',
             type: 'text',
             placeholder: '相同路由组的兼容渠道可动态切换',
@@ -1685,6 +1703,7 @@ const channelPanelFactories = {
           buildBalanceUserIdField(),
           {
             key: 'websiteUrl',
+            showWhen: showOmpNonAuthField,
             label: '官网链接',
             type: 'text',
             placeholder: 'https://（选填）',
@@ -1700,6 +1719,7 @@ const channelPanelFactories = {
           },
           {
             key: 'speedTestModel',
+            showWhen: showOmpNonAuthField,
             label: '测速模型',
             type: 'select',
             placeholder: '选择用于测速的模型（留空则使用默认模型）',
@@ -1756,6 +1776,7 @@ const channelPanelFactories = {
       providerApi: 'openai-completions',
       apiKey: '',
       authMode: 'api_key',
+      oauthGatewayMode: false,
       authRef: undefined,
       authSource: undefined,
       authStatus: undefined,
@@ -1793,6 +1814,8 @@ const channelPanelFactories = {
       providerApi: channel.providerApi || channel.api || 'openai-completions',
       apiKey: channel.apiKey || '',
       authMode: channel.authMode || 'api_key',
+      oauthGatewayMode: channel.authMode === 'oauth'
+        && (channel.transport === 'pi-native' || channel.providerConfig?.transport === 'pi-native'),
       authRef: channel.authRef,
       authSource: channel.authSource,
       authStatus: channel.authStatus,
@@ -1835,6 +1858,7 @@ const channelPanelFactories = {
       newForm.providerApi = preset.providerApi || 'openai-completions'
       newForm.gatewaySourceType = preset.gatewaySourceType || newForm.gatewaySourceType || 'openai_compatible'
       newForm.transport = preset.transport || ''
+      newForm.oauthGatewayMode = preset.id === 'omp_oauth_gateway'
       if (preset.authMode === 'oauth') {
         return {
           ...newForm,
@@ -1982,7 +2006,7 @@ const channelPanelFactories = {
           balanceUserId: authPayload.balanceUserId,
           models: parseModelDefinitions(form.modelDefinitionsJson),
           modelMetadataMode: 'hybrid',
-          providerConfig: authPayload.transport
+          providerConfig: Object.prototype.hasOwnProperty.call(authPayload, 'transport')
             ? { ...providerConfig, transport: authPayload.transport }
             : providerConfig
         })
@@ -2013,7 +2037,7 @@ const channelPanelFactories = {
           balanceUserId: authPayload.balanceUserId,
           models: parseModelDefinitions(form.modelDefinitionsJson),
           modelMetadataMode: 'hybrid',
-          providerConfig: authPayload.transport
+          providerConfig: Object.prototype.hasOwnProperty.call(authPayload, 'transport')
             ? { ...providerConfig, transport: authPayload.transport }
             : providerConfig
         })

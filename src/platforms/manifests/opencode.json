@@ -20,6 +20,10 @@
     "agents": true,
     "plugins": true
   },
+  "agentCapabilities": {
+    "projectScope": true,
+    "repoOperations": true
+  },
   "skillActivation": {
     "user": {
       "mode": "native-copy",
@@ -395,6 +399,7 @@
     "nativeConfig": "legacy:opencode",
     "projectConfig": "legacy:opencode",
     "api": "legacy:opencode",
+    "conversion": "opencode-conversion",
     "mcp": "legacy:opencode",
     "prompts": "legacy:opencode"
   }

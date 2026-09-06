@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { loadConfig, saveConfig } = require('../../config/loader');
 const DEFAULT_CONFIG = require('../../config/default');
-const { getPlatformContext } = require('../platform-context');
+const { getPlatformCatalog } = require('../services/platform-catalog');
 const { probeModelAvailability } = require('../services/model-detector');
 
 function clampNumber(value, fallback) {
@@ -15,25 +15,36 @@ function clampNumber(value, fallback) {
   return Math.round(num * 1000000) / 1000000;
 }
 
-function sanitizePricing(inputPricing, currentPricing) {
-  const defaults = DEFAULT_CONFIG.pricing;
+function sanitizePricing(inputPricing, currentPricing, supportedPlatforms = getPlatformCatalog().keys({ capability: 'channels' })) {
+  const defaults = DEFAULT_CONFIG.pricing || {};
+  const current = currentPricing && typeof currentPricing === 'object' ? currentPricing : {};
+  const input = inputPricing && typeof inputPricing === 'object' ? inputPricing : {};
+  const supported = new Set(supportedPlatforms);
+
+  for (const toolKey of Object.keys(input)) {
+    if (!supported.has(toolKey) && !Object.prototype.hasOwnProperty.call(current, toolKey)) {
+      throw new TypeError(`Invalid pricing platform: ${toolKey}`);
+    }
+  }
+
   const sanitized = {};
+  const platformKeys = new Set([...Object.keys(current), ...supported]);
+  for (const toolKey of platformKeys) {
+    const defaultValue = defaults[toolKey] || {};
+    const existingValue = current[toolKey] && typeof current[toolKey] === 'object' ? current[toolKey] : {};
+    const payload = input[toolKey] && typeof input[toolKey] === 'object' ? input[toolKey] : {};
+    const merged = { ...existingValue, ...payload };
+    const mode = payload.mode === 'custom'
+      ? 'custom'
+      : (existingValue.mode || defaultValue.mode || 'auto');
 
-  Object.keys(defaults).forEach((toolKey) => {
-    const defaultValue = defaults[toolKey];
-    const existingValue = currentPricing?.[toolKey] || {};
-    const payload = inputPricing?.[toolKey] || {};
-
-    const mode = payload.mode === 'custom' ? 'custom' : (existingValue.mode || defaultValue.mode || 'auto');
-    sanitized[toolKey] = { mode };
-
-    Object.keys(defaultValue)
-      .filter((key) => key !== 'mode')
-      .forEach((rateKey) => {
-        const fallback = existingValue[rateKey] !== undefined ? existingValue[rateKey] : defaultValue[rateKey];
-        sanitized[toolKey][rateKey] = clampNumber(payload[rateKey], fallback);
-      });
-  });
+    sanitized[toolKey] = { ...merged, mode };
+    for (const [rateKey, defaultRate] of Object.entries(defaultValue)) {
+      if (rateKey === 'mode' || rateKey === 'models') continue;
+      const fallback = existingValue[rateKey] !== undefined ? existingValue[rateKey] : defaultRate;
+      sanitized[toolKey][rateKey] = clampNumber(payload[rateKey], fallback);
+    }
+  }
 
   return sanitized;
 }
@@ -104,7 +115,7 @@ function parseBooleanQuery(value, defaultValue = false) {
   return ['1', 'true', 'yes', 'on'].includes(normalized);
 }
 function readChannelList(platform) {
-  const driver = getPlatformContext().runtime.getDriver(platform, 'channels');
+  const driver = getPlatformCatalog().driver(platform, 'channels');
   const result = typeof driver?.list === 'function' ? driver.list() : null;
   if (result && typeof result.then === 'function') {
     return result.then(value => {
@@ -117,7 +128,7 @@ function readChannelList(platform) {
 }
 
 async function listModelsForChannel(channel, platform, options = {}) {
-  const driver = getPlatformContext().runtime.getDriver(platform, 'channels');
+  const driver = getPlatformCatalog().driver(platform, 'channels');
   if (typeof driver?.listModels !== 'function') return [];
   const result = await driver.listModels(channel, options);
   if (result?.status !== 'ok') return [];
@@ -249,9 +260,8 @@ router.get('/default-models', async (req, res) => {
       });
     }
 
-    const runtime = getPlatformContext().runtime;
-    const platforms = Object.keys(configuredDefaultModels || {})
-      .filter(platform => runtime.getDriver(platform, 'channels'));
+    const forceRefresh = parseBooleanQuery(req.query.forceRefresh, false);
+    const platforms = getPlatformCatalog().keys({ capability: 'channels' });
     const channelLists = await Promise.all(platforms.map(platform => readChannelList(platform)));
     const probedModels = await Promise.all(platforms.map((platform, index) => (
       probeModelsForChannels(channelLists[index], platform, { forceRefresh })
@@ -290,10 +300,9 @@ router.post('/default-models', (req, res) => {
       });
     }
 
-    const validToolTypes = ['claude', 'codex', 'gemini'];
+    const validToolTypes = getPlatformCatalog().keys({ capability: 'channels' });
     const providedTypes = Object.keys(defaultModels);
 
-    // Validate that only valid tool types are provided
     for (const toolType of providedTypes) {
       if (!validToolTypes.includes(toolType)) {
         return res.status(400).json({
@@ -301,7 +310,6 @@ router.post('/default-models', (req, res) => {
         });
       }
     }
-
     // Validate each model list
     const validated = {};
     const errors = {};
@@ -356,11 +364,10 @@ router.post('/default-models/reset', (req, res) => {
     const { toolType } = req.body;
 
     const config = loadConfig();
+    const validToolTypes = getPlatformCatalog().keys({ capability: 'channels' });
     let newDefaultModels;
 
     if (toolType) {
-      // Reset specific tool type
-      const validToolTypes = ['claude', 'codex', 'gemini'];
       if (!validToolTypes.includes(toolType)) {
         return res.status(400).json({
           error: `Invalid tool type: ${toolType}. Valid types: ${validToolTypes.join(', ')}`
@@ -369,14 +376,15 @@ router.post('/default-models/reset', (req, res) => {
 
       newDefaultModels = {
         ...(config.defaultModels || DEFAULT_CONFIG.defaultModels),
-        [toolType]: DEFAULT_CONFIG.defaultModels[toolType]
+        [toolType]: DEFAULT_CONFIG.defaultModels?.[toolType] || []
       };
     } else {
-      // Reset all tool types
-      newDefaultModels = { ...DEFAULT_CONFIG.defaultModels };
+      newDefaultModels = Object.fromEntries(validToolTypes.map(platform => [
+        platform,
+        DEFAULT_CONFIG.defaultModels?.[platform] || []
+      ]));
     }
 
-    // Save config
     const newConfig = {
       ...config,
       defaultModels: newDefaultModels
@@ -402,15 +410,12 @@ router.get('/advanced', (req, res) => {
   try {
     const config = loadConfig();
     const modelDiscovery = normalizeModelDiscovery(config.modelDiscovery);
+    const ports = Object.fromEntries(getPlatformCatalog().ports().map(({ key, defaultPort }) => [
+      key,
+      config.ports?.[key] ?? defaultPort
+    ]));
     res.json({
-      ports: {
-        webUI: config.ports?.webUI || 19999,
-        proxy: config.ports?.proxy || 20088,
-        codexProxy: config.ports?.codexProxy || 20089,
-        geminiProxy: config.ports?.geminiProxy || 20090,
-        opencodeProxy: config.ports?.opencodeProxy || 20091,
-        ompProxy: config.ports?.ompProxy || 20092
-      },
+      ports,
       maxLogs: config.maxLogs || 100,
       statsInterval: config.statsInterval || 30,
       enableSessionBinding: config.enableSessionBinding !== false, // 默认开启
@@ -470,9 +475,15 @@ router.post('/advanced', (req, res) => {
       }
     }
 
-    // 加载当前配置
     const config = loadConfig();
-    const sanitizedPricing = sanitizePricing(pricing, config.pricing);
+    const channelPlatforms = getPlatformCatalog().keys({ capability: 'channels' });
+    for (const pricingPlatform of Object.keys(pricing || {})) {
+      if (!channelPlatforms.includes(pricingPlatform)
+        && !Object.prototype.hasOwnProperty.call(config.pricing || {}, pricingPlatform)) {
+        return res.status(400).json({ error: `Invalid pricing platform: ${pricingPlatform}` });
+      }
+    }
+    const sanitizedPricing = sanitizePricing(pricing, config.pricing, channelPlatforms);
     const normalizedModelDiscovery = normalizeModelDiscovery(
       modelDiscovery,
       config.modelDiscovery || DEFAULT_CONFIG.modelDiscovery

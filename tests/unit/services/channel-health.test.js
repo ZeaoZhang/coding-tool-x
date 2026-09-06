@@ -146,6 +146,9 @@ describe('channel-health', () => {
         { id: 'ch1', enabled: true },
         { id: 'ch2', enabled: true }
       ]);
+      channelHealth.setChannelHealthPolicyProvider(source => (
+        source === 'omp' ? { freezeOnFailure: false } : { freezeOnFailure: true }
+      ));
 
       const threshold = channelHealth.healthConfig.failureThreshold;
       for (let i = 0; i < threshold * 3; i++) {

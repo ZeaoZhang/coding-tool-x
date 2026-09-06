@@ -24,6 +24,10 @@
     "agents": true,
     "plugins": false
   },
+  "agentCapabilities": {
+    "projectScope": true,
+    "repoOperations": true
+  },
   "skillActivation": {
     "user": {
       "mode": "native-copy",

@@ -58,7 +58,8 @@ const PLATFORM_CONFIG = {
   claude: {
     userAgentsDir: CLAUDE_AGENTS_DIR,
     projectAgentsDir: (projectPath) => path.join(projectPath, '.claude', 'agents'),
-    repoType: 'agents'
+    repoType: 'agents',
+    capabilities: { projectScope: true, repoOperations: true }
   },
   opencode: {
     userAgentsDir: path.join(OPENCODE_CONFIG_DIR, 'agents'),
@@ -71,17 +72,20 @@ const PLATFORM_CONFIG = {
       }
       return modern;
     },
-    repoType: 'opencode-agents'
+    repoType: 'opencode-agents',
+    capabilities: { projectScope: true, repoOperations: true }
   },
   codex: {
     userAgentsDir: CODEX_AGENTS_DIR,
     projectAgentsDir: () => null,
-    repoType: 'agents'
+    repoType: 'agents',
+    capabilities: { projectScope: false, repoOperations: false }
   },
   gemini: {
     userAgentsDir: GEMINI_AGENTS_DIR,
     projectAgentsDir: (projectPath) => path.join(projectPath, '.gemini', 'agents'),
-    repoType: 'gemini-agents'
+    repoType: 'gemini-agents',
+    capabilities: { projectScope: true, repoOperations: true }
   }
 };
 
@@ -605,6 +609,13 @@ class AgentsService {
     ensureDir(this.userAgentsDir);
     this._localIndexes = new Map();
     this._localIndexLimit = 32;
+  }
+  getCapabilities() {
+    return { ...(PLATFORM_CONFIG[this.platform]?.capabilities || { projectScope: true, repoOperations: true }) };
+  }
+  getRepoOperationError(operation = '') {
+    const suffix = operation === 'install' ? '安装' : operation === 'uninstall' ? '卸载' : '';
+    return `${this.platform === 'codex' ? 'Codex 平台' : '该平台'}暂不支持远程仓库代理${suffix}`;
   }
   _getLocalIndex(scope, projectPath = null) {
     const root = scope === 'user' ? this.userAgentsDir : this.getProjectAgentsDir(projectPath);

@@ -1,5 +1,5 @@
 const { getPlatformContext } = require('../platform-context');
-const { isChannelAvailable, getChannelHealthStatus, setOnChannelFrozen, setChannelListProvider } = require('./channel-health');
+const { isChannelAvailable, getChannelHealthStatus, setOnChannelFrozen, setChannelListProvider, setChannelHealthPolicyProvider } = require('./channel-health');
 
 function readChannels(source = 'claude') {
   try {
@@ -60,6 +60,13 @@ function unbindChannelSessions(source, channelId) {
 // 注册冻结回调，当渠道被冻结时解绑其会话
 setOnChannelFrozen(unbindChannelSessions);
 setChannelListProvider((source = 'claude') => readChannels(source));
+setChannelHealthPolicyProvider((source = 'claude') => {
+  try {
+    return getPlatformContext().runtime.getDriver(source, 'channels')?.getHealthPolicy?.() || { freezeOnFailure: true };
+  } catch (_error) {
+    return { freezeOnFailure: true };
+  }
+});
 
 function refreshChannels(source = 'claude') {
   const state = getState(source);

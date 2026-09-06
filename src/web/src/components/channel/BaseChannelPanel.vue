@@ -105,6 +105,8 @@
                 :auth-meta="state.authMeta"
                 @update-auth="candidate => {
                   state.formData.authMode = 'oauth'
+                  state.formData.oauthGatewayMode = false
+                  state.formData.transport = ''
                   state.formData.authRef = candidate.authRef
                   state.formData.authSource = candidate.authSource
                   state.formData.authStatus = candidate.authStatus

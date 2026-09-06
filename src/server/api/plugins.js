@@ -35,7 +35,7 @@ function getPluginsService(req) {
   };
 }
 
-async function getRequestOptions(req) {
+async function getRequestOptions(req, service) {
   const scope = String(req.query?.scope || req.body?.scope || '').trim();
   if (scope && scope !== 'user' && scope !== 'project') {
     throw new Error('Invalid scope: expected "user" or "project"');
@@ -44,10 +44,13 @@ async function getRequestOptions(req) {
   if (scope === 'project' && !cwd) {
     throw new Error('Project scope requires a valid cwd');
   }
-  return {
+  const requestData = {
     ...(cwd ? { cwd } : {}),
     ...(scope ? { scope } : {})
   };
+  return typeof service?.getRequestOptions === 'function'
+    ? service.getRequestOptions(requestData)
+    : requestData;
 }
 
 function extractRepoPayload(source = {}) {
@@ -86,10 +89,32 @@ function sanitizeRepos(service, repos = []) {
   }
   return (Array.isArray(repos) ? repos : []).map(sanitizeRepo);
 }
-
-function hasRequestOptions(options = {}) {
-  return Object.keys(options).length > 0;
+function normalizeInstallMetadata(service, requestBody, repoPayload) {
+  if (typeof service?.normalizeInstallMetadata === 'function') {
+    return service.normalizeInstallMetadata(requestBody, repoPayload);
+  }
+  if (repoPayload) return repoPayload;
+  const metadata = requestBody.metadata && typeof requestBody.metadata === 'object'
+    ? requestBody.metadata
+    : {};
+  if (Object.keys(metadata).length === 0 && !requestBody.pluginId && !requestBody.name) return null;
+  return {
+    ...metadata,
+    name: requestBody.name || metadata.name,
+    pluginId: requestBody.pluginId || metadata.pluginId,
+    pluginKind: requestBody.pluginKind || metadata.pluginKind,
+    marketplace: requestBody.marketplace || metadata.marketplace,
+    installSource: requestBody.installSource || metadata.installSource,
+    version: requestBody.version || metadata.version,
+    description: requestBody.description || metadata.description,
+    resourceTypes: requestBody.resourceTypes || metadata.resourceTypes
+  };
 }
+
+function invokeWithOptions(method, args, options) {
+  return Object.keys(options || {}).length > 0 ? method(...args, options) : method(...args);
+}
+
 
 /**
  * 获取平台插件能力
@@ -120,10 +145,8 @@ router.get('/capabilities', (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const { platform, service, warning } = getPluginsService(req);
-    const options = await getRequestOptions(req);
-    const result = platform === 'omp' || hasRequestOptions(options)
-      ? service.listPlugins(options)
-      : service.listPlugins();
+    const options = await getRequestOptions(req, service);
+    const result = invokeWithOptions(service.listPlugins.bind(service), [], options);
 
     res.json({
       success: true,
@@ -144,14 +167,12 @@ router.get('/', async (req, res) => {
 router.get('/market', async (req, res) => {
   try {
     const { platform, service, warning } = getPluginsService(req);
-    const options = await getRequestOptions(req);
+    const options = await getRequestOptions(req, service);
     const forceRefresh = req.query.refresh === '1';
     if (forceRefresh) {
       console.log(`[Plugins API] Refreshing market plugins for ${platform}...`);
     }
-    const plugins = platform === 'omp' || hasRequestOptions(options)
-      ? await service.getMarketPlugins(forceRefresh, options)
-      : await service.getMarketPlugins(forceRefresh);
+    const plugins = await invokeWithOptions(service.getMarketPlugins.bind(service), [forceRefresh], options);
     console.log(`[Plugins API] ${platform}: ${plugins.length} market plugins loaded (refresh=${forceRefresh})`);
 
     res.json({
@@ -174,7 +195,7 @@ router.get('/market', async (req, res) => {
 router.post('/install', async (req, res) => {
   try {
     const { platform, service, warning } = getPluginsService(req);
-    const options = await getRequestOptions(req);
+    const options = await getRequestOptions(req, service);
     const { directory, repo, gitUrl, source, pluginId } = req.body;
     const hasDirectoryField = Object.prototype.hasOwnProperty.call(req.body, 'directory');
 
@@ -193,25 +214,14 @@ router.post('/install', async (req, res) => {
       });
     }
 
-    const repoMetadata = repo && hasDirectoryField
-      ? {
-          ...extractRepoPayload({ repo }),
-          directory: directory || ''
-        }
-      : platform === 'omp' ? {
-          ...(req.body.metadata && typeof req.body.metadata === 'object' ? req.body.metadata : {}),
-          name: req.body.name || req.body.metadata?.name,
-          pluginId: pluginId || req.body.metadata?.pluginId,
-          pluginKind: req.body.pluginKind || req.body.metadata?.pluginKind,
-          marketplace: req.body.marketplace || req.body.metadata?.marketplace,
-          installSource: req.body.installSource || req.body.metadata?.installSource,
-          version: req.body.version || req.body.metadata?.version,
-          description: req.body.description || req.body.metadata?.description,
-          resourceTypes: req.body.resourceTypes || req.body.metadata?.resourceTypes
-        } : null;
-    const result = platform === 'omp' || hasRequestOptions(options)
-      ? await service.installPlugin(installUrl, repoMetadata, options)
-      : await service.installPlugin(installUrl, repoMetadata);
+    const repoMetadata = normalizeInstallMetadata(
+      service,
+      req.body,
+      repo && hasDirectoryField
+        ? { ...extractRepoPayload({ repo }), directory: directory || '' }
+        : null
+    );
+    const result = await invokeWithOptions(service.installPlugin.bind(service), [installUrl, repoMetadata], options);
 
     if (!result.success) {
       return res.status(400).json({
@@ -242,10 +252,8 @@ router.post('/install', async (req, res) => {
 router.get('/repos', async (req, res) => {
   try {
     const { platform, service, warning } = getPluginsService(req);
-    const options = await getRequestOptions(req);
-    const repos = platform === 'omp' || hasRequestOptions(options)
-      ? service.getRepos(options)
-      : service.getRepos();
+    const options = await getRequestOptions(req, service);
+    const repos = invokeWithOptions(service.getRepos.bind(service), [], options);
     res.json({
       success: true,
       platform,
@@ -271,7 +279,7 @@ router.get('/repos', async (req, res) => {
 router.post('/repos', async (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
-    const options = await getRequestOptions(req);
+    const options = await getRequestOptions(req, service);
     const repo = extractRepoPayload(req.body);
     repo.enabled = req.body.enabled !== false;
 
@@ -282,9 +290,7 @@ router.post('/repos', async (req, res) => {
       });
     }
 
-    const repos = platform === 'omp' || hasRequestOptions(options)
-      ? service.addRepo(repo, options)
-      : service.addRepo(repo);
+    const repos = invokeWithOptions(service.addRepo.bind(service), [repo], options);
 
     res.json({
       success: true,
@@ -301,11 +307,9 @@ router.post('/repos', async (req, res) => {
 router.delete('/repos', async (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
-    const options = await getRequestOptions(req);
+    const options = await getRequestOptions(req, service);
     const { id = '', owner = '', name = '' } = req.query;
-    const repos = platform === 'omp' || hasRequestOptions(options)
-      ? service.removeRepo(owner, name, id, options)
-      : service.removeRepo(owner, name, id);
+    const repos = invokeWithOptions(service.removeRepo.bind(service), [owner, name, id], options);
 
     res.json({
       success: true,
@@ -437,7 +441,7 @@ router.put('/repos/auth', (req, res) => {
 router.post('/repos/sync', async (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
-    const options = await getRequestOptions(req);
+    const options = await getRequestOptions(req, service);
     const result = await service.syncRepos(options);
 
     res.json({
@@ -459,7 +463,7 @@ router.post('/repos/sync', async (req, res) => {
 router.post('/sync', async (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
-    const options = await getRequestOptions(req);
+    const options = await getRequestOptions(req, service);
     const result = await service.syncPlugins(options);
 
     res.json({
@@ -539,7 +543,7 @@ router.get('/:name', async (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
     const { name } = req.params;
-    const options = await getRequestOptions(req);
+    const options = await getRequestOptions(req, service);
 
     const plugin = service.getPlugin(req.query.pluginId || name, options);
 
@@ -569,7 +573,7 @@ router.delete('/:name', async (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
     const { name } = req.params;
-    const options = await getRequestOptions(req);
+    const options = await getRequestOptions(req, service);
     const pluginId = req.query.pluginId || name;
 
     const result = service.uninstallPlugin(pluginId, options);
@@ -602,7 +606,7 @@ router.put('/:name/toggle', async (req, res) => {
     const { platform, service } = getPluginsService(req);
     const { name } = req.params;
     const { enabled, pluginId = name } = req.body;
-    const options = await getRequestOptions(req);
+    const options = await getRequestOptions(req, service);
 
     if (typeof enabled !== 'boolean') {
       return res.status(400).json({
@@ -611,9 +615,7 @@ router.put('/:name/toggle', async (req, res) => {
       });
     }
 
-    const plugin = platform === 'omp' || hasRequestOptions(options)
-      ? service.togglePlugin(pluginId, enabled, options)
-      : service.togglePlugin(pluginId, enabled);
+    const plugin = invokeWithOptions(service.togglePlugin.bind(service), [pluginId, enabled], options);
 
     res.json({
       success: true,
@@ -637,7 +639,7 @@ router.put('/:name/config', async (req, res) => {
     const { platform, service } = getPluginsService(req);
     const { name } = req.params;
     const { config, pluginId = name } = req.body;
-    const options = await getRequestOptions(req);
+    const options = await getRequestOptions(req, service);
 
     if (!config || typeof config !== 'object') {
       return res.status(400).json({
@@ -646,9 +648,7 @@ router.put('/:name/config', async (req, res) => {
       });
     }
 
-    const result = platform === 'omp' || hasRequestOptions(options)
-      ? service.updatePluginConfig(pluginId, config, options)
-      : service.updatePluginConfig(pluginId, config);
+    const result = invokeWithOptions(service.updatePluginConfig.bind(service), [pluginId, config], options);
 
     res.json({
       success: true,

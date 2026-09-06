@@ -118,7 +118,8 @@ const PLATFORM_CAPABILITIES = {
     pluginKindLabel: 'plugins/extensions',
     repositoryMode: 'native-marketplace',
     repositoryToggle: false,
-    repositoryAuth: false
+    repositoryAuth: false,
+    installMetadataMode: 'omp'
   }
 };
 
@@ -491,6 +492,31 @@ class PluginsService {
 
   getCapabilities() {
     return { ...(PLATFORM_CAPABILITIES[this.platform] || PLATFORM_CAPABILITIES.claude) };
+  }
+  getRequestOptions(requestData = {}) {
+    return {
+      ...(requestData.cwd ? { cwd: requestData.cwd } : {}),
+      ...(requestData.scope ? { scope: requestData.scope } : {})
+    };
+  }
+
+  normalizeInstallMetadata(requestBody = {}, repoPayload = null) {
+    if (repoPayload) return repoPayload;
+    if (this.getCapabilities().installMetadataMode !== 'omp') return null;
+    const metadata = requestBody.metadata && typeof requestBody.metadata === 'object'
+      ? requestBody.metadata
+      : {};
+    return {
+      ...metadata,
+      name: requestBody.name || metadata.name,
+      pluginId: requestBody.pluginId || metadata.pluginId,
+      pluginKind: requestBody.pluginKind || metadata.pluginKind,
+      marketplace: requestBody.marketplace || metadata.marketplace,
+      installSource: requestBody.installSource || metadata.installSource,
+      version: requestBody.version || metadata.version,
+      description: requestBody.description || metadata.description,
+      resourceTypes: requestBody.resourceTypes || metadata.resourceTypes
+    };
   }
 
   getMigrationWarnings() {

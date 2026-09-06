@@ -8,6 +8,7 @@ const {
   getDefaultSpeedTestModels,
   saveDefaultSpeedTestModels
 } = require('../../config/model-metadata');
+const { getPlatformCatalog } = require('../services/platform-catalog');
 const { loadConfig, saveConfig } = require('../../config/loader');
 const {
   MODEL_SCHEMA_VERSION,
@@ -65,10 +66,9 @@ function handleGetModelSettings(req, res) {
     const overrides = config.modelMetadataOverrides || {};
     const definitions = normalizeDefinitions(config.modelDefinitions);
     const defaultSpeedTestModels = getDefaultSpeedTestModels();
-
     const toolModels = Object.fromEntries(
-      ['claude', 'codex', 'gemini', 'opencode', 'omp']
-        .map((toolType) => [toolType, getModelIdsByToolType(toolType)])
+      getPlatformCatalog().keys({ capability: 'channels' })
+        .map(toolType => [toolType, getModelIdsByToolType(toolType)])
     );
 
     // Build merged table: built-in + user overrides

@@ -10,6 +10,7 @@ const path = require('path');
 const { AgentsService } = require('../../platforms/agents-service');
 const { PATHS, HOME_DIR } = require('../../config/paths');
 const { resolvePlatform, createPlatformAccessError } = require('../../platforms/access');
+const { getPlatformCatalog } = require('../services/platform-catalog');
 const { sendApiError } = require('./validation-errors');
 
 const router = express.Router();
@@ -42,13 +43,19 @@ function getAgentsService(req) {
   return { platform, service: agentServices.get(platform) };
 }
 
-function validateScopeForPlatform(scope, platform, projectPath) {
+function getAgentCapabilities(platform, service) {
+  const capabilities = service?.getCapabilities?.();
+  if (capabilities && typeof capabilities === 'object') return capabilities;
+  return getPlatformCatalog().get(platform)?.agentCapabilities || { projectScope: true, repoOperations: true };
+}
+
+function validateScopeForPlatform(scope, _platform, projectPath, capabilities = {}) {
   if (!['user', 'project'].includes(scope)) {
     return '无效的 scope，必须是 user 或 project';
   }
 
-  if (platform === 'codex' && scope !== 'user') {
-    return 'Codex 平台仅支持 user 作用域代理';
+  if (scope === 'project' && capabilities.projectScope === false) {
+    return '该平台仅支持 user 作用域代理';
   }
 
   if (scope === 'project' && !projectPath) {
@@ -73,10 +80,15 @@ function validateAgentFileName(fileName) {
   }
   return null;
 }
-
-function isCodexRepoOperationUnsupported(platform) {
-  return platform === 'codex';
+function rejectUnsupportedRepo(res, platform, service, operation = '') {
+  const capabilities = getAgentCapabilities(platform, service);
+  if (capabilities.repoOperations !== false) return false;
+  return res.status(400).json({
+    success: false,
+    message: service.getRepoOperationError?.(operation) || `该平台暂不支持远程仓库代理${operation ? ' ' + operation : ''}`
+  });
 }
+
 
 function validateRepoPath(repoPath) {
   if (typeof repoPath !== 'string' || !repoPath.trim()) {
@@ -278,7 +290,6 @@ router.get('/stats', (req, res) => {
 });
 
 /**
- * 获取单个代理详情
  * GET /api/agents/:scope/:fileName
  */
 router.get('/:scope/:fileName', (req, res) => {
@@ -287,7 +298,7 @@ router.get('/:scope/:fileName', (req, res) => {
     const { scope, fileName } = req.params;
     const { projectPath } = req.query;
 
-    const scopeError = validateScopeForPlatform(scope, platform, projectPath);
+    const scopeError = validateScopeForPlatform(scope, platform, projectPath, getAgentCapabilities(platform, service));
     if (scopeError) {
       return res.status(400).json({
         success: false,
@@ -361,7 +372,6 @@ router.post('/', (req, res) => {
         message: '代理文件名不能为空'
       });
     }
-
     const fileNameError = validateAgentFileName(fileName);
     if (fileNameError) {
       return res.status(400).json({
@@ -370,7 +380,7 @@ router.post('/', (req, res) => {
       });
     }
 
-    const scopeError = validateScopeForPlatform(scope, platform, projectPath);
+    const scopeError = validateScopeForPlatform(scope, platform, projectPath, getAgentCapabilities(platform, service));
     if (scopeError) {
       return res.status(400).json({
         success: false,
@@ -436,7 +446,7 @@ router.put('/:scope/:fileName', (req, res) => {
       configContent
     } = req.body;
 
-    const scopeError = validateScopeForPlatform(scope, platform, projectPath);
+    const scopeError = validateScopeForPlatform(scope, platform, projectPath, getAgentCapabilities(platform, service));
     if (scopeError) {
       return res.status(400).json({
         success: false,
@@ -489,7 +499,6 @@ router.put('/:scope/:fileName', (req, res) => {
 });
 
 /**
- * 删除代理
  * DELETE /api/agents/:scope/:fileName
  */
 router.delete('/:scope/:fileName', (req, res) => {
@@ -498,7 +507,7 @@ router.delete('/:scope/:fileName', (req, res) => {
     const { scope, fileName } = req.params;
     const { projectPath } = req.query;
 
-    const scopeError = validateScopeForPlatform(scope, platform, projectPath);
+    const scopeError = validateScopeForPlatform(scope, platform, projectPath, getAgentCapabilities(platform, service));
     if (scopeError) {
       return res.status(400).json({
         success: false,
@@ -567,19 +576,10 @@ router.get('/all', async (req, res) => {
   }
 });
 
-/**
- * 获取仓库列表
- * GET /api/agents/repos
- */
 router.get('/repos', (req, res) => {
   try {
     const { platform, service } = getAgentsService(req);
-    if (isCodexRepoOperationUnsupported(platform)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Codex 平台暂不支持远程仓库代理'
-      });
-    }
+    if (rejectUnsupportedRepo(res, platform, service)) return;
     const repos = service.getRepos();
     res.json({
       success: true,
@@ -600,12 +600,7 @@ router.get('/repos', (req, res) => {
 router.post('/repos', (req, res) => {
   try {
     const { platform, service } = getAgentsService(req);
-    if (isCodexRepoOperationUnsupported(platform)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Codex 平台暂不支持远程仓库代理'
-      });
-    }
+    if (rejectUnsupportedRepo(res, platform, service)) return;
     const { owner, name, branch = 'main', directory = '', enabled = true } = req.body;
 
     if (!owner || !name) {
@@ -636,12 +631,7 @@ router.post('/repos', (req, res) => {
 router.delete('/repos/:owner/:name', (req, res) => {
   try {
     const { platform, service } = getAgentsService(req);
-    if (isCodexRepoOperationUnsupported(platform)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Codex 平台暂不支持远程仓库代理'
-      });
-    }
+    if (rejectUnsupportedRepo(res, platform, service)) return;
     const { owner, name } = req.params;
     const { directory = '' } = req.query;
     const repos = service.removeRepo(owner, name, directory);
@@ -665,12 +655,7 @@ router.delete('/repos/:owner/:name', (req, res) => {
 router.put('/repos/:owner/:name/toggle', (req, res) => {
   try {
     const { platform, service } = getAgentsService(req);
-    if (isCodexRepoOperationUnsupported(platform)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Codex 平台暂不支持远程仓库代理'
-      });
-    }
+    if (rejectUnsupportedRepo(res, platform, service)) return;
     const { owner, name } = req.params;
     const { enabled, directory = '' } = req.body;
 
@@ -695,12 +680,7 @@ router.put('/repos/:owner/:name/toggle', (req, res) => {
 router.post('/install', async (req, res) => {
   try {
     const { platform, service } = getAgentsService(req);
-    if (isCodexRepoOperationUnsupported(platform)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Codex 平台暂不支持远程仓库代理安装'
-      });
-    }
+    if (rejectUnsupportedRepo(res, platform, service, 'install')) return;
     const agent = req.body;
 
     if (!agent || !agent.repoOwner || !agent.repoName) {
@@ -747,12 +727,7 @@ router.post('/install', async (req, res) => {
 router.post('/uninstall', (req, res) => {
   try {
     const { platform, service } = getAgentsService(req);
-    if (isCodexRepoOperationUnsupported(platform)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Codex 平台暂不支持远程仓库代理卸载'
-      });
-    }
+    if (rejectUnsupportedRepo(res, platform, service, 'uninstall')) return;
     const { fileName } = req.body;
 
     if (!fileName) {

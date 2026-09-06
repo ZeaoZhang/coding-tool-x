@@ -359,36 +359,47 @@ function autoRestoreProxies({ registry, runtime, config, fsImpl = require('fs') 
 
 // 启动时执行健康检查
 async function performStartupHealthCheck() {
-  const { healthCheckAllProjects } = require('../platforms/drivers/claude/health-check');
-  const { getProjects } = require('../platforms/drivers/claude/sessions-implementation');
-
   try {
     console.log(chalk.cyan('\n[SEARCH] 正在进行启动健康检查...'));
 
-    // 获取所有项目
-    const config = loadConfig();
-    const projects = await getProjects(config);
-
-    if (projects.length === 0) {
-      console.log(chalk.gray('   未发现项目，跳过健康检查'));
+    const { getPlatformCatalog } = require('./services/platform-catalog');
+    const catalog = getPlatformCatalog();
+    const platforms = catalog.list({ capability: 'health' });
+    if (platforms.length === 0) {
+      console.log(chalk.gray('   未配置健康检查能力，跳过健康检查'));
       return;
     }
 
-    // 检查并创建缺失的目录
-    const healthResult = healthCheckAllProjects(projects);
-
-    if (healthResult.summary.created > 0) {
-      console.log(chalk.green(`   [v] 已为 ${healthResult.summary.created} 个项目创建 .claude/sessions 目录`));
+    const results = [];
+    for (const platform of platforms) {
+      const driver = catalog.driver(platform.key, 'health');
+      if (!driver || typeof driver.healthCheck !== 'function') continue;
+      const result = await driver.healthCheck({ config: loadConfig() });
+      if (result?.success !== false) {
+        results.push({ platform, result });
+      } else {
+        console.error(chalk.yellow(`   [!] ${platform.label || platform.key} 健康检查失败: ${result.error || 'unknown error'}`));
+      }
     }
 
-    if (healthResult.summary.errors > 0) {
-      console.log(chalk.yellow(`   [!] ${healthResult.summary.errors} 个项目检查失败`));
+    if (results.length === 0) {
+      console.log(chalk.gray('   没有可执行的健康检查'));
+      return;
     }
 
-    if (healthResult.summary.created === 0 && healthResult.summary.errors === 0) {
-      console.log(chalk.green(`   [v] 所有 ${healthResult.summary.healthy} 个项目状态正常`));
-    }
+    const created = results.reduce((total, item) => total + Number(item.result.summary?.created || 0), 0);
+    const errors = results.reduce((total, item) => total + Number(item.result.summary?.errors || 0), 0);
+    const healthy = results.reduce((total, item) => total + Number(item.result.summary?.healthy || 0), 0);
 
+    if (created > 0) {
+      console.log(chalk.green(`   [v] 已为 ${created} 个项目创建缺失的配置目录`));
+    }
+    if (errors > 0) {
+      console.log(chalk.yellow(`   [!] ${errors} 个项目检查失败`));
+    }
+    if (created === 0 && errors === 0) {
+      console.log(chalk.green(`   [v] 所有 ${healthy} 个项目状态正常`));
+    }
     console.log('');
   } catch (err) {
     console.error(chalk.red('   [x] 健康检查失败:'), err.message);

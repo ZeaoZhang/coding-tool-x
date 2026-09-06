@@ -23,6 +23,10 @@
     "agents": true,
     "plugins": true
   },
+  "agentCapabilities": {
+    "projectScope": true,
+    "repoOperations": true
+  },
   "skillActivation": {
     "user": {
       "mode": "native-copy",
@@ -463,7 +467,7 @@
     "projectConfig": "legacy:claude",
     "api": "legacy:claude",
     "hooks": "legacy:claude",
-    "health": "legacy:claude",
+    "health": "claude-health",
     "mcp": "legacy:claude",
     "prompts": "legacy:claude"
   }

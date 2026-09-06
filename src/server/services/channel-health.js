@@ -16,9 +16,9 @@ const healthConfig = {
 // 渠道健康状态
 const channelHealth = new Map(); // `${source}:${channelId}` → health info
 
-// 冻结回调（用于通知调度器解绑会话）
 let onChannelFrozenCallback = null;
 let channelListProvider = null;
+let channelHealthPolicyProvider = null;
 
 /**
  * 设置渠道冻结时的回调
@@ -31,6 +31,22 @@ function setChannelListProvider(provider) {
   channelListProvider = typeof provider === 'function' ? provider : null;
 }
 
+
+function setChannelHealthPolicyProvider(provider) {
+  channelHealthPolicyProvider = typeof provider === 'function' ? provider : null;
+}
+
+function getHealthPolicy(source = 'claude') {
+  try {
+    const policy = channelHealthPolicyProvider?.(source);
+    if (policy && typeof policy === 'object') {
+      return { freezeOnFailure: policy.freezeOnFailure !== false };
+    }
+  } catch (_error) {
+    // Fall through to the safe default freeze policy.
+  }
+  return { freezeOnFailure: true };
+}
 /**
  * 初始化渠道健康信息
  */
@@ -128,9 +144,8 @@ function recordSuccess(channelId, source = 'claude') {
       health.nextFreezeTime = healthConfig.initialFreezeTime; // 重置冻结时间
       console.log(`[ChannelHealth] Channel ${channelId} recovered and marked as healthy`);
     }
-  }
 }
-
+}
 /**
  * 记录失败请求
  */
@@ -142,11 +157,10 @@ function recordFailure(channelId, source = 'claude', error) {
   health.consecutiveFailures++;
   health.consecutiveSuccesses = 0;
   health.lastCheckTime = now;
-
-  // omp 动态切换按请求即时回退其他渠道，失败渠道无需冻结（冻结会将其排除在后续分配之外）
-  if (source === 'omp') {
+  if (!getHealthPolicy(source).freezeOnFailure) {
     return;
   }
+
 
   // 如果当前是健康状态或检测中状态，检查是否需要冻结
   if (health.status === 'healthy' || health.status === 'checking') {
@@ -291,5 +305,6 @@ module.exports = {
   resetChannelHealth,
   setOnChannelFrozen,
   setChannelListProvider,
+  setChannelHealthPolicyProvider,
   healthConfig,
 };

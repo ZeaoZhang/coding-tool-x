@@ -1,53 +1,31 @@
 const express = require('express');
 const router = express.Router();
 const { convertSession, previewConversion } = require('../services/session-converter');
-const {
-  SUPPORTED_SOURCE_TYPES,
-  SUPPORTED_TARGET_APIS,
-  convertToOpenCodePayload,
-  convertClaudeToOpenCodePayload,
-  convertCodexToOpenCodePayload,
-  convertGeminiToOpenCodePayload,
-  normalizeSourceType
-} = require('../../platforms/drivers/opencode/gateway-converter');
+const { getPlatformCatalog } = require('../services/platform-catalog');
 
 /**
  * 获取支持的格式列表
  * GET /api/convert/formats
  */
 router.get('/formats', (req, res) => {
+  const driver = getPlatformCatalog().driver('opencode', 'conversion');
+  const formats = driver?.formats?.() || driver?.getFormats?.();
+  if (!formats) {
+    return res.status(404).json({ success: false, error: 'Conversion is not supported' });
+  }
+  const sourceTypes = formats.sourceTypes || [];
   res.json({
-    formats: [
-      {
-        id: 'claude',
-        name: 'Claude Code',
-        description: 'Anthropic Claude Code CLI session format',
-        extension: '.jsonl',
-        icon: 'claude'
-      },
-      {
-        id: 'codex',
-        name: 'OpenAI Codex',
-        description: 'OpenAI Codex CLI session format',
-        extension: '.jsonl',
-        icon: 'codex'
-      },
-      {
-        id: 'gemini',
-        name: 'Google Gemini',
-        description: 'Google Gemini CLI session format',
-        extension: '.json',
-        icon: 'gemini'
-      }
-    ],
-    conversions: [
-      { from: 'claude', to: 'codex' },
-      { from: 'claude', to: 'gemini' },
-      { from: 'codex', to: 'claude' },
-      { from: 'codex', to: 'gemini' },
-      { from: 'gemini', to: 'claude' },
-      { from: 'gemini', to: 'codex' }
-    ]
+    formats: sourceTypes.map(type => ({
+      id: type,
+      name: (formats.formats || []).find(item => item.id === type)?.name
+        || String(type).replace(/[-_]/g, ' ').replace(/\b\w/g, char => char.toUpperCase()),
+      description: `${type} session format`,
+      extension: '.jsonl',
+      icon: type
+    })),
+    conversions: sourceTypes.flatMap(sourceType => sourceTypes
+      .filter(targetType => targetType !== sourceType)
+      .map(targetType => ({ from: sourceType, to: targetType })))
   });
 });
 
@@ -56,42 +34,47 @@ router.get('/formats', (req, res) => {
  * GET /api/convert/opencode/formats
  */
 router.get('/opencode/formats', (req, res) => {
+  const driver = getConversionDriver();
+  const formats = driver?.formats?.() || driver?.getFormats?.();
+  if (!formats) {
+    return res.status(404).json({ success: false, error: 'Conversion is not supported' });
+  }
+  const sourceTypes = formats.sourceTypes || [];
   res.json({
-    sourceTypes: SUPPORTED_SOURCE_TYPES.map(type => ({
+    sourceTypes: sourceTypes.map(type => ({
       id: type,
-      name: type === 'claude'
-        ? 'Claude Code'
-        : type === 'codex'
-          ? 'Codex'
-          : 'Gemini'
+      name: (formats.formats || []).find(item => item.id === type)?.name
+        || String(type).replace(/[-_]/g, ' ').replace(/\b\w/g, char => char.toUpperCase())
     })),
     target: 'opencode',
-    targetApis: SUPPORTED_TARGET_APIS,
-    defaultTargetApi: 'responses',
-    endpoints: {
-      responses: '/v1/responses',
-      'chat.completions': '/v1/chat/completions'
-    },
-    sourceEndpoints: {
-      claude: '/api/convert/opencode/claude',
-      codex: '/api/convert/opencode/codex',
-      gemini: '/api/convert/opencode/gemini'
-    }
+    targetApis: formats.targetApis || [],
+    defaultTargetApi: formats.defaultTargetApi,
+    endpoints: formats.endpoints || {},
+    sourceEndpoints: Object.fromEntries(sourceTypes.map(type => [type, `/api/convert/opencode/${type}`]))
   });
 });
 
-function handleOpenCodeConvert(req, res, sourceType, converter) {
+function getConversionDriver() {
+  return getPlatformCatalog().driver('opencode', 'conversion');
+}
+
+function handleOpenCodeConvert(req, res, sourceType) {
   try {
     const { payload, options = {} } = req.body || {};
+    const driver = getConversionDriver();
 
+    if (!driver) {
+      return res.status(404).json({ success: false, error: 'Conversion is not supported' });
+    }
     if (!payload) {
       return res.status(400).json({
         success: false,
         error: 'Missing required parameters: payload'
       });
     }
-
-    const result = converter({ payload, options });
+    const result = driver.convertSource
+      ? driver.convertSource(sourceType, payload, options)
+      : driver.convert({ sourceType, payload, options });
     return res.json({
       success: true,
       ...result
@@ -105,31 +88,8 @@ function handleOpenCodeConvert(req, res, sourceType, converter) {
   }
 }
 
-/**
- * Claude Code -> OpenCode
- * POST /api/convert/opencode/claude
- * Body: { payload, options? }
- */
-router.post('/opencode/claude', (req, res) => {
-  return handleOpenCodeConvert(req, res, 'claude', convertClaudeToOpenCodePayload);
-});
-
-/**
- * Codex -> OpenCode
- * POST /api/convert/opencode/codex
- * Body: { payload, options? }
- */
-router.post('/opencode/codex', (req, res) => {
-  return handleOpenCodeConvert(req, res, 'codex', convertCodexToOpenCodePayload);
-});
-
-/**
- * Gemini -> OpenCode
- * POST /api/convert/opencode/gemini
- * Body: { payload, options? }
- */
-router.post('/opencode/gemini', (req, res) => {
-  return handleOpenCodeConvert(req, res, 'gemini', convertGeminiToOpenCodePayload);
+router.post('/opencode/:sourceType', (req, res) => {
+  return handleOpenCodeConvert(req, res, req.params.sourceType);
 });
 
 /**
@@ -140,31 +100,29 @@ router.post('/opencode/gemini', (req, res) => {
 router.post('/opencode', (req, res) => {
   try {
     const { sourceType, payload, options = {} } = req.body || {};
+    const driver = getConversionDriver();
+    const sourceTypes = driver?.formats?.().sourceTypes || driver?.getFormats?.().sourceTypes || [];
+    const normalized = driver?.normalizeSourceType?.(sourceType) || sourceType;
 
+    if (!driver) {
+      return res.status(404).json({ success: false, error: 'Conversion is not supported' });
+    }
     if (!sourceType || !payload) {
       return res.status(400).json({
         success: false,
         error: 'Missing required parameters: sourceType, payload'
       });
     }
-
-    const normalized = normalizeSourceType(sourceType);
-    if (!SUPPORTED_SOURCE_TYPES.includes(normalized)) {
+    if (!sourceTypes.includes(normalized)) {
       return res.status(400).json({
         success: false,
-        error: `Invalid sourceType: ${sourceType}. Must be one of: ${SUPPORTED_SOURCE_TYPES.join(', ')}`
+        error: `Invalid sourceType: ${sourceType}. Must be one of: ${sourceTypes.join(', ')}`
       });
     }
 
-    const result = convertToOpenCodePayload({
-      sourceType: normalized,
-      payload,
-      options
-    });
-
     return res.json({
       success: true,
-      ...result
+      ...driver.convert({ sourceType: normalized, payload, options })
     });
   } catch (error) {
     console.error('[Convert API] OpenCode gateway convert error:', error);

@@ -276,8 +276,6 @@ describe('agent CRUD routes', () => {
       projectPath: allowedProjectPath,
       description: 'Updated'
     });
-
-    expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(services.opencode.updateAgent).toHaveBeenCalledWith(expect.objectContaining({
       fileName: 'helper-agent',

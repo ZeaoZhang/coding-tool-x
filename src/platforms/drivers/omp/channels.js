@@ -48,6 +48,7 @@ function createDriver(context = {}) {
   driver.getAuth = context => auth.getChannelAuth('omp', { channelId: context?.params?.channelId || context?.query?.channelId || '' });
   driver.syncLocalAuth = context => auth.syncLocalChannelAuth('omp', { channelId: context?.body?.channelId || context?.params?.channelId || context?.query?.channelId || '' });
   driver.getAuthQuota = context => auth.fetchChannelAuthQuota('omp', context?.params?.channelId, { refresh: context?.query?.refresh === 'true' });
+  driver.getHealthPolicy = () => ({ freezeOnFailure: false });
   return driver;
 }
 

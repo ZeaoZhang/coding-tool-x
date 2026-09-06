@@ -46,7 +46,9 @@ function getDriverRegistry() {
         'generic-filesystem': createGenericFilesystemDriver,
         'generic-openai-compatible': createGenericOpenAICompatibleDriver,
         'generic-mcp': createGenericMcpDriver,
-        'generic-prompt': createGenericPromptDriver
+        'generic-prompt': createGenericPromptDriver,
+        'opencode-conversion': require('./drivers/opencode/conversion').createDriver,
+        'claude-health': require('./drivers/claude/health').createDriver
       }
     });
     registerLegacyDrivers(defaultRegistry);

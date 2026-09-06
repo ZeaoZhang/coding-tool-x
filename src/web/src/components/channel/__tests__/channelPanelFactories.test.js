@@ -211,13 +211,12 @@ describe('channel panel model catalogs', () => {
   it('builds an explicit OMP OAuth gateway payload without dropping gateway credentials', async () => {
     const config = channelPanelFactories.omp()
     const form = {
-      ...config.getInitialForm(),
       name: 'Codex Gateway',
-      presetId: 'omp_oauth_gateway',
       providerKey: 'openai-codex',
       baseUrl: 'http://127.0.0.1:4000',
       apiKey: 'gateway-token',
       authMode: 'oauth',
+      oauthGatewayMode: true,
       authRef: {
         credentialId: 'credential-2',
         providerId: 'openai-codex',
@@ -246,5 +245,18 @@ describe('channel panel model catalogs', () => {
         providerConfig: { transport: 'pi-native' }
       })
     )
+  })
+  it('hides gateway-only fields for native OAuth and keeps them for explicit gateway mode', () => {
+    const config = channelPanelFactories.omp()
+    const fields = config.formSections.flatMap(section => section.fields)
+    const byKey = key => fields.find(field => field.key === key)
+    const gatewayForm = config.onPresetChange('omp_oauth_gateway', config.getInitialForm())
+
+    expect(gatewayForm.oauthGatewayMode).toBe(true)
+    expect(byKey('baseUrl').showWhen({ authMode: 'oauth', oauthGatewayMode: false })).toBe(false)
+    expect(byKey('apiKey').showWhen({ authMode: 'oauth', oauthGatewayMode: false })).toBe(false)
+    expect(byKey('providerKey').showWhen({ authMode: 'oauth', oauthGatewayMode: false })).toBe(false)
+    expect(byKey('baseUrl').showWhen(gatewayForm)).toBe(true)
+    expect(byKey('apiKey').showWhen(gatewayForm)).toBe(true)
   })
 })

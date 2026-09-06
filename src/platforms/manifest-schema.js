@@ -15,7 +15,9 @@ const DRIVER_IDS = new Set([
   'legacy:codex',
   'legacy:gemini',
   'legacy:opencode',
-  'legacy:omp'
+  'legacy:omp',
+  'opencode-conversion',
+  'claude-health'
 ]);
 
 const PATH_RESOLVER_IDS = new Set([
@@ -49,8 +51,9 @@ const CAPABILITY_OPERATIONS = Object.freeze({
   health: new Set(['healthCheck']),
   hooks: new Set(['getHooks', 'saveHooks', 'testHooks']),
   projects: new Set(['createProject', 'deleteProject', 'listProjects', 'saveProjectOrder']),
-  proxy: new Set(['clearLogs', 'start', 'status', 'stop']),
   sessions: new Set(['batchDelete', 'createSession', 'delete', 'fork', 'launch', 'listSessions', 'messages', 'outline', 'recent', 'saveSessionOrder', 'search', 'searchAcrossProjects', 'status']),
+  proxy: new Set(['clearLogs', 'start', 'status', 'stop']),
+  conversion: new Set(['convert', 'formats']),
   statistics: new Set(['daily', 'summary', 'today'])
 });
 
@@ -81,6 +84,14 @@ const schema = {
     defaultPort: { type: 'integer', minimum: 1 },
     proxyMode: { enum: ['standard', 'managed'] },
     proxyLabels: { type: 'object', additionalProperties: { type: 'string' } },
+    agentCapabilities: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        projectScope: { type: 'boolean' },
+        repoOperations: { type: 'boolean' }
+      }
+    },
     resourceTypes: { type: 'object', additionalProperties: { type: 'boolean' } },
     skillActivation: {
       type: 'object',
