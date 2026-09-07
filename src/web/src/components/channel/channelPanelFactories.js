@@ -187,8 +187,7 @@ function buildAuthPayload(form) {
 function buildOmpAuthPayload(form) {
   const payload = buildAuthPayload(form)
   if (payload.authMode !== 'oauth') return payload
-  const transport = String(form.transport || form.providerConfig?.transport || '').trim()
-  if (transport !== 'pi-native') return { ...payload, transport: '' }
+  if (!isOmpOAuthGatewayForm(form)) return { ...payload, transport: '' }
   return {
     ...payload,
     apiKey: String(form.apiKey || '').trim(),
@@ -229,6 +228,14 @@ function buildOAuthAuthField() {
     showWhen: isOAuthForm
   }
 }
+function isOmpOAuthGatewayForm(form = {}) {
+  return isOAuthForm(form) && form.oauthGatewayMode === true
+}
+
+function showOmpAuthField(form = {}) {
+  return !isOAuthForm(form) || isOmpOAuthGatewayForm(form)
+}
+
 function showOmpNonAuthField(form = {}) {
   return !isOAuthForm(form)
 }
@@ -1646,10 +1653,10 @@ const channelPanelFactories = {
       {
         title: '基本信息',
         fields: [
-          buildOAuthAuthField(),
           { key: 'name', label: '渠道名称', type: 'text', required: true, placeholder: '显示名称' },
           {
             key: 'providerKey',
+            showWhen: showOmpAuthField,
             label: 'Provider Key',
             type: 'text',
             required: true,
@@ -1658,28 +1665,34 @@ const channelPanelFactories = {
           },
           {
             key: 'baseUrl',
-            showWhen: showOmpNonAuthField,
-            label: 'Base URL',
+            showWhen: showOmpAuthField,
+            label: form => isOAuthForm(form) ? 'Auth Gateway URL' : 'Base URL',
             type: 'text',
             required: true,
+            skipOnOAuth: false,
             placeholder: 'https://api.example.com/v1',
-            validate: (value) => validateHttpUrl(
-              'Base URL',
+            validate: (value, form) => validateHttpUrl(
+              isOAuthForm(form) ? 'Auth Gateway URL' : 'Base URL',
               value,
               { required: true }
             )
           },
           {
             key: 'apiKey',
-            showWhen: showOmpNonAuthField,
-            label: 'API Key',
+            showWhen: showOmpAuthField,
+            label: form => isOAuthForm(form) ? 'Gateway Token' : 'API Key',
             type: 'password',
             required: true,
+            skipOnOAuth: false,
             placeholder: 'sk-...',
-            validate: (value) => validateRequired('API Key', value)
+            validate: (value, form) => validateRequired(
+              isOAuthForm(form) ? 'Gateway Token' : 'API Key',
+              value
+            )
           },
           {
             key: 'routingGroup',
+            showWhen: showOmpAuthField,
             label: '路由组',
             type: 'text',
             placeholder: '相同路由组的兼容渠道可动态切换',
@@ -1762,7 +1775,7 @@ const channelPanelFactories = {
       providerApi: 'openai-completions',
       apiKey: '',
       authMode: 'api_key',
-      authRef: undefined,
+      oauthGatewayMode: false,
       authSource: undefined,
       authStatus: undefined,
       oauthProviderId: '',
@@ -1799,7 +1812,8 @@ const channelPanelFactories = {
       providerApi: channel.providerApi || channel.api || 'openai-completions',
       apiKey: channel.apiKey || '',
       authMode: channel.authMode || 'api_key',
-      authRef: channel.authRef,
+      oauthGatewayMode: channel.authMode === 'oauth'
+        && (channel.transport === 'pi-native' || channel.providerConfig?.transport === 'pi-native'),
       authSource: channel.authSource,
       authStatus: channel.authStatus,
       oauthProviderId: channel.oauthProviderId || '',
@@ -1840,6 +1854,18 @@ const channelPanelFactories = {
       newForm.wireApi = preset.wireApi || 'openai'
       newForm.gatewaySourceType = preset.gatewaySourceType || newForm.gatewaySourceType || 'openai_compatible'
       newForm.transport = preset.transport || ''
+      newForm.oauthGatewayMode = preset.id === 'omp_oauth_gateway'
+      if (preset.authMode === 'oauth') {
+        return {
+          ...newForm,
+          authMode: 'oauth',
+          apiKey: '',
+          authRef: undefined,
+          authSource: undefined,
+          authStatus: undefined,
+          oauthProviderId: preset.oauthProviderId || ''
+        }
+      }
       return applyPresetAuth(newForm, preset)
     },
     fetchModelsForChannel: async (channelId, form, { forceRefresh = false } = {}) => {

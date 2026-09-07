@@ -24,11 +24,18 @@ function createDriver(context = {}) {
       messages: 'getSessionMessages'
     },
     customMethods: {
-      listSessions: (service, projectName, options = {}) => service.getSessionsForProject(
-        options.config || {},
-        projectName,
-        options
-      ),
+      listSessions: (service, projectNameOrRequest, options = {}) => {
+        const descriptorRequest = projectNameOrRequest && typeof projectNameOrRequest === 'object';
+        const request = descriptorRequest ? projectNameOrRequest : options;
+        const projectName = descriptorRequest
+          ? request.params?.projectName
+          : projectNameOrRequest;
+        return service.getSessionsForProject(
+          request.config || {},
+          projectName,
+          request
+        );
+      },
       recent: (service, limitOrRequest, options = {}) => {
         const descriptorRequest = limitOrRequest && typeof limitOrRequest === 'object';
         const request = descriptorRequest ? limitOrRequest : options;

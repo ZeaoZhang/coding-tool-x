@@ -219,6 +219,7 @@ describe('channel panel model catalogs', () => {
       baseUrl: 'http://127.0.0.1:4000',
       apiKey: 'gateway-token',
       authMode: 'oauth',
+      oauthGatewayMode: true,
       authRef: {
         credentialId: 'credential-2',
         providerId: 'openai-codex',
@@ -249,18 +250,25 @@ describe('channel panel model catalogs', () => {
     )
   })
 
-  it('removes the native OAuth gateway preset but keeps local OAuth sync', () => {
+  it('keeps the OAuth gateway preset without an OMP native OAuth control', () => {
     const config = channelPanelFactories.omp()
     const fields = config.formSections.flatMap(section => section.fields)
     const byKey = key => fields.find(field => field.key === key)
     const form = config.getInitialForm()
+    const gatewayForm = config.onPresetChange('omp_oauth_gateway', form)
 
-    expect(config.getPresetById('omp_oauth_gateway')).toBeUndefined()
-    expect(config.presetCategories).not.toHaveProperty('oauth')
+    expect(config.getPresetById('omp_oauth_gateway')).toEqual(expect.objectContaining({
+      id: 'omp_oauth_gateway',
+      authMode: 'oauth',
+      transport: 'pi-native'
+    }))
+    expect(config.presetCategories).toHaveProperty('oauth', 'OAuth 网关')
+    expect(fields.some(field => field.type === 'channel-auth')).toBe(false)
     expect(form.authMode).toBe('api_key')
-    expect(form.oauthGatewayMode).toBeUndefined()
-    expect(fields.find(field => field.type === 'channel-auth')?.showWhen({ authMode: 'oauth' })).toBe(true)
-    expect(byKey('baseUrl').showWhen({ authMode: 'oauth' })).toBe(false)
-    expect(byKey('apiKey').showWhen({ authMode: 'oauth' })).toBe(false)
+    expect(form.oauthGatewayMode).toBe(false)
+    expect(gatewayForm.authMode).toBe('oauth')
+    expect(gatewayForm.oauthGatewayMode).toBe(true)
+    expect(byKey('baseUrl').showWhen(gatewayForm)).toBe(true)
+    expect(byKey('apiKey').showWhen(gatewayForm)).toBe(true)
   })
 })

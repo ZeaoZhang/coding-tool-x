@@ -9,7 +9,8 @@ const CLAUDE_SESSIONS_PATH = require.resolve('../../../src/platforms/drivers/cla
 const DRIVER_PATH = require.resolve('../../../src/platforms/drivers/claude/sessions.js');
 
 const sessionHistoryIndex = {
-  getRecentSessions: vi.fn()
+  getRecentSessions: vi.fn(),
+  listSessions: vi.fn()
 };
 
 function loadClaudeSessions() {
@@ -29,6 +30,7 @@ describe('Claude session history', () => {
     delete require.cache[DRIVER_PATH];
     delete require.cache[ALIAS_PATH];
     sessionHistoryIndex.getRecentSessions.mockReset();
+    sessionHistoryIndex.listSessions.mockReset();
   });
 
   it('returns recent sessions with aliases', async () => {
@@ -86,6 +88,40 @@ describe('Claude session history', () => {
     expect(sessionHistoryIndex.getRecentSessions).toHaveBeenCalledWith(
       'claude',
       3,
+      expect.objectContaining({ config: { source: 'test' } })
+    );
+  });
+ 
+  it('accepts the descriptor request context for project-session routes', async () => {
+    const claudeSessions = loadClaudeSessions();
+    sessionHistoryIndex.listSessions.mockResolvedValue([{
+      sessionId: 'session-3',
+      projectName: 'demo',
+      mtime: '2026-09-06T00:00:00.000Z',
+      size: 42,
+      filePath: '/tmp/demo/session-3.jsonl'
+    }]);
+    const { createDriver } = require(DRIVER_PATH);
+    const driver = createDriver({
+      requireImpl: () => claudeSessions,
+      sessionHistoryIndex
+    });
+
+    const result = await driver.listSessions({
+      params: { projectName: 'demo' },
+      config: { source: 'test' }
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      status: 'ok',
+      data: {
+        sessions: [expect.objectContaining({ sessionId: 'session-3' })],
+        totalSize: 42
+      }
+    }));
+    expect(sessionHistoryIndex.listSessions).toHaveBeenCalledWith(
+      'claude',
+      'demo',
       expect.objectContaining({ config: { source: 'test' } })
     );
   });
