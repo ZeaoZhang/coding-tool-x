@@ -1,11 +1,13 @@
 import { defineStore, createPinia, getActivePinia } from 'pinia'
 import { getCurrentInstance } from 'vue'
 import { getPlatforms } from '../api/platforms'
+import { configurePlatformApiPrefixes } from '../api/client'
 import { DEFAULT_ENABLED_CLI_PLATFORMS, MINIMAL_PLATFORM_FALLBACK, normalizePublicPlatforms } from '../config/platforms'
 import { resolveEnabledCliPlatforms } from '../config/platformCatalog'
 import { useUIConfig } from '../composables/useUIConfig'
 const FALLBACK_PLATFORM_KEYS = new Set(DEFAULT_ENABLED_CLI_PLATFORMS)
 const FALLBACK_PLATFORMS = MINIMAL_PLATFORM_FALLBACK.filter(platform => FALLBACK_PLATFORM_KEYS.has(platform.key))
+configurePlatformApiPrefixes(FALLBACK_PLATFORMS)
 
 const definePlatformStore = defineStore('platforms', {
   state: () => ({
@@ -42,6 +44,7 @@ const definePlatformStore = defineStore('platforms', {
         .then((result) => {
           const normalized = normalizePublicPlatforms(result)
           if (normalized.length > 0) this.platforms = normalized
+          configurePlatformApiPrefixes(this.platforms)
           this.loaded = true
           return this.platforms
         })

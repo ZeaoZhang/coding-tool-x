@@ -6,6 +6,9 @@
   "iconToken": "claude",
   "color": "#18a058",
   "defaultVisible": true,
+  "defaultEnabled": true,
+  "sortOrder": 10,
+  "modelConfig": { "catalogKey": "claude" },
   "auth": {
     "modes": ["api_key", "oauth", "none"],
     "oauth": { "adapter": "claude", "policy": "single-enabled", "quota": "claude" }

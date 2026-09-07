@@ -111,12 +111,10 @@ function mergePricing(defaultPricing, overrides = {}) {
 }
 
 function mergeDefaultModels(defaultModels, overrides = {}) {
-  const merged = {};
-  Object.keys(defaultModels).forEach((key) => {
-    // If user config has this tool type, use it; otherwise use default
-    merged[key] = (overrides && overrides[key]) ? overrides[key] : defaultModels[key];
-  });
-  return merged;
+  return {
+    ...(defaultModels || {}),
+    ...(overrides || {})
+  };
 }
 
 function mergeDefaultSpeedTestModels(defaultModels, overrides = {}) {

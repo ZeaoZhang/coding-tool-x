@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
 const { loadConfig } = require('../../config/loader');
-const { DEFAULT_ENABLED_CLI_PLATFORMS } = require('../../shared/platforms');
 const { getPlatformContext } = require('../platform-context');
 
 // Services
@@ -53,7 +52,10 @@ function resolveEnabledSources(uiConfig = {}, registry = getPlatformContext().re
   );
   const requested = Array.isArray(uiConfig.enabledCliPlatforms)
     ? uiConfig.enabledCliPlatforms
-    : DEFAULT_ENABLED_CLI_PLATFORMS;
+    : (registry?.listDefaults?.({ enabledOnly: true }) || definitions)
+      .filter(platform => platform.defaultEnabled !== false)
+      .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+      .map(platform => platform.key);
   const seen = new Set();
 
   return requested

@@ -4,6 +4,9 @@ const { loadConfig, saveConfig } = require('../../config/loader');
 const DEFAULT_CONFIG = require('../../config/default');
 const { getPlatformCatalog } = require('../services/platform-catalog');
 const { probeModelAvailability } = require('../services/model-detector');
+function getModelCatalogKey(platform) {
+  return getPlatformCatalog().get(platform)?.modelConfig?.catalogKey || platform;
+}
 
 function clampNumber(value, fallback) {
   const num = typeof value === 'number' ? value : parseFloat(value);
@@ -136,8 +139,9 @@ async function listModelsForChannel(channel, platform, options = {}) {
 }
 
 async function probeModelsForSingleChannel(channel, channelType, options = {}) {
-  const builtInPreferred = Array.isArray(DEFAULT_CONFIG.defaultModels?.[channelType])
-    ? DEFAULT_CONFIG.defaultModels[channelType]
+  const catalogKey = getModelCatalogKey(channelType);
+  const builtInPreferred = Array.isArray(DEFAULT_CONFIG.defaultModels?.[catalogKey])
+    ? DEFAULT_CONFIG.defaultModels[catalogKey]
     : [];
   const preferredModels = uniqueModels([
     ...collectChannelPreferredModels(channel),
@@ -185,8 +189,9 @@ async function probeModelsForChannels(channels = [], channelType, options = {}) 
 function mergeProbedAndConfiguredModels(probedModels, configuredModels, toolType) {
   const safeConfigured = Array.isArray(configuredModels) ? configuredModels : [];
   const safeProbed = Array.isArray(probedModels) ? probedModels : [];
-  const builtInDefaults = Array.isArray(DEFAULT_CONFIG.defaultModels?.[toolType])
-    ? DEFAULT_CONFIG.defaultModels[toolType]
+  const catalogKey = getModelCatalogKey(toolType);
+  const builtInDefaults = Array.isArray(DEFAULT_CONFIG.defaultModels?.[catalogKey])
+    ? DEFAULT_CONFIG.defaultModels[catalogKey]
     : [];
   if (safeProbed.length > 0) {
     return uniqueModels([...safeProbed, ...safeConfigured, ...builtInDefaults]);
@@ -243,6 +248,18 @@ function validateModelList(models, toolType) {
   return { valid: true, cleaned };
 }
 
+function projectDefaultModelsByPlatform(models = {}) {
+  const projected = { ...(models || {}) };
+  const catalog = getPlatformCatalog();
+  for (const platform of catalog.keys({ capability: 'channels' })) {
+    const catalogKey = getModelCatalogKey(platform);
+    if (!Array.isArray(projected[platform]) && Array.isArray(projected[catalogKey])) {
+      projected[platform] = projected[catalogKey];
+    }
+  }
+  return projected;
+}
+
 /**
  * GET /api/config/default-models
  * 获取默认模型列表
@@ -250,7 +267,7 @@ function validateModelList(models, toolType) {
 router.get('/default-models', async (req, res) => {
   try {
     const config = loadConfig();
-    const configuredDefaultModels = config.defaultModels || DEFAULT_CONFIG.defaultModels;
+    const configuredDefaultModels = projectDefaultModelsByPlatform(config.defaultModels || DEFAULT_CONFIG.defaultModels);
     const probe = parseBooleanQuery(req.query.probe, false);
 
     if (!probe) {
@@ -365,6 +382,7 @@ router.post('/default-models/reset', (req, res) => {
 
     const config = loadConfig();
     const validToolTypes = getPlatformCatalog().keys({ capability: 'channels' });
+    const builtInDefaults = projectDefaultModelsByPlatform(DEFAULT_CONFIG.defaultModels);
     let newDefaultModels;
 
     if (toolType) {
@@ -376,13 +394,10 @@ router.post('/default-models/reset', (req, res) => {
 
       newDefaultModels = {
         ...(config.defaultModels || DEFAULT_CONFIG.defaultModels),
-        [toolType]: DEFAULT_CONFIG.defaultModels?.[toolType] || []
+        [toolType]: builtInDefaults[toolType] || builtInDefaults[getModelCatalogKey(toolType)] || []
       };
     } else {
-      newDefaultModels = Object.fromEntries(validToolTypes.map(platform => [
-        platform,
-        DEFAULT_CONFIG.defaultModels?.[platform] || []
-      ]));
+      newDefaultModels = builtInDefaults;
     }
 
     const newConfig = {

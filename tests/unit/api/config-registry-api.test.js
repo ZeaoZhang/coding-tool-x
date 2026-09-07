@@ -293,10 +293,12 @@ describe('config-registry api import and toggle routes', () => {
     const enable = await request(app).put('/commands/demo-item/platform/demo-cli', { enabled: true });
     const disable = await request(app).put('/commands/demo-item/platform/demo-cli', { enabled: false });
 
-    expect(enable.status).toBe(200);
-    expect(disable.status).toBe(200);
-    expect(syncManager.syncToPlatform).toHaveBeenCalledWith('demo-cli', 'commands', 'demo-item');
-    expect(syncManager.removeFromPlatform).toHaveBeenCalledWith('demo-cli', 'commands', 'demo-item');
+    expect(enable.status).toBe(400);
+    expect(disable.status).toBe(400);
+    expect(enable.body.message).toContain('Invalid platform');
+    expect(disable.body.message).toContain('Invalid platform');
+    expect(syncManager.syncToPlatform).not.toHaveBeenCalled();
+    expect(syncManager.removeFromPlatform).not.toHaveBeenCalled();
   });
 
 

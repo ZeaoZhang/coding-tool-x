@@ -29,11 +29,14 @@ function createDriver(context = {}) {
         projectName,
         options
       ),
-      recent: (service, limit, options = {}) => service.getRecentSessions(
-        options.config || {},
-        limit,
-        options
-      ),
+      recent: (service, limitOrRequest, options = {}) => {
+        const descriptorRequest = limitOrRequest && typeof limitOrRequest === 'object';
+        const request = descriptorRequest ? limitOrRequest : options;
+        const limit = descriptorRequest
+          ? Number.parseInt(request.query?.limit, 10) || 5
+          : limitOrRequest;
+        return service.getRecentSessions(request.config || {}, limit, request);
+      },
       search: (service, projectName, keyword, contextLength, options = {}) => service.searchSessions(
         options.config || {},
         projectName,

@@ -6,30 +6,43 @@ const BUILT_IN_MANIFESTS = [
   require('../platforms/manifests/omp.json')
 ];
 
-const DEFAULT_ENABLED_CLI_PLATFORMS = ['claude', 'codex', 'opencode', 'omp'];
+const DEFAULT_ENABLED_CLI_PLATFORMS = BUILT_IN_MANIFESTS
+  .filter(manifest => manifest.defaultEnabled !== false)
+  .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+  .map(manifest => manifest.key);
 
 function capabilityEnabled(manifest, capability) {
   const driver = manifest?.capabilities?.[capability];
   return driver !== undefined && driver !== null && driver !== 'unsupported';
 }
 
-const BUILT_IN_CLI_PLATFORMS = BUILT_IN_MANIFESTS.map(manifest => ({
-  key: manifest.key,
-  title: manifest.title || manifest.label || manifest.key,
-  label: manifest.label || manifest.title || manifest.key,
-  command: manifest.command || manifest.key,
-  color: manifest.color || '',
-  defaultVisible: manifest.defaultVisible !== false,
-  supportsManagedChannels: capabilityEnabled(manifest, 'channels'),
-  supportsManagedConfig: capabilityEnabled(manifest, 'nativeConfig'),
-  supportsProxy: capabilityEnabled(manifest, 'proxy'),
-  supportsProjects: capabilityEnabled(manifest, 'projects'),
-  supportsSessions: capabilityEnabled(manifest, 'sessions'),
-  supportsSkills: manifest.resourceTypes?.skills !== false,
-  supportsCommands: manifest.resourceTypes?.commands !== false,
-  supportsPlugins: manifest.resourceTypes?.plugins !== false,
-  supportsAgents: manifest.resourceTypes?.agents !== false
-}));
+const BUILT_IN_CLI_PLATFORMS = BUILT_IN_MANIFESTS
+  .slice()
+  .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+  .map(manifest => ({
+    key: manifest.key,
+    title: manifest.title || manifest.label || manifest.key,
+    label: manifest.label || manifest.title || manifest.key,
+    command: manifest.command || manifest.key,
+    color: manifest.color || '',
+    defaultVisible: manifest.defaultVisible !== false,
+    defaultEnabled: manifest.defaultEnabled !== false,
+    sortOrder: manifest.sortOrder || 0,
+    modelCatalogKey: manifest.modelConfig?.catalogKey || manifest.key,
+    portKey: manifest.portKey || null,
+    defaultPort: manifest.defaultPort || null,
+    portLabel: manifest.portLabel || null,
+    apiPrefix: manifest.api?.prefix || null,
+    supportsManagedChannels: capabilityEnabled(manifest, 'channels'),
+    supportsManagedConfig: capabilityEnabled(manifest, 'nativeConfig'),
+    supportsProxy: capabilityEnabled(manifest, 'proxy'),
+    supportsProjects: capabilityEnabled(manifest, 'projects'),
+    supportsSessions: capabilityEnabled(manifest, 'sessions'),
+    supportsSkills: manifest.resourceTypes?.skills !== false,
+    supportsCommands: manifest.resourceTypes?.commands !== false,
+    supportsPlugins: manifest.resourceTypes?.plugins !== false,
+    supportsAgents: manifest.resourceTypes?.agents !== false
+  }));
 
 function normalizePlatformKey(value = '') {
   return String(value || '').trim().toLowerCase();

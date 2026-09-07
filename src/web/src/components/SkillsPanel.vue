@@ -99,13 +99,14 @@
             </template>
           </n-empty>
         </div>
-        <div v-else class="asset-list">
+        <div class="asset-list">
           <SkillCard
             v-for="skill in filteredSkills"
             :key="skill.controlKey || skill.key"
             :skill="skill"
             :toggling="!!togglingKeys[skill.controlKey || skill.key]"
             :panel-scope="props.scope"
+            @click="handleCardClick"
             @toggle="handleToggle"
             @approve="handleApprove"
           />

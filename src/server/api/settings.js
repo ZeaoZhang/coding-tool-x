@@ -65,10 +65,20 @@ function handleGetModelSettings(req, res) {
     const config = loadConfig();
     const overrides = config.modelMetadataOverrides || {};
     const definitions = normalizeDefinitions(config.modelDefinitions);
-    const defaultSpeedTestModels = getDefaultSpeedTestModels();
+    const defaultSpeedTestModels = Object.fromEntries(
+      getPlatformCatalog().keys({ capability: 'channels' }).map(toolType => {
+        const manifest = getPlatformCatalog().get(toolType);
+        const catalogKey = manifest?.modelConfig?.catalogKey || toolType;
+        return [toolType, getDefaultSpeedTestModels()[catalogKey] || null];
+      })
+    );
     const toolModels = Object.fromEntries(
       getPlatformCatalog().keys({ capability: 'channels' })
-        .map(toolType => [toolType, getModelIdsByToolType(toolType)])
+        .map(toolType => {
+          const manifest = getPlatformCatalog().get(toolType);
+          const catalogKey = manifest?.modelConfig?.catalogKey || toolType;
+          return [toolType, getModelIdsByToolType(catalogKey)];
+        })
     );
 
     // Build merged table: built-in + user overrides

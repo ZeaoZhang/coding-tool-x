@@ -93,11 +93,14 @@ describe('SkillsPanel switch lifecycle', () => {
           SkillCard: {
             props: ['skill', 'toggling'],
             emits: ['toggle', 'click'],
-            template: '<button class="skill-toggle" @click="$emit(\'toggle\', skill, !skill.enabled)">{{ skill.name }} {{ skill.cached ? "已缓存" : "未缓存" }}</button>'
+            template: '<button class="skill-card" @click="$emit(\'click\', skill)"><span>{{ skill.name }}</span><button class="skill-toggle" @click.stop="$emit(\'toggle\', skill, !skill.enabled)">{{ skill.cached ? "已缓存" : "未缓存" }}</button></button>'
           },
           SkillRepoManager: { template: '<div />' },
           SkillCreateModal: { template: '<div />' },
-          SkillDetailDrawer: { template: '<div />' },
+          SkillDetailDrawer: {
+            props: ['visible', 'skill'],
+            template: '<div class="detail-drawer">{{ visible ? skill?.name : "" }}</div>'
+          },
           OmpSkillSettingsModal: { template: '<div />' }
         }
       }
@@ -167,5 +170,13 @@ describe('SkillsPanel switch lifecycle', () => {
       'claude',
       {}
     )
+  })
+  test('Skill card click opens the detail drawer', async () => {
+    const wrapper = await createWrapper()
+    await flushPromises()
+
+    await wrapper.find('.skill-card').trigger('click')
+
+    expect(wrapper.find('.detail-drawer').text()).toContain('Demo')
   })
 })

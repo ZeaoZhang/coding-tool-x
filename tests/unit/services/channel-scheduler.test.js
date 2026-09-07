@@ -31,7 +31,7 @@ let isChannelAvailable;
 let getChannelHealthStatus;
 let setOnChannelFrozen;
 let setChannelListProvider;
-
+let setChannelHealthPolicyProvider;
 // The module under test – re-required each test
 let allocateChannel;
 let releaseChannel;
@@ -51,6 +51,7 @@ function injectStubs() {
   getChannelHealthStatus = vi.fn(() => ({ available: true }));
   setOnChannelFrozen = vi.fn();
   setChannelListProvider = vi.fn();
+  setChannelHealthPolicyProvider = vi.fn();
 
   const channelDrivers = {
     claude: { list: () => ({ status: 'ok', data: getAllChannels() }) },
@@ -71,7 +72,7 @@ function injectStubs() {
   require.cache[GEMINI_PATH]    = { id: GEMINI_PATH,    filename: GEMINI_PATH,    loaded: true, exports: { getChannels: getGeminiChannels } };
   require.cache[OPENCODE_PATH]  = { id: OPENCODE_PATH,  filename: OPENCODE_PATH,  loaded: true, exports: { getChannels: getOpenCodeChannels } };
   require.cache[OMP_PATH]       = { id: OMP_PATH,       filename: OMP_PATH,       loaded: true, exports: { getChannels: getOmpChannels } };
-  require.cache[HEALTH_PATH]    = { id: HEALTH_PATH,    filename: HEALTH_PATH,    loaded: true, exports: { isChannelAvailable, getChannelHealthStatus, setOnChannelFrozen, setChannelListProvider } };
+  require.cache[HEALTH_PATH]    = { id: HEALTH_PATH,    filename: HEALTH_PATH,    loaded: true, exports: { isChannelAvailable, getChannelHealthStatus, setOnChannelFrozen, setChannelListProvider, setChannelHealthPolicyProvider } };
 }
 
 beforeEach(() => {

@@ -6,6 +6,9 @@
   "iconToken": "code",
   "color": "#3b82f6",
   "defaultVisible": true,
+  "defaultEnabled": true,
+  "sortOrder": 20,
+  "modelConfig": { "catalogKey": "codex" },
   "auth": {
     "modes": ["api_key", "oauth", "none"],
     "oauth": { "adapter": "codex", "policy": "single-enabled", "quota": "codex" }

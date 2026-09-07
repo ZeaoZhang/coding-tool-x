@@ -445,6 +445,7 @@ async function searchSessions(config, projectName, keyword, contextLength = 15, 
 async function getRecentSessions(config, limit = 5, options = {}) {
   const indexed = await getSessionHistoryIndex().getRecentSessions('claude', limit, { ...options, config });
   const forkRelations = getForkRelations();
+  const aliases = loadAliases();
   return indexed.map(s => ({
     sessionId: s.sessionId,
     projectName: s.projectName,

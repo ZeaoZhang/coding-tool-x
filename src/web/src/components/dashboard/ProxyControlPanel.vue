@@ -24,7 +24,7 @@
             </div>
             <div class="proxy-meta">
               <n-text depth="3" style="font-size: 12px;">
-                Port: {{ getPort(platform.key) }}
+                Port: {{ getPort(platform) }}
               </n-text>
             </div>
           </div>
@@ -61,13 +61,7 @@ const { getProxyState, getSchedulerState, startProxy, stopProxy } = useGlobalSta
 const { byCapability } = useEnabledCliPlatforms()
 const proxyPlatforms = computed(() => byCapability('proxy'))
 const loadingByPlatform = reactive({})
-const portsByPlatform = reactive({
-  claude: 20088,
-  codex: 20089,
-  gemini: 20090,
-  opencode: 20091,
-  omp: 20092
-})
+const portsByKey = reactive({})
 
 function getProxy(platform) {
   return getProxyState(platform)?.value || {}
@@ -88,7 +82,8 @@ function getActiveChannel(platform) {
 }
 
 function getPort(platform) {
-  return getProxy(platform).port || portsByPlatform[platform] || '—'
+  const portKey = platform.portKey || platform.key
+  return getProxy(platform.key).port || portsByKey[portKey] || platform.defaultPort || '—'
 }
 
 function getFrozenCount(platform) {
@@ -101,16 +96,10 @@ async function loadConfig() {
   try {
     const response = await axios.get('/api/config/advanced')
     const ports = response.data?.ports || {}
-    const legacyPorts = {
-      claude: ports.proxy,
-      codex: ports.codexProxy,
-      gemini: ports.geminiProxy,
-      opencode: ports.opencodeProxy,
-      omp: ports.ompProxy
+    for (const platform of proxyPlatforms.value) {
+      const portKey = platform.portKey || platform.key
+      if (ports[portKey]) portsByKey[portKey] = ports[portKey]
     }
-    Object.entries(legacyPorts).forEach(([platform, port]) => {
-      if (port) portsByPlatform[platform] = port
-    })
   } catch (error) {
     console.error('Failed to load config:', error)
   }

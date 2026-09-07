@@ -28,11 +28,17 @@ function normalizedKey(value) {
 export function resolveEnabledCliPlatforms({ catalog, enabledCliPlatforms } = {}) {
   const available = normalizedCatalog(catalog)
   const availableKeys = new Set(available.map(platform => platform.key))
+  const hasDefaultMetadata = available.some(platform => platform.defaultEnabled !== undefined)
   const requested = Array.isArray(enabledCliPlatforms)
     ? enabledCliPlatforms
-    : DEFAULT_ENABLED_CLI_PLATFORMS
-  const result = []
+    : hasDefaultMetadata
+      ? available
+        .filter(platform => platform.defaultEnabled !== false)
+        .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+        .map(platform => platform.key)
+      : DEFAULT_ENABLED_CLI_PLATFORMS
   const seen = new Set()
+  const result = []
 
   for (const value of requested) {
     const key = normalizedKey(value)

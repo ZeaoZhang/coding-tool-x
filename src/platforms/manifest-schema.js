@@ -70,6 +70,8 @@ const schema = {
     iconToken: { type: 'string', minLength: 1 },
     color: { type: 'string' },
     defaultVisible: { type: 'boolean' },
+    defaultEnabled: { type: 'boolean' },
+    sortOrder: { type: 'integer' },
     custom: { type: 'boolean' },
     helpLabel: { type: 'string', minLength: 1 },
     terminalColor: { type: 'string', minLength: 1 },
@@ -84,6 +86,13 @@ const schema = {
     defaultPort: { type: 'integer', minimum: 1 },
     proxyMode: { enum: ['standard', 'managed'] },
     proxyLabels: { type: 'object', additionalProperties: { type: 'string' } },
+    modelConfig: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        catalogKey: { type: 'string', pattern: '^[a-z0-9][a-z0-9_-]*$' }
+      }
+    },
     agentCapabilities: {
       type: 'object',
       additionalProperties: false,

@@ -6,6 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const { getPlatformCatalog } = require('./platform-catalog');
 const http = require('http');
 const { URL } = require('url');
 const crypto = require('crypto');
@@ -60,11 +61,14 @@ MODEL_PRIORITY.openai_compatible = MODEL_PRIORITY.codex;
 
 function normalizeModelToolType(type) {
   const value = String(type || '').trim().toLowerCase();
+  if (!value) return '';
   if (value === 'openai_compatible') return 'codex';
-  if (value === 'claude' || value === 'codex' || value === 'gemini' || value === 'opencode') {
-    return value;
-  }
-  return '';
+  return value;
+}
+
+function getModelCatalogKey(toolType) {
+  const manifest = getPlatformCatalog().get(toolType);
+  return manifest?.modelConfig?.catalogKey || toolType;
 }
 
 /**
@@ -88,12 +92,12 @@ function getModelPriority(channelType, options = {}) {
   if (String(channelType || '').trim().toLowerCase() === 'openai_compatible' && !candidateTypes.includes('openai_compatible')) {
     candidateTypes.push('openai_compatible');
   }
-
   try {
     const config = loadConfig();
     const defaultModels = config?.defaultModels || {};
     for (const toolType of candidateTypes) {
-      const models = defaultModels[toolType];
+      const catalogKey = getModelCatalogKey(toolType);
+      const models = defaultModels[catalogKey] || defaultModels[toolType];
       if (Array.isArray(models) && models.length > 0) {
         return normalizeModelCandidates(models);
       }
@@ -103,7 +107,8 @@ function getModelPriority(channelType, options = {}) {
   }
 
   for (const toolType of candidateTypes) {
-    const models = MODEL_PRIORITY[toolType];
+    const catalogKey = getModelCatalogKey(toolType);
+    const models = MODEL_PRIORITY[catalogKey] || MODEL_PRIORITY[toolType];
     if (Array.isArray(models) && models.length > 0) {
       return normalizeModelCandidates(models);
     }

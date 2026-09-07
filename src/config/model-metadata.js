@@ -113,55 +113,40 @@ function getModelIdsByToolType(toolType) {
 }
 
 function getDefaultModels() {
-  return {
-    claude: [...(DEFAULT_MODELS.claude || [])],
-    codex: [...(DEFAULT_MODELS.codex || [])],
-    gemini: [...(DEFAULT_MODELS.gemini || [])]
-  };
+  return Object.fromEntries(Object.entries(DEFAULT_MODELS).map(([key, models]) => [
+    key,
+    Array.isArray(models) ? [...models] : []
+  ]));
 }
 
 function getDefaultModelsByToolType(toolType) {
   const key = String(toolType || '').trim().toLowerCase();
-  if (key === 'openai_compatible') return [...(DEFAULT_MODELS.codex || [])];
-  if (key === 'claude' || key === 'codex' || key === 'gemini') {
-    return [...(DEFAULT_MODELS[key] || [])];
-  }
-  return [];
+  const alias = key === 'openai_compatible' ? 'codex' : key;
+  return Array.isArray(DEFAULT_MODELS[alias]) ? [...DEFAULT_MODELS[alias]] : [];
 }
 
 function getDefaultSpeedTestModels() {
   const fileConfig = loadMetadataConfigFromFile();
   const raw = fileConfig.defaultSpeedTestModels || DEFAULT_SPEED_TEST_MODELS;
-  return {
-    claude: normalizeNonEmptyString(raw.claude) || DEFAULT_SPEED_TEST_MODELS.claude,
-    codex: normalizeNonEmptyString(raw.codex) || DEFAULT_SPEED_TEST_MODELS.codex,
-    gemini: normalizeNonEmptyString(raw.gemini) || DEFAULT_SPEED_TEST_MODELS.gemini
-  };
+  return Object.fromEntries(Object.entries({
+    ...DEFAULT_SPEED_TEST_MODELS,
+    ...raw
+  }).map(([key, value]) => [key, normalizeNonEmptyString(value) || value]));
 }
 
 function getDefaultSpeedTestModelByToolType(toolType) {
   const key = String(toolType || '').trim().toLowerCase();
+  const alias = key === 'openai_compatible' ? 'codex' : key;
   const defaults = getDefaultSpeedTestModels();
-  if (key === 'openai_compatible') return defaults.codex;
-  if (key === 'claude' || key === 'codex' || key === 'gemini') {
-    return defaults[key];
-  }
-  return defaults.codex;
+  return defaults[alias] || defaults.codex || null;
 }
 
 function saveDefaultSpeedTestModels(nextDefaults) {
   const current = loadMetadataConfigFromFile();
-  const merged = {
+  const normalized = {
     ...getDefaultSpeedTestModels(),
     ...(nextDefaults || {})
   };
-
-  const normalized = {
-    claude: normalizeNonEmptyString(merged.claude) || DEFAULT_SPEED_TEST_MODELS.claude,
-    codex: normalizeNonEmptyString(merged.codex) || DEFAULT_SPEED_TEST_MODELS.codex,
-    gemini: normalizeNonEmptyString(merged.gemini) || DEFAULT_SPEED_TEST_MODELS.gemini
-  };
-
   const nextConfig = {
     ...current,
     defaultSpeedTestModels: normalized

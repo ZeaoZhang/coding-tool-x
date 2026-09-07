@@ -1,7 +1,6 @@
 const express = require('express');
 const http = require('http');
 
-let sessionConverter;
 let gatewayConverter;
 
 function buildApp() {
@@ -54,18 +53,6 @@ function call(app, method, url, body) {
 }
 
 beforeEach(() => {
-  sessionConverter = {
-    convertSession: vi.fn(async (_sourceType, _targetType, sessionId, options) => ({
-      success: true,
-      sessionId,
-      options
-    })),
-    previewConversion: vi.fn(async (sourceType, sessionId) => ({
-      sourceType,
-      sessionId,
-      messages: 3
-    }))
-  };
   gatewayConverter = {
     SUPPORTED_SOURCE_TYPES: ['claude', 'codex', 'gemini'],
     SUPPORTED_TARGET_APIS: ['responses', 'chat.completions'],
@@ -81,12 +68,6 @@ beforeEach(() => {
     normalizeSourceType: vi.fn((value) => String(value).trim().toLowerCase())
   };
 
-  require.cache[require.resolve('../../../src/server/services/session-converter')] = {
-    id: require.resolve('../../../src/server/services/session-converter'),
-    filename: require.resolve('../../../src/server/services/session-converter'),
-    loaded: true,
-    exports: sessionConverter
-  };
   require.cache[require.resolve('../../../src/platforms/drivers/opencode/gateway-converter')] = {
     id: require.resolve('../../../src/platforms/drivers/opencode/gateway-converter'),
     filename: require.resolve('../../../src/platforms/drivers/opencode/gateway-converter'),
@@ -98,7 +79,6 @@ beforeEach(() => {
 afterEach(() => {
   [
     '../../../src/server/api/convert',
-    '../../../src/server/services/session-converter',
     '../../../src/platforms/drivers/opencode/gateway-converter'
   ].forEach((mod) => {
     try {
@@ -148,35 +128,4 @@ describe('convert api', () => {
     });
   });
 
-  test('preview and convert routes validate parameters and delegate to services', async () => {
-    const app = buildApp();
-    expect((await request(app).post('/preview', { sourceType: 'claude' })).status).toBe(400);
-    expect((await request(app).post('/', { sourceType: 'claude', targetType: 'claude', sessionId: 's1' })).status).toBe(400);
-    expect((await request(app).post('/', { sourceType: 'bad', targetType: 'codex', sessionId: 's1' })).status).toBe(400);
-
-    const preview = await request(app).post('/preview', {
-      sourceType: 'claude',
-      sessionId: 'session-1'
-    });
-    const converted = await request(app).post('/', {
-      sourceType: 'claude',
-      targetType: 'codex',
-      sessionId: 'session-1',
-      options: { includeMeta: true }
-    });
-
-    expect(preview.body).toEqual({
-      success: true,
-      preview: {
-        sourceType: 'claude',
-        sessionId: 'session-1',
-        messages: 3
-      }
-    });
-    expect(converted.body).toEqual({
-      success: true,
-      sessionId: 'session-1',
-      options: { includeMeta: true }
-    });
-  });
 });

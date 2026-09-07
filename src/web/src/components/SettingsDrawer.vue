@@ -579,94 +579,20 @@
                   </div>
 
                   <div class="ports-grid">
-                    <!-- Web UI 端口 -->
-                    <div class="port-field">
-                      <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">Web UI 端口</n-text>
+                    <div
+                      v-for="port in configuredPorts"
+                      :key="port.key"
+                      class="port-field"
+                    >
+                      <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">
+                        {{ port.label }}
+                      </n-text>
                       <n-input-number
-                        v-model:value="ports.webUI"
+                        v-model:value="ports[port.key]"
                         :min="1024"
                         :max="65535"
                         :show-button="false"
-                        placeholder="19999"
-                      >
-                        <template #prefix>
-                          <n-icon><CheckmarkCircleOutline /></n-icon>
-                        </template>
-                      </n-input-number>
-                    </div>
-
-                    <!-- Claude 代理端口 -->
-                    <div class="port-field">
-                      <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">Claude 代理</n-text>
-                      <n-input-number
-                        v-model:value="ports.proxy"
-                        :min="1024"
-                        :max="65535"
-                        :show-button="false"
-                        placeholder="20088"
-                      >
-                        <template #prefix>
-                          <n-icon><OptionsOutline /></n-icon>
-                        </template>
-                      </n-input-number>
-                    </div>
-
-                    <!-- Codex 代理端口 -->
-                    <div class="port-field">
-                      <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">Codex 代理</n-text>
-                      <n-input-number
-                        v-model:value="ports.codexProxy"
-                        :min="1024"
-                        :max="65535"
-                        :show-button="false"
-                        placeholder="20089"
-                      >
-                        <template #prefix>
-                          <n-icon><OptionsOutline /></n-icon>
-                        </template>
-                      </n-input-number>
-                    </div>
-
-                    <!-- Gemini 代理端口 -->
-                    <div class="port-field">
-                      <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">Gemini 代理</n-text>
-                      <n-input-number
-                        v-model:value="ports.geminiProxy"
-                        :min="1024"
-                        :max="65535"
-                        :show-button="false"
-                        placeholder="20090"
-                      >
-                        <template #prefix>
-                          <n-icon><OptionsOutline /></n-icon>
-                        </template>
-                      </n-input-number>
-                    </div>
-
-                    <!-- OpenCode 代理端口 -->
-                    <div class="port-field">
-                      <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">OpenCode 代理</n-text>
-                      <n-input-number
-                        v-model:value="ports.opencodeProxy"
-                        :min="1024"
-                        :max="65535"
-                        :show-button="false"
-                        placeholder="20091"
-                      >
-                        <template #prefix>
-                          <n-icon><OptionsOutline /></n-icon>
-                        </template>
-                      </n-input-number>
-                    </div>
-
-                    <div class="port-field">
-                      <n-text depth="3" style="font-size: 13px; margin-bottom: 6px;">OMP 托管端口</n-text>
-                      <n-input-number
-                        v-model:value="ports.ompProxy"
-                        :min="1024"
-                        :max="65535"
-                        :show-button="false"
-                        placeholder="20092"
+                        :placeholder="String(port.defaultPort)"
                       >
                         <template #prefix>
                           <n-icon><OptionsOutline /></n-icon>
@@ -1323,22 +1249,18 @@ const showChannels = ref(true)
 const showLogs = ref(true)
 const showChannelBalance = ref(false)
 
-// 端口配置
-const ports = ref({
-  webUI: 19999,
-  proxy: 20088,
-  codexProxy: 20089,
-  geminiProxy: 20090,
-  opencodeProxy: 20091,
-  ompProxy: 20092
-})
-const originalPorts = ref({
-  webUI: 19999,
-  proxy: 20088,
-  codexProxy: 20089,
-  geminiProxy: 20090,
-  opencodeProxy: 20091,
-  ompProxy: 20092
+const ports = ref({ webUI: 19999 })
+const originalPorts = ref({ webUI: 19999 })
+const configuredPorts = computed(() => {
+  const catalogPorts = platformStore.all
+    .filter(platform => platform.portKey && Number.isFinite(platform.defaultPort))
+    .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+    .map(platform => ({
+      key: platform.portKey,
+      label: platform.portLabel || platform.label || platform.key,
+      defaultPort: platform.defaultPort
+    }))
+  return [{ key: 'webUI', label: 'Web UI', defaultPort: 19999 }, ...catalogPorts]
 })
 const savingPorts = ref(false)
 const enabledCliPlatforms = ref([...DEFAULT_ENABLED_CLI_PLATFORMS])
@@ -1745,21 +1667,15 @@ const modelMetaFilter = ref('all')
 const showAddModelMetaModal = ref(false)
 const newModelMetaForm = ref(createDefaultNewModelMeta())
 const builtInModelIds = ref(new Set())
-const defaultSpeedTestModels = ref({
-  claude: '',
-  codex: '',
-  gemini: ''
-})
-const originalDefaultSpeedTestModels = ref({
-  claude: '',
-  codex: '',
-  gemini: ''
-})
-const speedTestToolRows = [
-  { key: 'claude', label: 'Claude Code' },
-  { key: 'codex', label: 'Codex' },
-  { key: 'gemini', label: 'Gemini CLI' }
-]
+const defaultSpeedTestModels = ref({})
+const originalDefaultSpeedTestModels = ref({})
+const speedTestToolRows = computed(() => Object.keys(defaultSpeedTestModels.value).map(key => {
+  const platform = typeof platformStore.get === 'function' ? platformStore.get(key) : null
+  return {
+    key,
+    label: platform?.label || platform?.title || key
+  }
+}))
 
 const expandedModels = ref(new Set())
 const toggleModelExpand = (modelId) => {
@@ -1877,7 +1793,7 @@ const filteredModelMeta = computed(() => {
 function getModelProviderById(modelId, meta = modelMetaTable.value[modelId]) {
   const id = String(modelId || '').trim().toLowerCase()
   const explicitToolType = Array.isArray(meta?.toolTypes)
-    ? ['claude', 'codex', 'gemini'].find(toolType => meta.toolTypes.includes(toolType))
+    ? meta.toolTypes.find(toolType => typeof toolType === 'string' && toolType.trim())
     : ''
   if (explicitToolType) return explicitToolType
   if (id.startsWith('claude-')) return 'claude'
@@ -1888,11 +1804,7 @@ function getModelProviderById(modelId, meta = modelMetaTable.value[modelId]) {
 
 
 const speedTestModelOptions = computed(() => {
-  const grouped = {
-    claude: [],
-    codex: [],
-    gemini: []
-  }
+  const grouped = Object.fromEntries(speedTestToolRows.value.map(tool => [tool.key, []]))
 
   for (const [modelId, meta] of Object.entries(modelMetaTable.value || {})) {
     if (!meta || typeof meta !== 'object' || !meta.limit || !meta.pricing) continue
@@ -1915,7 +1827,7 @@ function normalizeDefaultSpeedTestModelSelection() {
   const next = { ...defaultSpeedTestModels.value }
   let changed = false
 
-  for (const tool of speedTestToolRows) {
+  for (const tool of speedTestToolRows.value) {
     const options = speedTestModelOptions.value[tool.key] || []
     if (options.length === 0) continue
     const optionValues = new Set(options.map(item => item.value))
@@ -1965,13 +1877,9 @@ async function loadModelMetadata() {
       lastUpdated: metadataSource.lastUpdated || ''
     }
     modelMetaTable.value = data.models || {}
-    modelMetaOverrides.value = data.overrides || {}
-    builtInModelIds.value = new Set(data.builtinModelIds || [])
-    defaultSpeedTestModels.value = {
-      claude: typeof data.defaultSpeedTestModels?.claude === 'string' ? data.defaultSpeedTestModels.claude : '',
-      codex: typeof data.defaultSpeedTestModels?.codex === 'string' ? data.defaultSpeedTestModels.codex : '',
-      gemini: typeof data.defaultSpeedTestModels?.gemini === 'string' ? data.defaultSpeedTestModels.gemini : ''
-    }
+    defaultSpeedTestModels.value = Object.fromEntries(
+      Object.entries(data.defaultSpeedTestModels || {}).filter(([, value]) => typeof value === 'string')
+    )
     normalizeDefaultSpeedTestModelSelection()
     originalDefaultSpeedTestModels.value = { ...defaultSpeedTestModels.value }
     modelMetaEdits.value = {}
@@ -2060,17 +1968,12 @@ async function handleDeleteModelMeta(modelId) {
   }
 }
 const portsChanged = computed(() => {
-  return ports.value.webUI !== originalPorts.value.webUI ||
-    ports.value.proxy !== originalPorts.value.proxy ||
-    ports.value.codexProxy !== originalPorts.value.codexProxy ||
-    ports.value.geminiProxy !== originalPorts.value.geminiProxy ||
-    ports.value.opencodeProxy !== originalPorts.value.opencodeProxy ||
-    ports.value.ompProxy !== originalPorts.value.ompProxy ||
+  const portChanged = Object.keys(ports.value).some(key => ports.value[key] !== originalPorts.value[key])
+  return portChanged ||
     advancedSettings.value.maxLogs !== originalAdvancedSettings.value.maxLogs ||
     advancedSettings.value.statsInterval !== originalAdvancedSettings.value.statsInterval ||
     advancedSettings.value.enableSessionBinding !== originalAdvancedSettings.value.enableSessionBinding
 })
-
 // 菜单项配置
 const menuItems = computed(() => [
   {
@@ -2248,17 +2151,15 @@ async function handleSessionBindingChange(value) {
 // 加载端口和高级配置
 async function loadPortsConfig() {
   try {
+    if (typeof platformStore.load === 'function') await platformStore.load()
     const response = await fetch('/api/config/advanced')
     if (response.ok) {
       const data = await response.json()
-      ports.value = {
-        webUI: data.ports?.webUI || 19999,
-        proxy: data.ports?.proxy || 20088,
-        codexProxy: data.ports?.codexProxy || 20089,
-        geminiProxy: data.ports?.geminiProxy || 20090,
-        opencodeProxy: data.ports?.opencodeProxy || 20091,
-        ompProxy: data.ports?.ompProxy || 20092
+      const nextPorts = {}
+      for (const port of configuredPorts.value) {
+        nextPorts[port.key] = data.ports?.[port.key] || port.defaultPort
       }
+      ports.value = nextPorts
       originalPorts.value = { ...ports.value }
 
       advancedSettings.value = {
@@ -2520,7 +2421,7 @@ async function handleDisableAutoStart() {
 
 // 加载设置
 onMounted(() => {
-  refreshBrowserNotificationPermission()
+  if (typeof platformStore.load === 'function') platformStore.load()
   loadPanelSettings()
   loadSecurityStatus()
   loadModelMetadata()

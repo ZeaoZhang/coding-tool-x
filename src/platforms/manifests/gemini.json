@@ -6,6 +6,9 @@
   "iconToken": "gemini",
   "color": "#a855f7",
   "defaultVisible": true,
+  "defaultEnabled": false,
+  "sortOrder": 50,
+  "modelConfig": { "catalogKey": "gemini" },
   "auth": {
     "modes": ["api_key", "oauth", "none"],
     "oauth": { "adapter": "gemini", "policy": "single-enabled", "quota": "gemini" }

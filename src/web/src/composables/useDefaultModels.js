@@ -43,7 +43,7 @@ const FALLBACK_MODELS = {
   omp: []
 };
 
-const TOOL_TYPES = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
+const TOOL_TYPES = Object.freeze(Object.keys(FALLBACK_MODELS))
 
 function normalizeModelList(models = []) {
   const seen = new Set();
@@ -69,32 +69,38 @@ function classifyToolTypeByModelId(modelId) {
 }
 
 export function buildAllModelsFromMetadata(modelsMap, explicitToolModels = {}) {
-  const grouped = Object.fromEntries(TOOL_TYPES.map(toolType => [toolType, []]));
-  const hasExplicitGroups = TOOL_TYPES.some(toolType => (
-    Array.isArray(explicitToolModels?.[toolType])
-  ));
+  const declaredTypes = Object.values(modelsMap || {}).flatMap(meta => (
+    Array.isArray(meta?.toolTypes) ? meta.toolTypes : []
+  ))
+  const toolTypes = [...new Set([
+    ...TOOL_TYPES,
+    ...Object.keys(explicitToolModels || {}),
+    ...declaredTypes
+  ])]
+  const grouped = Object.fromEntries(toolTypes.map(toolType => [toolType, []]))
+  const hasExplicitGroups = Object.keys(explicitToolModels || {}).length > 0
 
   if (hasExplicitGroups) {
-    for (const toolType of TOOL_TYPES) {
-      grouped[toolType] = normalizeModelList(explicitToolModels[toolType] || []);
+    for (const toolType of toolTypes) {
+      grouped[toolType] = normalizeModelList(explicitToolModels[toolType] || [])
     }
-    return grouped;
+    return grouped
   }
 
   for (const [modelId, meta] of Object.entries(modelsMap || {})) {
-    if (!meta || typeof meta !== 'object' || !meta.limit || !meta.pricing) continue;
+    if (!meta || typeof meta !== 'object' || !meta.limit || !meta.pricing) continue
     const declaredToolTypes = Array.isArray(meta.toolTypes)
       ? meta.toolTypes
-      : [classifyToolTypeByModelId(modelId)];
+      : [classifyToolTypeByModelId(modelId)]
     for (const toolType of declaredToolTypes) {
-      if (TOOL_TYPES.includes(toolType)) grouped[toolType].push(modelId);
+      if (grouped[toolType]) grouped[toolType].push(modelId)
     }
   }
 
-  return Object.fromEntries(TOOL_TYPES.map(toolType => [
+  return Object.fromEntries(toolTypes.map(toolType => [
     toolType,
     normalizeModelList(grouped[toolType])
-  ]));
+  ]))
 }
 
 function cloneFallbackModels() {
@@ -138,24 +144,22 @@ async function loadDefaultModels(options = {}) {
       defaultModels.value = data.defaultModels;
 
       try {
-        const metadataResponse = await fetch('/api/settings/model-settings');
+        const metadataResponse = await fetch('/api/settings/model-settings')
         if (!metadataResponse.ok) {
-          throw new Error(`HTTP ${metadataResponse.status}: ${metadataResponse.statusText}`);
+          throw new Error(`HTTP ${metadataResponse.status}: ${metadataResponse.statusText}`)
         }
-        const metadataData = await metadataResponse.json();
+        const metadataData = await metadataResponse.json()
         const metadataModels = buildAllModelsFromMetadata(
           metadataData.models || {},
           metadataData.toolModels || {}
-        );
-        allModels.value = Object.fromEntries(TOOL_TYPES.map(toolType => [
+        )
+        allModels.value = Object.fromEntries(Object.entries(metadataModels).map(([toolType, models]) => [
           toolType,
-          metadataModels[toolType].length > 0
-            ? metadataModels[toolType]
-            : [...(FALLBACK_MODELS[toolType] || [])]
-        ]));
+          models.length > 0 ? models : [...(FALLBACK_MODELS[toolType] || [])]
+        ]))
       } catch (metadataError) {
-        console.warn('Failed to load model metadata list, using fallback:', metadataError);
-        allModels.value = cloneFallbackModels();
+        console.warn('Failed to load model metadata list, using fallback:', metadataError)
+        allModels.value = cloneFallbackModels()
       }
     } catch (error) {
       console.warn('Failed to load default models, using fallback:', error);

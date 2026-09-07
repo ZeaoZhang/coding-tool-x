@@ -20,6 +20,8 @@ function writeJson(filePath, value) {
 function createGeminiSession(projectHash, fileName, session) {
   const sessionPath = path.join(geminiDir, 'tmp', projectHash, 'chats', fileName);
   writeJson(sessionPath, session);
+  const updatedAt = new Date(session.lastUpdated);
+  fs.utimesSync(sessionPath, updatedAt, updatedAt);
   return sessionPath;
 }
 
@@ -35,6 +37,8 @@ function createGeminiJsonlSession(storageName, fileName, header, records = [], p
     [header, ...records].map(record => JSON.stringify(record)).join('\n') + '\n',
     'utf8'
   );
+  const updatedAt = records.find(record => record.$set?.lastUpdated)?.$set?.lastUpdated || header.lastUpdated;
+  fs.utimesSync(sessionPath, new Date(updatedAt), new Date(updatedAt));
   return sessionPath;
 }
 
@@ -340,7 +344,7 @@ describe('gemini-sessions project discovery and querying', () => {
         sessionId: 'older-session',
         projectHash,
         firstMessage: 'Find the needle in this message',
-        lastUpdated: '2026-03-17T09:05:00.000Z',
+        lastUpdated: new Date('2026-03-17T09:05:00.000Z').getTime(),
         matches: [
           {
             messageIndex: 0,

@@ -33,6 +33,20 @@ export const LEGACY_PLATFORM_PREFIXES = Object.freeze({
   omp: '/omp'
 })
 
+let platformApiPrefixes = { ...LEGACY_PLATFORM_PREFIXES }
+
+export function configurePlatformApiPrefixes(platforms = []) {
+  platformApiPrefixes = { ...LEGACY_PLATFORM_PREFIXES }
+  if (!Array.isArray(platforms)) return platformApiPrefixes
+  for (const platform of platforms) {
+    const key = normalizePlatformKey(platform?.key)
+    if (!key || Object.prototype.hasOwnProperty.call(LEGACY_PLATFORM_PREFIXES, key)) continue
+    const prefix = String(platform?.apiPrefix || '').trim().replace(/^\/+|\/+$/g, '')
+    platformApiPrefixes[key] = prefix ? `/${encodeURIComponent(prefix)}` : `/platforms/${encodeURIComponent(key)}`
+  }
+  return platformApiPrefixes
+}
+
 export function normalizePlatformKey(platform) {
   return String(platform || '').trim().toLowerCase()
 }
@@ -58,7 +72,7 @@ export function createPlatformApiError(platform, code = 'not_found') {
 export function getPlatformApiPrefix(platform = 'claude') {
   const key = normalizePlatformKey(platform)
   if (!key) throw createPlatformApiError(platform)
-  if (isLegacyPlatformKey(key)) return LEGACY_PLATFORM_PREFIXES[key]
+  if (Object.prototype.hasOwnProperty.call(platformApiPrefixes, key)) return platformApiPrefixes[key]
   return `/platforms/${encodeURIComponent(key)}`
 }
 

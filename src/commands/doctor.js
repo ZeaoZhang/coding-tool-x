@@ -6,6 +6,7 @@ const { promisify } = require('util');
 const { loadConfig, getConfigFilePath } = require('../config/loader');
 const { PATHS, NATIVE_PATHS } = require('../config/paths');
 const { isPortInUse } = require('../utils/port-helper');
+const { getPlatformCatalog } = require('../server/services/platform-catalog');
 
 const execAsync = promisify(exec);
 
@@ -176,14 +177,11 @@ async function checkPorts() {
 }
 
 function buildPortCheckMap(config = {}) {
-  return {
-    'Web UI': config.ports?.webUI || 19999,
-    'Claude Proxy': config.ports?.proxy || 20088,
-    'Codex Proxy': config.ports?.codexProxy || 20089,
-    'Gemini Proxy': config.ports?.geminiProxy || 20090,
-    'OpenCode Proxy': config.ports?.opencodeProxy || 20091,
-    'OMP Proxy': config.ports?.ompProxy || 20092
-  };
+  const catalog = getPlatformCatalog();
+  return Object.fromEntries(catalog.ports().map(entry => [
+    entry.platform ? `${entry.platform === 'claude' ? 'Claude' : (catalog.get(entry.platform)?.label || entry.platform)} Proxy` : entry.label,
+    config.ports?.[entry.key] || entry.defaultPort
+  ]));
 }
 
 /**

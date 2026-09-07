@@ -1,14 +1,12 @@
 'use strict';
 
-const manifests = [
-  require('./manifests/claude.json'),
-  require('./manifests/codex.json'),
-  require('./manifests/gemini.json'),
-  require('./manifests/omp.json')
-];
 const { readAllNativeOAuth } = require('./native-oauth-adapters');
 const oauthStore = require('./oauth-credentials-service');
 const { getOmpAuthProviderSnapshot } = require('./drivers/omp/auth-providers');
+
+function getRegistry() {
+  return require('./registry').createPlatformRegistry();
+}
 
 function safeRef(value = {}) {
   return {
@@ -114,17 +112,36 @@ function scanOmp() {
 }
 
 const adapters = Object.freeze({
-  claude: { scan: () => scanNative('claude'), quota: (ref) => oauthStore.fetchCredentialUsage('claude', ref.credentialId) },
-  codex: { scan: () => scanNative('codex'), quota: (ref) => oauthStore.fetchCredentialUsage('codex', ref.credentialId) },
-  gemini: { scan: () => scanNative('gemini'), quota: (ref) => oauthStore.fetchCredentialUsage('gemini', ref.credentialId) },
-  omp: { scan: scanOmp, quota: async () => ({ status: 'unavailable', error: 'OMP native OAuth quota is unavailable' }) }
+  claude: {
+    scan: () => scanNative('claude'),
+    quota: (ref) => oauthStore.fetchCredentialUsage('claude', ref.credentialId),
+    channelServicePath: './drivers/claude/channels-implementation'
+  },
+  codex: {
+    scan: () => scanNative('codex'),
+    quota: (ref) => oauthStore.fetchCredentialUsage('codex', ref.credentialId),
+    channelServicePath: './drivers/codex/channels-implementation'
+  },
+  gemini: {
+    scan: () => scanNative('gemini'),
+    quota: (ref) => oauthStore.fetchCredentialUsage('gemini', ref.credentialId),
+    channelServicePath: './drivers/gemini/channels-implementation'
+  },
+  omp: {
+    scan: scanOmp,
+    quota: async () => ({ status: 'unavailable', error: 'OMP native OAuth quota is unavailable' }),
+    channelServicePath: './drivers/omp/channels-implementation'
+  }
 });
 
-const manifestByKey = new Map(manifests.map(manifest => [manifest.key, manifest]));
-const keyByAdapter = new Map(Object.entries(adapters).map(([key]) => [key, key]));
-
+function getOAuthManifests() {
+  return getRegistry().list({ enabledOnly: false }).filter(manifest => (
+    manifest.auth?.oauth?.adapter && adapters[manifest.auth.oauth.adapter]
+  ));
+}
 function getChannelAuthAdapter(platform) {
-  const manifest = manifestByKey.get(String(platform || '').trim().toLowerCase());
+  const key = String(platform || '').trim().toLowerCase();
+  const manifest = getOAuthManifests().find(item => item.key === key);
   const adapterId = manifest?.auth?.oauth?.adapter;
   const adapter = adapterId ? adapters[adapterId] : null;
   if (!adapter) return null;
@@ -133,13 +150,13 @@ function getChannelAuthAdapter(platform) {
     platform: manifest.key,
     adapterId,
     policy: manifest.auth.oauth.policy,
-    quotaId: manifest.auth.oauth.quota || null,
-    channelServicePath: `./drivers/${manifest.key}/channels-implementation`
+    quotaId: manifest.auth.oauth.quota || null
   };
 }
 
 function listChannelAuthPlatforms() {
-  return [...keyByAdapter.keys()].filter(platform => getChannelAuthAdapter(platform));
+  return getOAuthManifests().map(manifest => manifest.key);
 }
+
 
 module.exports = { getChannelAuthAdapter, listChannelAuthPlatforms, safeRef };

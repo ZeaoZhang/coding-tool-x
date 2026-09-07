@@ -105,6 +105,43 @@ function createPlatformRegistry({ builtIns, userFile, fsImpl = fs, logger, platf
   function getStored(key) {
     return definitions.get(String(key || '').trim().toLowerCase()) || null;
   }
+  function getDefaultPlatforms({ enabledOnly = true } = {}) {
+    return [...definitions.values()]
+      .filter(platform => !enabledOnly || platform.defaultEnabled !== false)
+      .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+      .map(clone);
+  }
+
+  function toPublicDefinition(platform) {
+    const capabilities = {};
+    for (const [capability, driverId] of Object.entries(platform.capabilities || {})) {
+      capabilities[capability] = driverId !== 'unsupported';
+    }
+    const result = {
+      key: platform.key,
+      label: platform.label,
+      title: platform.title,
+      command: platform.command,
+      iconToken: platform.iconToken,
+      color: platform.color,
+      defaultVisible: platform.defaultVisible,
+      defaultEnabled: platform.defaultEnabled !== false,
+      sortOrder: platform.sortOrder || 0,
+      portKey: platform.portKey || null,
+      defaultPort: platform.defaultPort || null,
+      portLabel: platform.portLabel || null,
+      apiPrefix: platform.api?.prefix || null,
+      modelCatalogKey: platform.modelConfig?.catalogKey || platform.key,
+      capabilities
+    };
+    const resourceTypes = publicResourceTypes(platform.resourceTypes);
+    if (resourceTypes) result.resourceTypes = resourceTypes;
+    if (typeof platform.promptLabel === 'string' && platform.promptLabel.trim()) {
+      result.promptLabel = platform.promptLabel;
+    }
+    return result;
+  }
+
 
   function resolve(key) {
     const platform = getStored(key);
@@ -114,8 +151,13 @@ function createPlatformRegistry({ builtIns, userFile, fsImpl = fs, logger, platf
   return {
     resolve,
     list({ enabledOnly = false } = {}) {
-      const platforms = [...definitions.values()].filter(platform => !enabledOnly || platform.enabled !== false);
+      const platforms = [...definitions.values()]
+        .filter(platform => !enabledOnly || platform.enabled !== false)
+        .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
       return clone(platforms);
+    },
+    listDefaults({ enabledOnly = true } = {}) {
+      return getDefaultPlatforms({ enabledOnly });
     },
     getCapability(key, capability) {
       const platform = getStored(key);
@@ -128,27 +170,7 @@ function createPlatformRegistry({ builtIns, userFile, fsImpl = fs, logger, platf
     },
     getPublicDefinition(key) {
       const platform = getStored(key);
-      if (!platform) return null;
-      const capabilities = {};
-      for (const [capability, driverId] of Object.entries(platform.capabilities || {})) {
-        capabilities[capability] = driverId !== 'unsupported';
-      }
-      const result = {
-        key: platform.key,
-        label: platform.label,
-        title: platform.title,
-        command: platform.command,
-        iconToken: platform.iconToken,
-        color: platform.color,
-        defaultVisible: platform.defaultVisible,
-        capabilities
-      };
-      const resourceTypes = publicResourceTypes(platform.resourceTypes);
-      if (resourceTypes) result.resourceTypes = resourceTypes;
-      if (typeof platform.promptLabel === 'string' && platform.promptLabel.trim()) {
-        result.promptLabel = platform.promptLabel;
-      }
-      return clone(result);
+      return platform ? clone(toPublicDefinition(platform)) : null;
     },
     diagnostics() {
       return clone(diagnostics);

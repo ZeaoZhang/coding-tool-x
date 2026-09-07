@@ -131,6 +131,13 @@ test('public definitions expose support flags without internal driver configurat
     iconToken: 'terminal',
     color: '#123456',
     defaultVisible: true,
+    defaultEnabled: true,
+    sortOrder: 0,
+    portKey: 'demoProxy',
+    defaultPort: 18080,
+    portLabel: null,
+    apiPrefix: null,
+    modelCatalogKey: 'demo-cli',
     promptLabel: 'Demo prompt',
     resourceTypes: { skills: true, commands: false },
     capabilities: {
@@ -281,6 +288,13 @@ test('public definitions do not expose internal project resource configuration',
     key: 'codex',
     label: 'Codex',
     command: 'codex',
+    defaultEnabled: true,
+    sortOrder: 0,
+    portKey: null,
+    defaultPort: null,
+    portLabel: null,
+    apiPrefix: null,
+    modelCatalogKey: 'codex',
     capabilities: {}
   });
   expect(JSON.stringify(registry.getPublicDefinition('codex'))).not.toContain('projectResources');

@@ -28,12 +28,8 @@ const DEFAULT_CONFIG = {
   modelDiscovery: {
     useV1ModelsEndpoint: false
   },
-  defaultModels: modelMetadataConfig.defaultModels || { claude: [], codex: [], gemini: [] },
-  defaultSpeedTestModels: modelMetadataConfig.defaultSpeedTestModels || {
-    claude: 'claude-haiku-4-5',
-    codex: 'gpt-5.4',
-    gemini: 'gemini-2.5-pro'
-  },
+  defaultModels: modelMetadataConfig.defaultModels || {},
+  defaultSpeedTestModels: modelMetadataConfig.defaultSpeedTestModels || {},
   pricing: {
     claude: {
       mode: 'auto',

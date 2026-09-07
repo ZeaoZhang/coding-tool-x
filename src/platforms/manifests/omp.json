@@ -6,6 +6,9 @@
   "iconToken": "omp",
   "color": "#0f9f9a",
   "defaultVisible": true,
+  "defaultEnabled": true,
+  "sortOrder": 40,
+  "modelConfig": { "catalogKey": "codex" },
   "auth": {
     "modes": ["api_key", "oauth", "none"],
     "oauth": { "adapter": "omp", "policy": "mixed" }

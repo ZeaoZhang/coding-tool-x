@@ -11,6 +11,13 @@ const PUBLIC_FIELDS = Object.freeze([
   'iconToken',
   'color',
   'defaultVisible',
+  'defaultEnabled',
+  'sortOrder',
+  'portKey',
+  'defaultPort',
+  'portLabel',
+  'apiPrefix',
+  'modelCatalogKey',
   'promptLabel',
   'resourceTypes'
 ]);
@@ -43,10 +50,15 @@ function toPublicDefinition(definition) {
       if (resourceTypes) result.resourceTypes = resourceTypes;
       continue;
     }
-    if (field === 'promptLabel') {
-      if (typeof definition.promptLabel === 'string' && definition.promptLabel.trim()) {
-        result.promptLabel = definition.promptLabel;
-      }
+    if (field === 'apiPrefix') {
+      const apiPrefix = definition.apiPrefix ?? definition.api?.prefix;
+      if (apiPrefix !== undefined) result.apiPrefix = apiPrefix || null;
+      continue;
+    }
+    if (field === 'modelCatalogKey') {
+      result.modelCatalogKey = definition.modelCatalogKey
+        || definition.modelConfig?.catalogKey
+        || definition.key;
       continue;
     }
     if (definition[field] !== undefined) result[field] = definition[field];
