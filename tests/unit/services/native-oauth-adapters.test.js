@@ -10,15 +10,12 @@ let pathsStub;
 let claudeSettings;
 let geminiEnv;
 let geminiSettings;
-let opencodeConfig;
 let keychainStore;
 let nativeAdapters;
 let syncCodexUserEnvironmentMock;
-let clearManagedChannelConfigMock;
 let getProxyStatusMock;
 let getCodexProxyStatusMock;
 let getGeminiProxyStatusMock;
-let getOpenCodeProxyStatusMock;
 let getOmpProxyStatusMock;
 let getOmpAuthProviderSnapshotMock;
 
@@ -53,13 +50,6 @@ beforeEach(() => {
       }
     }
   };
-  opencodeConfig = {
-    model: 'anthropic/sonnet',
-    provider: {
-      openai: { __ctx_managed__: true },
-      anthropic: {}
-    }
-  };
 
   pathsStub = {
     PATHS: {
@@ -83,9 +73,6 @@ beforeEach(() => {
         oauthCredentialsLegacy: path.join(testDir, '.gemini', 'oauth-credentials.json'),
         googleAccounts: path.join(testDir, '.gemini', 'google-accounts.json')
       },
-      opencode: {
-        auth: path.join(testDir, '.opencode', 'auth.json')
-      }
     }
   };
 
@@ -102,13 +89,9 @@ beforeEach(() => {
   }), 'utf8');
 
   syncCodexUserEnvironmentMock = vi.fn();
-  clearManagedChannelConfigMock = vi.fn(() => {
-    opencodeConfig.provider = {};
-  });
   getProxyStatusMock = vi.fn(() => ({ running: false }));
   getCodexProxyStatusMock = vi.fn(() => ({ running: false }));
   getGeminiProxyStatusMock = vi.fn(() => ({ running: false }));
-  getOpenCodeProxyStatusMock = vi.fn(() => ({ running: false }));
   getOmpProxyStatusMock = vi.fn(() => ({ running: false }));
   getOmpAuthProviderSnapshotMock = vi.fn(() => ({
     available: true,
@@ -158,20 +141,6 @@ beforeEach(() => {
     }
   };
 
-  require.cache[require.resolve('../../../src/platforms/drivers/opencode/native-config-implementation')] = {
-    id: require.resolve('../../../src/platforms/drivers/opencode/native-config-implementation'),
-    filename: require.resolve('../../../src/platforms/drivers/opencode/native-config-implementation'),
-    loaded: true,
-    exports: {
-      clearManagedChannelConfig: clearManagedChannelConfigMock,
-      selectConfigPath: vi.fn(() => path.join(testDir, '.opencode', 'config.json')),
-      readConfig: vi.fn(() => JSON.parse(JSON.stringify(opencodeConfig))),
-      writeConfig: vi.fn((configPath, value) => {
-        opencodeConfig = JSON.parse(JSON.stringify(value));
-        writeJson(configPath, value);
-      })
-    }
-  };
 
   require.cache[require.resolve('../../../src/platforms/drivers/codex/env-manager')] = {
     id: require.resolve('../../../src/platforms/drivers/codex/env-manager'),
@@ -234,12 +203,6 @@ beforeEach(() => {
     loaded: true,
     exports: { getGeminiProxyStatus: getGeminiProxyStatusMock }
   };
-  require.cache[require.resolve('../../../src/platforms/drivers/opencode/proxy-implementation')] = {
-    id: require.resolve('../../../src/platforms/drivers/opencode/proxy-implementation'),
-    filename: require.resolve('../../../src/platforms/drivers/opencode/proxy-implementation'),
-    loaded: true,
-    exports: { getOpenCodeProxyStatus: getOpenCodeProxyStatusMock }
-  };
   require.cache[require.resolve('../../../src/platforms/drivers/omp/proxy-implementation')] = {
     id: require.resolve('../../../src/platforms/drivers/omp/proxy-implementation'),
     filename: require.resolve('../../../src/platforms/drivers/omp/proxy-implementation'),
@@ -274,14 +237,12 @@ afterEach(() => {
     '../../../src/platforms/drivers/claude/native-config-implementation',
     '../../../src/platforms/drivers/codex/native-config-implementation',
     '../../../src/platforms/drivers/gemini/native-config-implementation',
-    '../../../src/platforms/drivers/opencode/native-config-implementation',
     '../../../src/platforms/drivers/codex/env-manager',
     '../../../src/server/services/native-keychain',
     '../../../src/server/services/oauth-utils',
     '../../../src/platforms/drivers/claude/proxy-implementation',
     '../../../src/platforms/drivers/codex/proxy-implementation',
     '../../../src/platforms/drivers/gemini/proxy-implementation',
-    '../../../src/platforms/drivers/opencode/proxy-implementation',
     '../../../src/platforms/drivers/omp/proxy-implementation',
     '../../../src/platforms/drivers/omp/native-config-implementation',
     '../../../src/platforms/drivers/omp/auth-providers'
@@ -435,106 +396,6 @@ describe('native-oauth-adapters high level flows', () => {
     }));
   });
 
-  test('applies OpenCode OAuth and sorts all credentials by active provider', () => {
-    writeJson(pathsStub.NATIVE_PATHS.opencode.auth, {
-      openai: {
-        type: 'oauth',
-        access: 'openai-token',
-        refresh: 'openai-refresh'
-      },
-      anthropic: {
-        type: 'oauth',
-        access: 'anthropic-token',
-        refresh: 'anthropic-refresh'
-      }
-    });
-    const configPath = path.join(testDir, '.opencode', 'config.json');
-    writeJson(configPath, opencodeConfig);
-
-    const applyResult = nativeAdapters.applyOAuthCredential('opencode', {
-      providerId: 'openai',
-      accessToken: 'new-openai-token',
-      refreshToken: 'new-refresh'
-    });
-    let allCredentials = nativeAdapters.readAllNativeOAuth('opencode');
-    let primaryCredential = nativeAdapters.readNativeOAuth('opencode');
-    const state = nativeAdapters.inspectTool('opencode');
-
-    expect(applyResult).toEqual({ storage: 'auth-file' });
-    expect(clearManagedChannelConfigMock).not.toHaveBeenCalled();
-    expect(readJson(pathsStub.NATIVE_PATHS.opencode.auth).openai.access).toBe('new-openai-token');
-    expect(allCredentials).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        providerId: 'openai',
-        accessToken: 'new-openai-token'
-      }),
-      expect.objectContaining({
-        providerId: 'anthropic',
-        accessToken: 'anthropic-token'
-      })
-    ]));
-    expect(primaryCredential).toEqual(expect.objectContaining({
-      providerId: 'anthropic',
-      accessToken: 'anthropic-token'
-    }));
-    expect(state).toEqual(expect.objectContaining({
-      mode: 'mixed',
-      oauthPresent: true,
-      channelConfigured: true
-    }));
-
-    writeJson(pathsStub.NATIVE_PATHS.opencode.auth, {
-      openai: {
-        type: 'oauth',
-        access: 'openai-token',
-        refresh: 'openai-refresh'
-      },
-      anthropic: {
-        type: 'oauth',
-        access: 'anthropic-token',
-        refresh: 'anthropic-refresh'
-      }
-    });
-    allCredentials = nativeAdapters.readAllNativeOAuth('opencode');
-    primaryCredential = nativeAdapters.readNativeOAuth('opencode');
-
-    expect(allCredentials[0]).toEqual(expect.objectContaining({
-      providerId: 'anthropic',
-      accessToken: 'anthropic-token'
-    }));
-    expect(primaryCredential).toEqual(expect.objectContaining({
-      providerId: 'anthropic',
-      accessToken: 'anthropic-token'
-    }));
-  });
-
-  test('disables a single OpenCode OAuth credential without clearing the rest', () => {
-    writeJson(pathsStub.NATIVE_PATHS.opencode.auth, {
-      openai: {
-        type: 'oauth',
-        access: 'openai-token',
-        refresh: 'openai-refresh'
-      },
-      anthropic: {
-        type: 'oauth',
-        access: 'anthropic-token',
-        refresh: 'anthropic-refresh'
-      }
-    });
-
-    nativeAdapters.disableNativeOAuthCredential('opencode', {
-      providerId: 'openai',
-      accessToken: 'openai-token'
-    });
-
-    expect(readJson(pathsStub.NATIVE_PATHS.opencode.auth)).toEqual({
-      anthropic: {
-        type: 'oauth',
-        access: 'anthropic-token',
-        refresh: 'anthropic-refresh'
-      }
-    });
-  });
 
   test('reads OMP OAuth accounts from auth-broker provider snapshot', () => {
     getOmpAuthProviderSnapshotMock.mockReturnValue({
@@ -598,68 +459,4 @@ describe('native-oauth-adapters high level flows', () => {
     expect(nativeAdapters.readAllNativeOAuth('omp')).toEqual([]);
   });
 
-  test('clears OpenCode OAuth and retargets model to a remaining managed provider', () => {
-    const configPath = path.join(testDir, '.opencode', 'config.json');
-    opencodeConfig = {
-      model: 'openai/gpt-4.1',
-      provider: {
-        openai: {},
-        managed: {
-          __ctx_managed__: true,
-          name: 'Managed',
-          options: {
-            baseURL: 'https://managed.example',
-            apiKey: 'managed-key'
-          },
-          models: {
-            'gpt-4.1-mini': { name: 'gpt-4.1-mini' }
-          }
-        }
-      }
-    };
-    writeJson(configPath, opencodeConfig);
-    writeJson(pathsStub.NATIVE_PATHS.opencode.auth, {
-      openai: {
-        type: 'oauth',
-        access: 'openai-token',
-        refresh: 'openai-refresh'
-      }
-    });
-
-    nativeAdapters.clearNativeOAuth('opencode');
-
-    expect(fs.existsSync(pathsStub.NATIVE_PATHS.opencode.auth)).toBe(false);
-    expect(opencodeConfig.provider.openai).toBeUndefined();
-    expect(opencodeConfig.model).toBe('managed/gpt-4.1-mini');
-  });
-
-  test('treats external OpenCode provider config as channel-configured state', () => {
-    const configPath = path.join(testDir, '.opencode', 'config.json');
-    opencodeConfig = {
-      model: 'external/gpt-4.1',
-      provider: {
-        external: {
-          name: 'External Provider',
-          npm: '@ai-sdk/openai-compatible',
-          options: {
-            baseURL: 'https://external.example',
-            apiKey: 'external-key'
-          },
-          models: {
-            'gpt-4.1': { name: 'gpt-4.1' }
-          }
-        }
-      }
-    };
-    writeJson(configPath, opencodeConfig);
-
-    const state = nativeAdapters.inspectTool('opencode');
-
-    expect(state).toEqual(expect.objectContaining({
-      tool: 'opencode',
-      mode: 'channel',
-      oauthPresent: false,
-      channelConfigured: true
-    }));
-  });
 });

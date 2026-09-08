@@ -9,12 +9,11 @@ const { NATIVE_PATHS, PATHS } = require('../config/paths');
 const claudeSettingsManager = require('./drivers/claude/native-config-implementation');
 const codexSettingsManager = require('./drivers/codex/native-config-implementation');
 const geminiSettingsManager = require('./drivers/gemini/native-config-implementation');
-const opencodeSettingsManager = require('./drivers/opencode/native-config-implementation');
 const { syncCodexUserEnvironment } = require('./drivers/codex/env-manager');
 const nativeKeychain = require('../server/services/native-keychain');
 const { maskToken, decodeJwtPayload, removeFileIfExists, sha256 } = require('../server/services/oauth-utils');
 
-const SUPPORTED_TOOLS = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
+const SUPPORTED_TOOLS = ['claude', 'codex', 'gemini', 'omp'];
 const GEMINI_MAIN_ACCOUNT_KEY = 'main-account';
 const GEMINI_KEYCHAIN_SERVICE = 'gemini-cli-oauth';
 const CODEX_KEYCHAIN_SERVICE = 'Codex Auth';
@@ -628,384 +627,6 @@ function inspectGeminiState() {
   };
 }
 
-function parseOpenCodeOAuthPayload(raw) {
-  if (!raw || typeof raw !== 'object') {
-    return null;
-  }
-
-  if (raw.type === 'oauth' || raw.access) {
-    return parseOpenCodeOAuthEntry(raw.providerId, raw);
-  }
-
-  if (raw.openai && typeof raw.openai === 'object') {
-    return parseOpenCodeOAuthEntry('openai', raw.openai);
-  }
-
-  for (const [providerId, value] of Object.entries(raw)) {
-    const parsed = parseOpenCodeOAuthEntry(providerId, value);
-    if (parsed) {
-      return parsed;
-    }
-  }
-
-  return null;
-}
-
-function parseOpenCodeOAuthEntry(providerId, target) {
-  const normalizedProviderId = String(providerId || 'openai').trim() || 'openai';
-
-  if (!target || target.type !== 'oauth' || !target.access) {
-    return null;
-  }
-
-  return {
-    providerId: normalizedProviderId,
-    accessToken: String(target.access || '').trim(),
-    refreshToken: String(target.refresh || '').trim() || '',
-    expiresAt: Number(target.expires || 0) || null,
-    accountId: String(target.accountId || '').trim() || '',
-    enterpriseUrl: String(target.enterpriseUrl || '').trim() || '',
-    primaryToken: String(target.access || '').trim()
-  };
-}
-
-function getActiveOpenCodeProviderId() {
-  try {
-    const configPath = opencodeSettingsManager.selectConfigPath();
-    if (!configPath || !fs.existsSync(configPath)) {
-      return '';
-    }
-
-    const config = opencodeSettingsManager.readConfig(configPath);
-    const modelRef = String(config?.model || '').trim();
-    if (modelRef.includes('/')) {
-      return modelRef.split('/')[0].trim();
-    }
-
-    const providerIds = config?.provider && typeof config.provider === 'object'
-      ? Object.keys(config.provider).filter(Boolean)
-      : [];
-    return providerIds.length === 1 ? providerIds[0] : '';
-  } catch {
-    return '';
-  }
-}
-
-function readAllOpenCodeNativeOAuth() {
-  const payload = readJsonFile(NATIVE_PATHS.opencode.auth, null);
-  if (!payload || typeof payload !== 'object') {
-    return [];
-  }
-
-  const activeProviderId = getActiveOpenCodeProviderId();
-  const credentials = Object.entries(payload)
-    .map(([providerId, value]) => parseOpenCodeOAuthEntry(providerId, value))
-    .filter(Boolean)
-    .map((entry) => ({ ...entry, storage: 'auth-file' }));
-
-  if (!activeProviderId || credentials.length <= 1) {
-    return credentials;
-  }
-
-  return credentials.sort((left, right) => {
-    if (left.providerId === activeProviderId) return -1;
-    if (right.providerId === activeProviderId) return 1;
-    return left.providerId.localeCompare(right.providerId);
-  });
-}
-
-function readOpenCodeNativeOAuth() {
-  return readAllOpenCodeNativeOAuth()[0] || null;
-}
-
-function clearOpenCodeOAuth() {
-  const payload = readJsonFile(NATIVE_PATHS.opencode.auth, {});
-  if (!payload || typeof payload !== 'object') {
-    return;
-  }
-
-  const removedProviderIds = [];
-  Object.keys(payload).forEach((providerId) => {
-    if (payload[providerId]?.type === 'oauth') {
-      removedProviderIds.push(providerId);
-      delete payload[providerId];
-    }
-  });
-
-  if (Object.keys(payload).length === 0) {
-    removeFileIfExists(NATIVE_PATHS.opencode.auth);
-  } else {
-    writeJsonFile(NATIVE_PATHS.opencode.auth, payload);
-  }
-
-  syncOpenCodeConfigAfterOAuthRemoval(removedProviderIds);
-}
-
-function disableOpenCodeOAuthCredential(credential = {}) {
-  const providerId = String(credential.providerId || '').trim();
-  const accessToken = String(credential.accessToken || credential.primaryToken || '').trim();
-  const payload = readJsonFile(NATIVE_PATHS.opencode.auth, {});
-  if (!payload || typeof payload !== 'object') {
-    return;
-  }
-
-  const removedProviderIds = [];
-  Object.keys(payload).forEach((key) => {
-    const target = payload[key];
-    if (!target || target.type !== 'oauth') {
-      return;
-    }
-
-    const providerMatched = providerId && key === providerId;
-    const tokenMatched = accessToken && String(target.access || '').trim() === accessToken;
-    if (providerMatched || tokenMatched) {
-      removedProviderIds.push(key);
-      delete payload[key];
-    }
-  });
-
-  if (Object.keys(payload).length === 0) {
-    removeFileIfExists(NATIVE_PATHS.opencode.auth);
-  } else {
-    writeJsonFile(NATIVE_PATHS.opencode.auth, payload);
-  }
-
-  syncOpenCodeConfigAfterOAuthRemoval(removedProviderIds);
-}
-
-function isManagedOpenCodeProvider(provider) {
-  if (!provider || typeof provider !== 'object') {
-    return false;
-  }
-
-  if (provider.__ctx_managed__ === true) {
-    return true;
-  }
-
-  const apiKey = String(provider?.options?.apiKey || '').trim();
-  const baseUrl = String(provider?.options?.baseURL || '').trim();
-  return apiKey === 'PROXY_KEY' && (baseUrl.includes('127.0.0.1') || baseUrl.includes('localhost'));
-}
-
-function isProxyBackedOpenCodeProvider(provider) {
-  if (!provider || typeof provider !== 'object') {
-    return false;
-  }
-
-  const apiKey = String(provider?.options?.apiKey || '').trim();
-  const baseUrl = String(provider?.options?.baseURL || '').trim();
-  return apiKey === 'PROXY_KEY' && (baseUrl.includes('127.0.0.1') || baseUrl.includes('localhost'));
-}
-
-function isMeaningfulOpenCodeProvider(provider) {
-  if (!provider || typeof provider !== 'object') {
-    return false;
-  }
-
-  if (provider.__ctx_managed__ === true) {
-    return true;
-  }
-
-  if (typeof provider.npm === 'string' && provider.npm.trim()) {
-    return true;
-  }
-
-  if (typeof provider.name === 'string' && provider.name.trim()) {
-    return true;
-  }
-
-  if (provider.options && typeof provider.options === 'object' && Object.keys(provider.options).length > 0) {
-    return true;
-  }
-
-  if (provider.models && typeof provider.models === 'object' && Object.keys(provider.models).length > 0) {
-    return true;
-  }
-
-  return false;
-}
-
-function clearOpenCodeManagedModelSelection(config) {
-  const modelRef = String(config?.model || '').trim();
-  if (!modelRef || !modelRef.includes('/')) {
-    return;
-  }
-
-  const providerId = modelRef.split('/')[0].trim();
-  if (!providerId) {
-    return;
-  }
-
-  const provider = config?.provider?.[providerId];
-  if (isManagedOpenCodeProvider(provider)) {
-    delete config.model;
-  }
-}
-
-function getConfiguredOpenCodeProviderId(config) {
-  const modelRef = String(config?.model || '').trim();
-  if (modelRef.includes('/')) {
-    return modelRef.split('/')[0].trim();
-  }
-
-  const providerIds = config?.provider && typeof config.provider === 'object'
-    ? Object.keys(config.provider).filter(Boolean)
-    : [];
-  return providerIds.length === 1 ? providerIds[0] : '';
-}
-
-function buildOpenCodeModelRef(providerId, provider) {
-  if (!providerId || !provider || typeof provider !== 'object') {
-    return '';
-  }
-
-  const modelIds = provider.models && typeof provider.models === 'object'
-    ? Object.keys(provider.models).filter(Boolean)
-    : [];
-
-  if (modelIds.length === 0) {
-    return '';
-  }
-
-  return `${providerId}/${modelIds[0]}`;
-}
-
-function pickFallbackOpenCodeModel(config, excludedProviderIds = new Set()) {
-  const providers = config?.provider && typeof config.provider === 'object'
-    ? Object.entries(config.provider)
-    : [];
-
-  for (const [providerId, provider] of providers) {
-    if (excludedProviderIds.has(providerId)) {
-      continue;
-    }
-
-    const modelRef = buildOpenCodeModelRef(providerId, provider);
-    if (modelRef) {
-      return modelRef;
-    }
-  }
-
-  return '';
-}
-
-function syncOpenCodeConfigAfterOAuthRemoval(removedProviderIds = []) {
-  const removedIds = new Set((removedProviderIds || []).filter(Boolean));
-  if (removedIds.size === 0) {
-    return;
-  }
-
-  const configPath = opencodeSettingsManager.selectConfigPath();
-  if (!configPath || !fs.existsSync(configPath)) {
-    return;
-  }
-
-  let config = {};
-  try {
-    config = opencodeSettingsManager.readConfig(configPath);
-  } catch {
-    return;
-  }
-
-  config = config && typeof config === 'object' ? config : {};
-  config.provider = config.provider && typeof config.provider === 'object' ? config.provider : {};
-
-  let changed = false;
-  for (const providerId of removedIds) {
-    const provider = config.provider[providerId];
-    if (provider && !isMeaningfulOpenCodeProvider(provider)) {
-      delete config.provider[providerId];
-      changed = true;
-    }
-  }
-
-  const activeProviderId = getConfiguredOpenCodeProviderId(config);
-  if (activeProviderId && removedIds.has(activeProviderId)) {
-    const activeProvider = config.provider[activeProviderId];
-    if (!isMeaningfulOpenCodeProvider(activeProvider)) {
-      const fallbackModel = pickFallbackOpenCodeModel(config, removedIds);
-      if (fallbackModel) {
-        config.model = fallbackModel;
-      } else {
-        delete config.model;
-      }
-      changed = true;
-    }
-  }
-
-  if (Object.keys(config.provider).length === 0) {
-    delete config.provider;
-    changed = true;
-  }
-
-  if (changed) {
-    opencodeSettingsManager.writeConfig(configPath, config);
-  }
-}
-
-function applyOpenCodeOAuth(credential) {
-  const providerId = String(credential.providerId || 'openai').trim() || 'openai';
-  const payload = readJsonFile(NATIVE_PATHS.opencode.auth, {});
-  payload[providerId] = {
-    type: 'oauth',
-    access: credential.accessToken,
-    refresh: credential.refreshToken || '',
-    expires: credential.expiresAt || null,
-    accountId: credential.accountId || undefined,
-    enterpriseUrl: credential.enterpriseUrl || undefined
-  };
-  writeJsonFile(NATIVE_PATHS.opencode.auth, payload);
-
-  const configPath = opencodeSettingsManager.selectConfigPath();
-  const config = fs.existsSync(configPath)
-    ? opencodeSettingsManager.readConfig(configPath)
-    : {};
-  config.provider = config.provider && typeof config.provider === 'object' ? config.provider : {};
-  config.provider[providerId] = config.provider[providerId] && typeof config.provider[providerId] === 'object'
-    ? config.provider[providerId]
-    : {};
-  // Preserve existing ctx-managed API providers for OpenCode coexistence, but
-  // drop the active managed selection so OAuth-backed providers become available.
-  clearOpenCodeManagedModelSelection(config);
-  opencodeSettingsManager.writeConfig(configPath, config);
-
-  return { storage: 'auth-file' };
-}
-
-function inspectOpenCodeState() {
-  const { getOpenCodeProxyStatus } = require('./drivers/opencode/proxy-implementation');
-  const proxyStatus = getOpenCodeProxyStatus();
-  const nativeOAuth = readOpenCodeNativeOAuth();
-
-  let channelConfigured = false;
-  try {
-    const configPath = opencodeSettingsManager.selectConfigPath();
-    const config = fs.existsSync(configPath)
-      ? opencodeSettingsManager.readConfig(configPath)
-      : {};
-    const providers = config?.provider && typeof config.provider === 'object'
-      ? Object.values(config.provider)
-      : [];
-    channelConfigured = providers.some(provider => (
-      isMeaningfulOpenCodeProvider(provider) && !isProxyBackedOpenCodeProvider(provider)
-    ));
-  } catch {
-    channelConfigured = false;
-  }
-
-  return {
-    tool: 'opencode',
-    mode: proxyStatus.running
-      ? 'proxy'
-      : (nativeOAuth && channelConfigured
-          ? 'mixed'
-          : (nativeOAuth ? 'oauth' : (channelConfigured ? 'channel' : 'idle'))),
-    proxyRunning: proxyStatus.running,
-    oauthPresent: Boolean(nativeOAuth),
-    channelConfigured,
-    nativeCredential: nativeOAuth ? buildNativeSummary(nativeOAuth) : null
-  };
-}
 
 function resolveOmpRuntime() {
   try {
@@ -1210,8 +831,6 @@ function inspectTool(tool) {
       return inspectCodexState();
     case 'gemini':
       return inspectGeminiState();
-    case 'opencode':
-      return inspectOpenCodeState();
     case 'omp':
       return inspectOmpState();
     default:
@@ -1227,8 +846,6 @@ function readNativeOAuth(tool) {
       return readCodexNativeOAuth();
     case 'gemini':
       return readGeminiNativeOAuth();
-    case 'opencode':
-      return readOpenCodeNativeOAuth();
     case 'omp':
       return readOmpNativeOAuth();
     default:
@@ -1250,8 +867,6 @@ function readAllNativeOAuth(tool) {
       const credential = readGeminiNativeOAuth();
       return credential ? [credential] : [];
     }
-    case 'opencode':
-      return readAllOpenCodeNativeOAuth();
     case 'omp':
       return readAllOmpNativeOAuth();
     default:
@@ -1269,9 +884,6 @@ function clearNativeOAuth(tool) {
       return;
     case 'gemini':
       clearGeminiOAuth();
-      return;
-    case 'opencode':
-      clearOpenCodeOAuth();
       return;
     case 'omp':
       clearOmpOAuth();
@@ -1292,9 +904,6 @@ function disableNativeOAuthCredential(tool, credential = {}) {
     case 'gemini':
       clearGeminiOAuth();
       return;
-    case 'opencode':
-      disableOpenCodeOAuthCredential(credential);
-      return;
     case 'omp':
       disableOmpOAuthCredential(credential);
       return;
@@ -1311,8 +920,6 @@ function applyOAuthCredential(tool, credential) {
       return applyCodexOAuth(credential);
     case 'gemini':
       return applyGeminiOAuth(credential);
-    case 'opencode':
-      return applyOpenCodeOAuth(credential);
     case 'omp':
       return applyOmpOAuth(credential);
     default:

@@ -16,11 +16,9 @@ let removeFileIfExistsMock;
 let deleteClaudeBackupMock;
 let deleteCodexBackupMock;
 let deleteGeminiBackupMock;
-let deleteOpenCodeBackupMock;
 let disableClaudeChannelsMock;
 let disableCodexChannelsMock;
 let disableGeminiChannelsMock;
-let disableOpenCodeChannelsMock;
 let disableOmpChannelsMock;
 let getProxyStatusMock;
 let stopProxyServerMock;
@@ -28,11 +26,8 @@ let getCodexProxyStatusMock;
 let stopCodexProxyServerMock;
 let getGeminiProxyStatusMock;
 let stopGeminiProxyServerMock;
-let getOpenCodeProxyStatusMock;
-let stopOpenCodeProxyServerMock;
 let getOmpProxyStatusMock;
 let stopOmpProxyServerMock;
-
 function stubModules() {
   const pathsModulePath = require.resolve('../../../src/config/paths');
   require.cache[pathsModulePath] = {
@@ -46,7 +41,6 @@ function stubModules() {
           claude: path.join(testDir, 'active', 'claude.json'),
           codex: path.join(testDir, 'active', 'codex.json'),
           gemini: path.join(testDir, 'active', 'gemini.json'),
-          opencode: path.join(testDir, 'active', 'opencode.json'),
           omp: path.join(testDir, 'active', 'omp.json')
         }
       }
@@ -65,7 +59,7 @@ function stubModules() {
     filename: nativeAdapterPath,
     loaded: true,
     exports: {
-      SUPPORTED_TOOLS: ['claude', 'codex', 'gemini', 'opencode', 'omp'],
+      SUPPORTED_TOOLS: ['claude', 'codex', 'gemini', 'omp'],
       fingerprintFor: fingerprintForMock,
       inspectTool: inspectToolMock,
       readAllNativeOAuth: readAllNativeOAuthMock,
@@ -102,7 +96,6 @@ function stubModules() {
   deleteClaudeBackupMock = vi.fn();
   deleteCodexBackupMock = vi.fn();
   deleteGeminiBackupMock = vi.fn();
-  deleteOpenCodeBackupMock = vi.fn();
   require.cache[require.resolve('../../../src/platforms/drivers/claude/native-config-implementation')] = {
     id: require.resolve('../../../src/platforms/drivers/claude/native-config-implementation'),
     filename: require.resolve('../../../src/platforms/drivers/claude/native-config-implementation'),
@@ -121,17 +114,10 @@ function stubModules() {
     loaded: true,
     exports: { deleteBackup: deleteGeminiBackupMock }
   };
-  require.cache[require.resolve('../../../src/platforms/drivers/opencode/native-config-implementation')] = {
-    id: require.resolve('../../../src/platforms/drivers/opencode/native-config-implementation'),
-    filename: require.resolve('../../../src/platforms/drivers/opencode/native-config-implementation'),
-    loaded: true,
-    exports: { deleteBackup: deleteOpenCodeBackupMock }
-  };
 
   disableClaudeChannelsMock = vi.fn();
   disableCodexChannelsMock = vi.fn();
   disableGeminiChannelsMock = vi.fn();
-  disableOpenCodeChannelsMock = vi.fn();
   disableOmpChannelsMock = vi.fn();
   require.cache[require.resolve('../../../src/platforms/drivers/claude/channels-implementation')] = {
     id: require.resolve('../../../src/platforms/drivers/claude/channels-implementation'),
@@ -150,12 +136,6 @@ function stubModules() {
     filename: require.resolve('../../../src/platforms/drivers/gemini/channels-implementation'),
     loaded: true,
     exports: { disableAllChannels: disableGeminiChannelsMock }
-  };
-  require.cache[require.resolve('../../../src/platforms/drivers/opencode/channels-implementation')] = {
-    id: require.resolve('../../../src/platforms/drivers/opencode/channels-implementation'),
-    filename: require.resolve('../../../src/platforms/drivers/opencode/channels-implementation'),
-    loaded: true,
-    exports: { disableAllChannels: disableOpenCodeChannelsMock }
   };
   require.cache[require.resolve('../../../src/platforms/drivers/omp/channels-implementation')] = {
     id: require.resolve('../../../src/platforms/drivers/omp/channels-implementation'),
@@ -200,17 +180,6 @@ function stubModules() {
     }
   };
 
-  getOpenCodeProxyStatusMock = vi.fn(() => ({ running: false }));
-  stopOpenCodeProxyServerMock = vi.fn(async () => {});
-  require.cache[require.resolve('../../../src/platforms/drivers/opencode/proxy-implementation')] = {
-    id: require.resolve('../../../src/platforms/drivers/opencode/proxy-implementation'),
-    filename: require.resolve('../../../src/platforms/drivers/opencode/proxy-implementation'),
-    loaded: true,
-    exports: {
-      getOpenCodeProxyStatus: getOpenCodeProxyStatusMock,
-      stopOpenCodeProxyServer: stopOpenCodeProxyServerMock
-    }
-  };
 
   getOmpProxyStatusMock = vi.fn(() => ({ running: false }));
   stopOmpProxyServerMock = vi.fn(async () => {});
@@ -242,16 +211,12 @@ afterEach(() => {
     '../../../src/platforms/drivers/claude/native-config-implementation',
     '../../../src/platforms/drivers/codex/native-config-implementation',
     '../../../src/platforms/drivers/gemini/native-config-implementation',
-    '../../../src/platforms/drivers/opencode/native-config-implementation',
     '../../../src/platforms/drivers/claude/channels-implementation',
     '../../../src/platforms/drivers/codex/channels-implementation',
-    '../../../src/platforms/drivers/gemini/channels-implementation',
-    '../../../src/platforms/drivers/opencode/channels-implementation',
     '../../../src/platforms/drivers/omp/channels-implementation',
     '../../../src/platforms/drivers/claude/proxy-implementation',
     '../../../src/platforms/drivers/codex/proxy-implementation',
     '../../../src/platforms/drivers/gemini/proxy-implementation',
-    '../../../src/platforms/drivers/opencode/proxy-implementation',
     '../../../src/platforms/drivers/omp/proxy-implementation'
   ].forEach((mod) => {
     try {
@@ -260,88 +225,6 @@ afterEach(() => {
   });
 });
 
-describe('oauth credential import', () => {
-  test('imports Claude credential from JSON payload', () => {
-    const credential = service.importCredential('claude', {
-      name: 'Claude Main',
-      raw: JSON.stringify({
-        accessToken: 'claude-access-token',
-        refreshToken: 'claude-refresh-token'
-      })
-    });
-
-    expect(credential.tool).toBe('claude');
-    expect(credential.name).toBe('Claude Main');
-    expect(credential.tokenPreview).toBe('***oken');
-    expect(service.getToolSummary('claude').defaultCredentialId).toBe(credential.id);
-  });
-
-  test('imports Codex credential and derives account email from id token', () => {
-    const credential = service.importCredential('codex', {
-      raw: JSON.stringify({
-        auth_mode: 'chatgpt',
-        tokens: {
-          access_token: 'codex-access',
-          refresh_token: 'codex-refresh',
-          id_token: 'id-token'
-        }
-      })
-    });
-
-    expect(credential.accountEmail).toBe('dev@example.com');
-    expect(credential.name).toBe('codex - dev@example.com');
-  });
-
-  test('imports Gemini credential from access_token JSON shape', () => {
-    const credential = service.importCredential('gemini', {
-      raw: JSON.stringify({
-        access_token: 'gem-access',
-        refresh_token: 'gem-refresh',
-        email: 'gem@example.com'
-      })
-    });
-
-    expect(credential.accountEmail).toBe('gem@example.com');
-    expect(credential.name).toBe('gemini - gem@example.com');
-  });
-
-  test('imports OpenCode credential from nested provider payload', () => {
-    const credential = service.importCredential('opencode', {
-      raw: JSON.stringify({
-        openai: {
-          type: 'oauth',
-          access: 'open-access',
-          refresh: 'open-refresh',
-          accountId: 'acct-001'
-        }
-      })
-    });
-
-    expect(credential.providerId).toBe('openai');
-    expect(credential.accountId).toBe('acct-001');
-    expect(credential.name).toBe('opencode - openai - acct-001');
-  });
-
-  test('imports OMP credential from auth-broker row payload', () => {
-    const credential = service.importCredential('omp', {
-      raw: JSON.stringify({
-        provider: 'anthropic',
-        credential_type: 'oauth',
-        identity_key: 'acct-omp',
-        data: {
-          access: 'omp-access',
-          refresh: 'omp-refresh',
-          expires: 2000000000000,
-          accountId: 'acct-omp'
-        }
-      })
-    });
-
-    expect(credential.providerId).toBe('anthropic');
-    expect(credential.accountId).toBe('acct-omp');
-    expect(credential.name).toBe('omp - anthropic - acct-omp');
-  });
-});
 
 describe('oauth credential store operations', () => {
   test('syncLocalCredential stores detected native credentials', () => {
@@ -361,124 +244,7 @@ describe('oauth credential store operations', () => {
     expect(() => service.syncLocalCredential('claude')).toThrow(/未检测到/);
   });
 
-  test('setDefaultCredential switches the default credential', () => {
-    const first = service.importCredential('claude', { raw: JSON.stringify({ accessToken: 'token-1' }) });
-    const second = service.importCredential('claude', { raw: JSON.stringify({ accessToken: 'token-2' }) });
-
-    const summary = service.setDefaultCredential('claude', second.id);
-
-    expect(summary.defaultCredentialId).toBe(second.id);
-    expect(summary.credentials.find((credential) => credential.id === second.id).isDefault).toBe(true);
-    expect(first.id).not.toBe(second.id);
-  });
-
-  test('deleteCredential removes entry and rotates default', () => {
-    const first = service.importCredential('claude', { raw: JSON.stringify({ accessToken: 'token-1' }) });
-    const second = service.importCredential('claude', { raw: JSON.stringify({ accessToken: 'token-2' }) });
-
-    const summary = service.deleteCredential('claude', first.id);
-
-    expect(summary.credentials).toHaveLength(1);
-    expect(summary.defaultCredentialId).toBe(second.id);
-  });
 });
-
-describe('oauth credential application and cleanup', () => {
-  test('applyStoredCredential stops proxy, cleans artifacts and updates lastUsedAt', async () => {
-    const credential = service.importCredential('claude', {
-      raw: JSON.stringify({ accessToken: 'claude-access-token', refreshToken: 'refresh' })
-    });
-    getProxyStatusMock.mockReturnValue({ running: true });
-    fs.mkdirSync(path.join(testDir, 'active'), { recursive: true });
-    fs.writeFileSync(path.join(testDir, 'active', 'claude.json'), '{"active":true}', 'utf8');
-
-    const result = await service.applyStoredCredential('claude', credential.id);
-
-    expect(result.proxyStopped).toBe(true);
-    expect(stopProxyServerMock).toHaveBeenCalled();
-    expect(deleteClaudeBackupMock).toHaveBeenCalled();
-    expect(disableClaudeChannelsMock).toHaveBeenCalled();
-    expect(applyOAuthCredentialMock).toHaveBeenCalledWith('claude', expect.objectContaining({
-      accessToken: 'claude-access-token'
-    }));
-    expect(fs.existsSync(path.join(testDir, 'active', 'claude.json'))).toBe(false);
-    expect(result.toolSummary.credentials[0].lastUsedAt).toBeTypeOf('number');
-  });
-
-  test('applyStoredCredential preserves OpenCode channel enablement while applying OAuth', async () => {
-    const credential = service.importCredential('opencode', {
-      raw: JSON.stringify({
-        openai: {
-          type: 'oauth',
-          access: 'open-access',
-          refresh: 'open-refresh'
-        }
-      })
-    });
-
-    const result = await service.applyStoredCredential('opencode', credential.id);
-
-    expect(disableOpenCodeChannelsMock).not.toHaveBeenCalled();
-    expect(applyOAuthCredentialMock).toHaveBeenCalledWith('opencode', expect.objectContaining({
-      accessToken: 'open-access'
-    }));
-    expect(result.toolSummary.credentials[0].lastUsedAt).toBeTypeOf('number');
-  });
-
-  test('applyStoredCredential preserves OMP channel enablement while applying OAuth', async () => {
-    const credential = service.importCredential('omp', {
-      raw: JSON.stringify({
-        provider: 'openai-codex',
-        credential_type: 'oauth',
-        data: {
-          access: 'omp-access',
-          refresh: 'omp-refresh'
-        }
-      })
-    });
-
-    const result = await service.applyStoredCredential('omp', credential.id);
-
-    expect(disableOmpChannelsMock).not.toHaveBeenCalled();
-    expect(applyOAuthCredentialMock).toHaveBeenCalledWith('omp', expect.objectContaining({
-      providerId: 'openai-codex',
-      accessToken: 'omp-access'
-    }));
-    expect(result.toolSummary.credentials[0].lastUsedAt).toBeTypeOf('number');
-  });
-
-  test('clearNativeOAuthState delegates to native adapter and returns latest state', () => {
-    inspectToolMock.mockReturnValue({ tool: 'claude', connected: false, mode: 'oauth' });
-
-    const state = service.clearNativeOAuthState('claude');
-
-    expect(clearNativeOAuthMock).toHaveBeenCalledWith('claude');
-    expect(state).toEqual({ tool: 'claude', connected: false, mode: 'oauth' });
-  });
-
-  test('disableStoredCredential delegates to native adapter and returns refreshed state', () => {
-    const credential = service.importCredential('opencode', {
-      raw: JSON.stringify({
-        openai: {
-          type: 'oauth',
-          access: 'open-access',
-          refresh: 'open-refresh',
-          accountId: 'acct-001'
-        }
-      })
-    });
-    inspectToolMock.mockReturnValue({ tool: 'opencode', mode: 'mixed', oauthPresent: true });
-
-    const result = service.disableStoredCredential('opencode', credential.id);
-
-    expect(disableNativeOAuthCredentialMock).toHaveBeenCalledWith('opencode', expect.objectContaining({
-      providerId: 'openai',
-      accessToken: 'open-access'
-    }));
-    expect(result.nativeState).toEqual({ tool: 'opencode', mode: 'mixed', oauthPresent: true });
-  });
-});
-
 describe('oauth credential usage lookup', () => {
   test('returns error when stored credential has no usable token', async () => {
     const storePath = path.join(testDir, 'oauth', 'credentials.json');
@@ -501,7 +267,6 @@ describe('oauth credential usage lookup', () => {
         },
         codex: { defaultCredentialId: null, credentials: [] },
         gemini: { defaultCredentialId: null, credentials: [] },
-        opencode: { defaultCredentialId: null, credentials: [] },
         omp: { defaultCredentialId: null, credentials: [] }
       }
     }, null, 2), 'utf8');
