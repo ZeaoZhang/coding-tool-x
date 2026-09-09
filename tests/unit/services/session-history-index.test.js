@@ -195,6 +195,24 @@ describe('session-history-index', () => {
     expect(fixture.parseCounts.get(path.join(fixture.rootDir, 's2.jsonl'))).toBe(1);
   });
 
+  it('does not pass Claude projectsDir overrides to non-Claude adapters', async () => {
+    state = createFixtureState();
+    index = createSessionHistoryIndex({
+      dbPath: state.dbPath,
+      adapterRegistry: { codex: state.adapter },
+      workerRunner: vi.fn(async () => {}),
+      ftsEnabledOverride: false
+    });
+
+    await index.listProjects('codex', {
+      force: true,
+      consistency: 'complete',
+      config: { projectsDir: '/tmp/claude-projects' }
+    });
+
+    expect(state.adapter.inventory).toHaveBeenCalledWith({ projectsDir: undefined });
+  });
+
   it('second inventory with unchanged files parses zero', async () => {
     const fixture = setupIndex();
     const filePath = path.join(fixture.rootDir, 's1.jsonl');
@@ -488,6 +506,29 @@ describe('session-history-index', () => {
 
     expect(fixture.adapter.parse).toHaveBeenCalledTimes(1);
     expect(sessions[0].firstMessage).toBe('reparsed content');
+  });
+  it('replaces the row by file path when a parser migration changes the native session id', async () => {
+    const fixture = setupIndex();
+    fixture.writeFixtureFile({
+      name: 'native-id-migration.jsonl',
+      content: 'native id migration fixture\n',
+      session: makeSessionFixture('filename-id', 'proj-a'),
+      messages: makeMessageFixtures(1)
+    });
+
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    const db = index._getDb();
+    db.prepare('UPDATE session_file SET parser_version = 0 WHERE source = ?').run('claude');
+    db.prepare('UPDATE source_state SET last_inventory_ms = ? WHERE source = ?').run(Date.now(), 'claude');
+    fixture.adapter.parse.mockResolvedValue({
+      session: makeSessionFixture('native-session-id', 'proj-a'),
+      messages: makeMessageFixtures(1)
+    });
+
+    await expect(index.listSessions('claude', 'proj-a')).resolves.toEqual([
+      expect.objectContaining({ sessionId: 'native-session-id' })
+    ]);
+    await expect(index.getSessionStatus('claude', 'filename-id')).resolves.toBeNull();
   });
   it('waits for a cold inventory before returning empty project data', async () => {
     const fixture = setupIndex();
@@ -1367,6 +1408,64 @@ describe('session-history-index runtime selection', () => {
 
     expect(workerRunner).toHaveBeenCalledWith('claude', dbPath, { force: true });
     expect(getPlatformRuntime).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not forward a Claude projects directory to a non-Claude worker', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-worker-projects-dir-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const workerRunner = vi.fn(async () => {});
+    const originalNodeEnv = process.env.NODE_ENV;
+    const originalChild = process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+    process.env.NODE_ENV = 'production';
+    delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+    const index = createSessionHistoryIndex({ dbPath, workerRunner, ftsEnabledOverride: false });
+
+    try {
+      await index.ensureSourceIndexed('codex', {
+        consistency: 'complete',
+        force: true,
+        config: { projectsDir: '/claude/projects' }
+      });
+    } finally {
+      index.closeSessionHistoryIndex();
+      if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = originalNodeEnv;
+      if (originalChild === undefined) delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+      else process.env.CC_TOOL_SESSION_HISTORY_CHILD = originalChild;
+      fs.rmSync(rootDir, { recursive: true, force: true });
+    }
+
+    expect(workerRunner).toHaveBeenCalledWith('codex', dbPath, { force: true });
+  });
+
+  it('reindexes stale built-in parser rows even while the source timestamp is fresh', async () => {
+    const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-parser-worker-'));
+    const dbPath = path.join(rootDir, 'history.sqlite');
+    const workerRunner = vi.fn(async () => {});
+    const originalNodeEnv = process.env.NODE_ENV;
+    const originalChild = process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+    process.env.NODE_ENV = 'production';
+    delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+    const index = createSessionHistoryIndex({ dbPath, workerRunner, ftsEnabledOverride: false });
+
+    try {
+      const db = index._getDb();
+      db.prepare('INSERT INTO source_state(source, last_inventory_ms, last_error) VALUES (?, ?, ?)')
+        .run('codex', Date.now(), null);
+      db.prepare('INSERT INTO session_file(source, file_path, session_id, project_name, parser_version) VALUES (?, ?, ?, ?, ?)')
+        .run('codex', '/tmp/old-codex.jsonl', 'old-codex', 'project', 1);
+
+      await index.ensureSourceIndexed('codex', { consistency: 'complete' });
+    } finally {
+      index.closeSessionHistoryIndex();
+      if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = originalNodeEnv;
+      if (originalChild === undefined) delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
+      else process.env.CC_TOOL_SESSION_HISTORY_CHILD = originalChild;
+      fs.rmSync(rootDir, { recursive: true, force: true });
+    }
+
+    expect(workerRunner).toHaveBeenCalledWith('codex', dbPath, { force: false });
   });
 
   it('ignores injected runtime in production-like environments so indexing uses the worker path', async () => {

@@ -7,7 +7,7 @@ function createDriver(context = {}) {
     ...context,
     platform: 'gemini',
     capability: 'sessions',
-    parserVersion: 1,
+    parserVersion: 2,
     servicePath: './gemini/sessions-implementation',
     localServicePath: '../platforms/drivers/gemini/sessions-implementation',
     adapterLocalPath: '../platforms/drivers/gemini/session-history-adapter',
@@ -15,7 +15,6 @@ function createDriver(context = {}) {
     methods: {
       listSessions: 'getProjectSessions',
       recent: 'getRecentSessions',
-      search: 'searchSessions',
       getSessionById: 'getSessionById',
       getAllSessions: 'getAllSessions',
       delete: 'deleteSession',
@@ -24,6 +23,18 @@ function createDriver(context = {}) {
       getProjectPath: 'getProjectPath',
       status: 'getSessionStatus',
       messages: 'getSessionMessages'
+    },
+    customMethods: {
+      search: (service, projectName, keyword, contextLength, options = {}) => service.searchSessions(
+        keyword,
+        contextLength,
+        { ...options, projectName }
+      ),
+      searchAcrossProjects: (service, keyword, contextLength, options = {}) => service.searchSessions(
+        keyword,
+        contextLength,
+        options
+      )
     },
     onSuccess: operation => {
       if (['delete', 'fork', 'saveSessionOrder'].includes(operation)) {

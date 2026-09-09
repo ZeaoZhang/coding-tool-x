@@ -22,6 +22,7 @@ function requestContext(request, manifest, route, config) {
   return {
     platform: manifest.key,
     manifest,
+    route,
     config,
     params,
     query: normalizeQuery(request.query),

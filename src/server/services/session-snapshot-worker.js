@@ -3,15 +3,15 @@
 const path = require('path');
 const { getPlatformContext } = require('../platform-context');
 
-function invokeSessionDriver(platform, operation, args = [], runtime = null) {
+function invokeSessionDriver(platform, capability, operation, args = [], runtime = null) {
   const resolvedRuntime = runtime || getPlatformContext().runtime;
-  const driver = resolvedRuntime?.getDriver?.(platform, 'sessions');
+  const driver = resolvedRuntime?.getDriver?.(platform, capability);
   if (!driver || typeof driver[operation] !== 'function') {
-    const error = new Error(`平台 ${platform} 未声明 sessions.${operation} capability`);
+    const error = new Error(`平台 ${platform} 未声明 ${capability}.${operation} capability`);
     error.status = 404;
     error.code = 'unsupported';
     error.platform = platform;
-    error.capability = 'sessions';
+    error.capability = capability;
     error.operation = operation;
     throw error;
   }
@@ -20,11 +20,11 @@ function invokeSessionDriver(platform, operation, args = [], runtime = null) {
     if (!value || typeof value !== 'object' || !value.status) return value;
     if (value.status === 'ok') return value.data;
     if (value.cause instanceof Error) throw value.cause;
-    const error = new Error(value.error || `平台 ${platform} 的 sessions.${operation} 失败`);
+    const error = new Error(value.error || `平台 ${platform} 的 ${capability}.${operation} 失败`);
     Object.assign(error, {
       status: value.status,
       platform: value.platform || platform,
-      capability: value.capability || 'sessions',
+      capability: value.capability || capability,
       operation: value.operation || operation
     });
     throw error;
@@ -41,18 +41,29 @@ function getAliases() {
   return loadAliases();
 }
 
-async function buildClaudePayload(projectName, config, options = {}) {
+function indexedReadOptions(options = {}, config) {
+  const force = options.force === true;
+  return {
+    force,
+    ...(force ? { consistency: 'complete' } : {}),
+    ...(config ? { config } : {})
+  };
+}
+
+async function buildClaudePayload(projectName, config, options = {}, runtime = null) {
   const result = await invokeSessionDriver(
     'claude',
     'sessions',
     'listSessions',
-    [config, projectName, { force: options.force === true }]
+    [projectName, indexedReadOptions(options, config)],
+    runtime
   );
   const { fullPath, projectName: displayName } = invokeSessionDriver(
     'claude',
     'sessions',
     'parseRealProjectPath',
-    [projectName]
+    [projectName],
+    runtime
   );
 
   return {
@@ -67,13 +78,15 @@ async function buildClaudePayload(projectName, config, options = {}) {
   };
 }
 
-async function buildCodexPayload(projectName, options = {}) {
+async function buildCodexPayload(projectName, options = {}, runtime = null) {
   const sessions = await invokeSessionDriver(
     'codex',
     'sessions',
     'listSessions',
-    [projectName, { force: options.force === true }]
+    [projectName, indexedReadOptions(options)],
+    runtime
   );
+  const projectFullPath = sessions.find(session => session.projectFullPath)?.projectFullPath || projectName;
 
   return {
     sessions,
@@ -81,27 +94,31 @@ async function buildCodexPayload(projectName, options = {}) {
     aliases: getAliases(),
     projectInfo: {
       name: projectName,
-      fullPath: projectName,
-      path: projectName,
+      fullPath: projectFullPath,
+      path: projectFullPath,
       displayName: projectName
     }
   };
 }
 
-async function buildGeminiPayload(projectHash, options = {}) {
+async function buildGeminiPayload(projectHash, options = {}, runtime = null) {
   const sessions = await invokeSessionDriver(
     'gemini',
     'sessions',
     'listSessions',
-    [projectHash, { force: options.force === true }]
+    [projectHash, indexedReadOptions(options)],
+    runtime
   );
   const realPath = await invokeSessionDriver(
     'gemini',
     'sessions',
     'getProjectPath',
-    [projectHash, { force: options.force === true }]
+    [projectHash, indexedReadOptions(options)],
+    runtime
   );
-  const displayName = realPath ? path.basename(realPath) : `Project ${projectHash.substring(0, 8)}`;
+  const indexedPath = sessions.find(session => session.projectRoot || session.projectFullPath);
+  const fullPath = realPath || indexedPath?.projectRoot || indexedPath?.projectFullPath || projectHash;
+  const displayName = fullPath !== projectHash ? path.basename(fullPath) : `Project ${projectHash.substring(0, 8)}`;
 
   return {
     sessions,
@@ -109,26 +126,33 @@ async function buildGeminiPayload(projectHash, options = {}) {
     aliases: getAliases(),
     projectInfo: {
       name: projectHash,
-      fullPath: realPath || projectHash,
-      path: realPath || projectHash,
+      fullPath,
+      path: fullPath,
       displayName
     }
   };
 }
 
-async function buildOpenCodePayload(projectName, options = {}) {
+async function buildOpenCodePayload(projectName, options = {}, runtime = null) {
   const sessions = await invokeSessionDriver(
     'opencode',
     'sessions',
     'listSessions',
-    [projectName, { force: options.force === true }]
+    [projectName, indexedReadOptions(options)],
+    runtime
   );
-  const projects = await invokeSessionDriver('opencode', 'sessions', 'getProjects', [{
-    force: options.force === true
-  }]);
+  const projects = await invokeSessionDriver(
+    'opencode',
+    'sessions',
+    'getProjects',
+    [indexedReadOptions(options)],
+    runtime
+  );
   const firstDirectory = sessions.find(session => session.directory)?.directory;
-  const project = firstDirectory ? null : projects.find(p => p.name === projectName);
-  const fullPath = firstDirectory || project?.fullPath || projectName;
+  const project = projects.find(p => p.name === projectName) || null;
+  const projectPath = [project?.fullPath, project?.path]
+    .find(value => value && value !== '/');
+  const fullPath = projectPath || firstDirectory || project?.fullPath || project?.path || projectName;
 
   return {
     sessions,
@@ -143,19 +167,24 @@ async function buildOpenCodePayload(projectName, options = {}) {
   };
 }
 
-async function buildOmpPayload(projectName, options = {}) {
+async function buildOmpPayload(projectName, options = {}, runtime = null) {
   const sessions = await invokeSessionDriver(
     'omp',
     'sessions',
     'listSessions',
-    [projectName, { force: options.force === true }]
+    [projectName, indexedReadOptions(options)],
+    runtime
   );
   const firstDirectory = sessions.find(session => session.directory)?.directory;
   let project = null;
   try {
-    project = (await invokeSessionDriver('omp', 'sessions', 'getProjects', [{
-      force: options.force === true
-    }])).find(p => p.name === projectName) || null;
+    project = (await invokeSessionDriver(
+      'omp',
+      'sessions',
+      'getProjects',
+      [indexedReadOptions(options)],
+      runtime
+    )).find(p => p.name === projectName) || null;
   } catch {
     project = null;
   }
@@ -174,19 +203,19 @@ async function buildOmpPayload(projectName, options = {}) {
   };
 }
 
-async function buildPayload({ source, projectName, config, options }) {
+async function buildPayload({ source, projectName, config, options, runtime }) {
   const snapshotOptions = options || {};
   switch (source) {
     case 'claude':
-      return buildClaudePayload(projectName, config || {}, snapshotOptions);
+      return buildClaudePayload(projectName, config || {}, snapshotOptions, runtime);
     case 'codex':
-      return buildCodexPayload(projectName, snapshotOptions);
+      return buildCodexPayload(projectName, snapshotOptions, runtime);
     case 'gemini':
-      return buildGeminiPayload(projectName, snapshotOptions);
+      return buildGeminiPayload(projectName, snapshotOptions, runtime);
     case 'opencode':
-      return buildOpenCodePayload(projectName, snapshotOptions);
+      return buildOpenCodePayload(projectName, snapshotOptions, runtime);
     case 'omp':
-      return buildOmpPayload(projectName, snapshotOptions);
+      return buildOmpPayload(projectName, snapshotOptions, runtime);
     default:
       throw new Error(`Unsupported session snapshot source: ${source}`);
   }

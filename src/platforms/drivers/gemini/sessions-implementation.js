@@ -790,8 +790,11 @@ async function getSessionById(sessionId) {
  * @param {number} contextLength - 上下文长度（可选）
  * @returns {Array} 搜索结果数组
  */
-async function searchSessions(keyword, contextLength = 35) {
-  const results = await getSessionHistoryIndex().searchSessions('gemini', keyword, { contextLength });
+async function searchSessions(keyword, contextLength = 35, options = {}) {
+  const results = await getSessionHistoryIndex().searchSessions('gemini', keyword, {
+    ...options,
+    contextLength
+  });
   return results.map(result => ({
     sessionId: result.sessionId,
     projectHash: result.projectName,

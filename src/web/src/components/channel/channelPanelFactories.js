@@ -228,8 +228,16 @@ function buildOAuthAuthField() {
     showWhen: isOAuthForm
   }
 }
+
 function isOmpOAuthGatewayForm(form = {}) {
   return isOAuthForm(form) && form.oauthGatewayMode === true
+}
+
+function buildOmpOAuthAuthField() {
+  return {
+    ...buildOAuthAuthField(),
+    showWhen: (form) => isOAuthForm(form) && !isOmpOAuthGatewayForm(form)
+  }
 }
 
 function showOmpAuthField(form = {}) {
@@ -1653,6 +1661,7 @@ const channelPanelFactories = {
       {
         title: '基本信息',
         fields: [
+          buildOmpOAuthAuthField(),
           { key: 'name', label: '渠道名称', type: 'text', required: true, placeholder: '显示名称' },
           {
             key: 'providerKey',
@@ -1812,6 +1821,9 @@ const channelPanelFactories = {
       providerApi: channel.providerApi || channel.api || 'openai-completions',
       apiKey: channel.apiKey || '',
       authMode: channel.authMode || 'api_key',
+      authRef: channel.authRef
+        ? { credentialId: '', providerId: '', accountId: '', identityKey: '', accountEmail: '', ...channel.authRef }
+        : { credentialId: '', providerId: '', accountId: '', identityKey: '', accountEmail: '' },
       oauthGatewayMode: channel.authMode === 'oauth'
         && (channel.transport === 'pi-native' || channel.providerConfig?.transport === 'pi-native'),
       authSource: channel.authSource,
@@ -1846,7 +1858,7 @@ const channelPanelFactories = {
       if (!preset) return form
       const newForm = { ...form, presetId }
       newForm.name = preset.name
-      newForm.providerKey = (preset.id || preset.name || 'provider')
+      newForm.providerKey = preset.providerKey || (preset.id || preset.name || 'provider')
         .toLowerCase()
         .replace(/[^a-z0-9_-]+/g, '-')
         .replace(/^-|-$/g, '')

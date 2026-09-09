@@ -119,7 +119,9 @@ function sendLegacyResult(response, value, route, context) {
 
 async function invokeRoute({ registry, runtime, config, request, response, manifest: suppliedManifest, route }) {
   const platform = routePlatform(request, suppliedManifest || {});
-  const manifest = suppliedManifest || resolvePlatform(registry, platform);
+  const manifest = suppliedManifest?.key === platform
+    ? suppliedManifest
+    : resolvePlatform(registry, platform);
   const operation = route.operation;
   const context = { platform, manifest, config, capability: route.capability, operation };
 

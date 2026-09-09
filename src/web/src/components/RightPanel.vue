@@ -125,6 +125,15 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import {
+  NButton,
+  NIcon,
+  NText,
+  NSwitch,
+  NTooltip,
+  NTag,
+  NAlert
+} from 'naive-ui'
+import {
   AddOutline,
   ChatbubblesOutline,
   ExtensionPuzzleOutline,

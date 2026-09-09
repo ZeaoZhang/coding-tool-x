@@ -95,6 +95,47 @@ test('dispatches custom manifest routes with a pure request context and normaliz
     body: {},
     remoteAddress: expect.any(String)
   });
+  expect(operationContext.route).toEqual(definition.api.routes[0]);
+});
+
+test('keeps dynamic platform routes bound to the requested manifest', async () => {
+  const route = {
+    path: '/sessions/:projectName',
+    method: 'GET',
+    capability: 'sessions',
+    operation: 'listSessions',
+    request: 'default',
+    response: 'sessions-list'
+  };
+  const definitions = ['claude', 'codex'].map(key => ({
+    key,
+    capabilities: { sessions: `legacy:${key}` },
+    api: { prefix: key, routes: [route] }
+  }));
+  const registry = {
+    list: () => definitions,
+    resolve: key => definitions.find(item => item.key === key) || null,
+    getCapability: (platform, capability) => registry.resolve(platform)?.capabilities?.[capability]
+  };
+  const app = express();
+  app.use('/api/platforms', createPlatformRouter({
+    registry,
+    runtime: {
+      getDriver: platform => ({
+        listSessions: context => ({
+          status: 'ok',
+          data: [{ platform, contextPlatform: context.platform, manifestKey: context.manifest.key }]
+        })
+      })
+    }
+  }));
+
+  await expect(request(app, 'GET', '/api/platforms/codex/sessions/project')).resolves.toMatchObject({
+    status: 200,
+    body: {
+      sessions: [{ platform: 'codex', contextPlatform: 'codex', manifestKey: 'codex' }]
+    }
+  });
 });
 
 test('maps Driver rejection to a failed typed HTTP response', async () => {

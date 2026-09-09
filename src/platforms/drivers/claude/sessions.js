@@ -14,8 +14,6 @@ function createDriver(context = {}) {
     adapterMethods: { inventory: 'inventory', parse: 'parse' },
     methods: {
       launch: 'launch',
-      delete: 'deleteSession',
-      fork: 'forkSession',
       saveSessionOrder: 'saveSessionOrder',
       getSessionOrder: 'getSessionOrder',
       parseRealProjectPath: 'parseRealProjectPath',
@@ -24,6 +22,16 @@ function createDriver(context = {}) {
       messages: 'getSessionMessages'
     },
     customMethods: {
+      delete: (service, projectName, sessionId, options = {}) => {
+        const result = service.deleteSession(options.config || {}, projectName, sessionId);
+        context.sessionHistoryIndex?.invalidateSource('claude');
+        return result;
+      },
+      fork: (service, projectName, sessionId, options = {}) => {
+        const result = service.forkSession(options.config || {}, projectName, sessionId, options);
+        context.sessionHistoryIndex?.invalidateSource('claude');
+        return result;
+      },
       listSessions: (service, projectNameOrRequest, options = {}) => {
         const descriptorRequest = projectNameOrRequest && typeof projectNameOrRequest === 'object';
         const request = descriptorRequest ? projectNameOrRequest : options;

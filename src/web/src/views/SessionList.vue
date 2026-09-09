@@ -54,7 +54,7 @@
                   size="small"
                   type="primary"
                   secondary
-                  :disabled="!displayProjectPath"
+                  :disabled="!projectConfigPath"
                   @click="showProjectConfig = true"
                 >
                   项目配置
@@ -359,7 +359,7 @@
 
     <ProjectConfigDrawer
       v-model:show="showProjectConfig"
-      :project-path="displayProjectPath"
+      :project-path="projectConfigPath"
       :platform="currentChannel"
     />
 
@@ -443,14 +443,49 @@ const dragOptions = {
   scroll: true
 }
 
-// Project display name (使用后端解析的名称)
-const projectDisplayName = computed(() => {
-  return store.currentProjectInfo?.displayName || props.projectName
+function isAbsoluteProjectPath(value) {
+  return typeof value === 'string' && (
+    value.startsWith('/')
+    || /^[A-Za-z]:[\\/]/.test(value)
+    || value.startsWith('\\\\')
+  )
+}
+
+const currentProject = computed(() => {
+  const projectName = effectiveProjectName.value
+  return store.projects.find(project => project.name === projectName)
+    || store.projects.find(project => (
+      project.displayName === props.projectName
+      || project.fullPath === props.projectName
+      || project.path === props.projectName
+    ))
+    || null
 })
 
-// Full project path (使用后端解析的路径)
+const projectConfigPath = computed(() => {
+  const candidates = [
+    store.currentProjectInfo?.fullPath,
+    store.currentProjectInfo?.path,
+    currentProject.value?.fullPath,
+    currentProject.value?.path
+  ]
+  return candidates.find(isAbsoluteProjectPath) || ''
+})
+
+// Project display name (优先使用会话信息，其次使用项目列表信息)
+const projectDisplayName = computed(() => {
+  return store.currentProjectInfo?.displayName
+    || currentProject.value?.displayName
+    || props.projectName
+})
+
+// Full project path (优先使用会话信息，其次使用项目列表信息)
 const displayProjectPath = computed(() => {
-  return store.currentProjectInfo?.fullPath || effectiveProjectName.value
+  return projectConfigPath.value
+    || store.currentProjectInfo?.fullPath
+    || currentProject.value?.fullPath
+    || currentProject.value?.path
+    || effectiveProjectName.value
 })
 
 const selectedSessionSet = computed(() => new Set(selectedSessionIds.value))
@@ -475,7 +510,9 @@ async function ensureProjectNameResolved() {
   }
 
   const displayMatch = store.projects.find(p =>
-    p.displayName === props.projectName || p.fullPath === props.projectName
+    p.displayName === props.projectName
+    || p.fullPath === props.projectName
+    || p.path === props.projectName
   )
   if (displayMatch) {
     resolvedProjectName.value = displayMatch.name

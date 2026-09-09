@@ -18,6 +18,8 @@ const INDEX_INVENTORY_TTL_MS = 30000;
 /** @type {number} Maximum time a cold stale-ok read waits for inventory */
 const INDEX_COLD_WAIT_MS = 1500;
 const BUILTIN_SESSION_SOURCES = new Set(['claude', 'codex', 'gemini', 'omp']);
+// Keep synchronized with the parserVersion exposed by the built-in session drivers.
+const BUILTIN_SESSION_PARSER_VERSIONS = Object.freeze({ claude: 2, codex: 2, gemini: 2, omp: 2 });
 function _parserVersionForDriver(driver) {
   const version = Number(driver?.parserVersion);
   return Number.isInteger(version) && version >= 1 ? version : 1;
@@ -332,6 +334,7 @@ function _adaptRuntimeSessionsDriver(driver) {
  */
 function createSessionHistoryIndex(opts = {}) {
   const dbPath = opts.dbPath || PATHS?.sessionHistoryIndex || path.join(PATHS?.base || process.cwd(), 'session-history.sqlite');
+  const explicitProjectsDir = opts.projectsDir;
   const indexConfig = opts.config || (opts.projectsDir ? { projectsDir: opts.projectsDir } : {});
   const explicitAdapters = opts.adapterRegistry || null;
   const adapters = explicitAdapters || {};
@@ -385,8 +388,19 @@ function createSessionHistoryIndex(opts = {}) {
     return Boolean(
       row?.last_inventory_ms
       && Date.now() - Number(row.last_inventory_ms) < INDEX_INVENTORY_TTL_MS
+      && !_hasKnownParserMigrationPending(source)
       && (!explicitAdapters || !_hasParserMigrationPending(source))
     );
+  }
+
+  function _hasKnownParserMigrationPending(source) {
+    if (explicitAdapters || runtimeProvided) return false;
+    const parserVersion = BUILTIN_SESSION_PARSER_VERSIONS[source];
+    if (!parserVersion) return false;
+    const row = _getDb().prepare(
+      'SELECT 1 AS pending FROM session_file WHERE source = ? AND parser_version <> ? LIMIT 1'
+    ).get(source, parserVersion);
+    return Boolean(row);
   }
 
   function _hasParserMigrationPending(source) {
@@ -404,7 +418,9 @@ function createSessionHistoryIndex(opts = {}) {
   }
 
   function _hasUsableIndexedData(source) {
-    return _hasIndexedData(source) && (!explicitAdapters || !_hasParserMigrationPending(source));
+    return _hasIndexedData(source)
+      && !_hasKnownParserMigrationPending(source)
+      && (!explicitAdapters || !_hasParserMigrationPending(source));
   }
 
   function _initSchema(db) {
@@ -450,7 +466,10 @@ function createSessionHistoryIndex(opts = {}) {
 
     const useWorker = shouldUseWorker && !runtimeProvided && !explicitAdapters;
     const workerOptions = { force };
-    if (options.config?.projectsDir) workerOptions.projectsDir = options.config.projectsDir;
+    const workerProjectsDir = source === 'claude'
+      ? (options.config?.projectsDir || explicitProjectsDir)
+      : explicitProjectsDir;
+    if (workerProjectsDir) workerOptions.projectsDir = workerProjectsDir;
     const promise = useWorker
       ? workerRunner(source, dbPath, workerOptions)
       : _runInventory(source, { force, config: options.config || indexConfig });
@@ -528,7 +547,9 @@ function createSessionHistoryIndex(opts = {}) {
         }
       }
       const parserVersion = _parserVersionForSource(source, adapter);
-      const inventoryResult = await adapter.inventory({ projectsDir: config.projectsDir });
+      const inventoryResult = await adapter.inventory({
+        projectsDir: source === 'claude' ? config.projectsDir : explicitProjectsDir
+      });
       if (_isTypedFailureResult(inventoryResult)) {
         throw _typedFailureToError(inventoryResult);
       }
@@ -655,7 +676,7 @@ function createSessionHistoryIndex(opts = {}) {
         for (const item of parsed) {
           if (item?.value) {
             const { descriptor, parseResult } = item.value;
-            _insertSession({ deleteSession, insertFile, insertMessage }, source, descriptor, parseResult.session, parseResult.messages, parserVersion);
+            _insertSession({ deletePath, deleteSession, insertFile, insertMessage }, source, descriptor, parseResult.session, parseResult.messages, parserVersion);
           }
         }
         db.exec('COMMIT');
@@ -686,7 +707,8 @@ function createSessionHistoryIndex(opts = {}) {
 
 
   function _insertSession(statements, source, descriptor, session, messages, parserVersion) {
-    const { deleteSession, insertFile, insertMessage } = statements;
+    const { deletePath, deleteSession, insertFile, insertMessage } = statements;
+    deletePath.run(source, descriptor.filePath);
     deleteSession.run(source, session.sessionId);
     insertFile.run(
       source,

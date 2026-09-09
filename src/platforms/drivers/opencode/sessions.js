@@ -8,7 +8,7 @@ function createDriver(context = {}) {
     platform: 'opencode',
     capability: 'sessions',
     servicePath: './opencode/sessions-implementation',
-    localServicePath: '../opencode/sessions-implementation',
+    localServicePath: '../platforms/drivers/opencode/sessions-implementation',
     methods: {
       getProjects: 'getProjects',
       recent: 'getRecentSessions',
@@ -18,6 +18,7 @@ function createDriver(context = {}) {
       fork: 'forkSession',
       saveSessionOrder: 'saveSessionOrder',
       status: 'getSessionStatus',
+      outline: 'getSessionOutline',
       isAvailable: 'isOpenCodeInstalled'
     },
     customMethods: {
@@ -26,9 +27,9 @@ function createDriver(context = {}) {
         if (typeof method !== 'function') return undefined;
         return method.apply(service, args);
       },
-      messages: (service, sessionId) => {
+      messages: (service, sessionId, options) => {
         if (typeof service.getSessionMessages === 'function') {
-          return service.getSessionMessages(sessionId);
+          return service.getSessionMessages(sessionId, options);
         }
         const session = typeof service.getSessionById === 'function'
           ? service.getSessionById(sessionId)

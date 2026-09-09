@@ -238,6 +238,55 @@ describe('gemini-sessions project discovery and querying', () => {
     ]);
   });
 
+  test('derives the project hash and native session id from a slug session header', async () => {
+    const projectPath = path.join(homeDir, 'workspace', 'header-only-app');
+    fs.mkdirSync(projectPath, { recursive: true });
+    const projectHash = hashPath(projectPath);
+    const sessionId = 'd5bee61b-bcdf-406c-ba9a-51700c608d26';
+    createGeminiJsonlSession(
+      'header-only-app',
+      'session-2026-05-16T13-48-d5bee61b.jsonl',
+      {
+        sessionId,
+        cwd: projectPath,
+        lastUpdated: '2026-05-16T13:48:39.855Z'
+      },
+      [{ type: 'user', content: 'header path', timestamp: '2026-05-16T13:49:00.000Z' }]
+    );
+
+    const adapter = require('../../../src/platforms/drivers/gemini/session-history-adapter');
+    const [descriptor] = await adapter.inventory();
+
+    expect(descriptor).toMatchObject({ sessionId, projectName: projectHash, projectRoot: projectPath });
+    expect(await geminiSessions.getProjects()).toEqual([
+      expect.objectContaining({ name: projectHash, fullPath: projectPath })
+    ]);
+    expect(await geminiSessions.getProjectSessions(projectHash)).toEqual([
+      expect.objectContaining({ sessionId, projectRoot: projectPath })
+    ]);
+  });
+
+  test('groups multiple files for one native session id before choosing the newest descriptor', async () => {
+    const sessionId = 'd5bee61b-bcdf-406c-ba9a-51700c608d26';
+    createGeminiJsonlSession(
+      'duplicate-app',
+      'session-2026-05-16T13-48-d5bee61b.jsonl',
+      { sessionId, lastUpdated: '2026-05-16T13:48:39.855Z' },
+      []
+    );
+    createGeminiJsonlSession(
+      'duplicate-app',
+      'session-2026-05-16T14-48-d5bee61b.jsonl',
+      { sessionId, lastUpdated: '2026-05-16T14:48:39.855Z' },
+      []
+    );
+
+    const adapter = require('../../../src/platforms/drivers/gemini/session-history-adapter');
+    const descriptors = await adapter.inventory();
+
+    expect(descriptors.map(descriptor => descriptor.sessionId)).toEqual([sessionId, sessionId]);
+  });
+
   test('reads, normalizes, searches, and returns recent Gemini sessions', async () => {
     const projectPath = path.join(homeDir, 'workspace', 'notes-app');
     fs.mkdirSync(projectPath, { recursive: true });

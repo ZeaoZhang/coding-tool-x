@@ -5,6 +5,12 @@ const path = require('path');
 const { getCodexDir } = require('./config');
 const { parseSession } = require('./parser');
 
+function extractSessionIdFromRolloutFilename(filePath) {
+  const basename = path.basename(filePath, '.jsonl');
+  const match = basename.match(/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i);
+  return match ? match[1] : basename;
+}
+
 /**
  * Scan all Codex session files recursively.
  * @returns {Array<{filePath: string, size: number, mtimeMs: number, sessionId: string}>}
@@ -37,7 +43,7 @@ async function scanSessionFiles(projectsDir = null) {
             filePath: fullPath,
             size: stat.size,
             mtimeMs: stat.mtimeMs,
-            sessionId: entry.name.replace(/\.jsonl$/, '')
+            sessionId: extractSessionIdFromRolloutFilename(fullPath)
           });
         } catch (_) {}
       }
@@ -90,6 +96,10 @@ async function parse(descriptor) {
   const messages = parsed?.messages || [];
   const tokenUsage = parsed?.tokens;
   const projectName = extractCodexProjectName(meta);
+  const descriptorIdIsNative = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sessionId);
+  const nativeSessionId = descriptorIdIsNative
+    ? sessionId
+    : (typeof meta?.sessionId === 'string' && meta.sessionId.trim() ? meta.sessionId.trim() : sessionId);
   const usageJson = tokenUsage ? JSON.stringify(tokenUsage) : null;
 
   // Build normalized messages
@@ -119,7 +129,7 @@ async function parse(descriptor) {
 
     const isUser = msg.role === 'user' || msg.role === 'human';
     return {
-      messageId: msg.id || `codex-${sessionId}-${idx}`,
+      messageId: msg.id || `codex-${nativeSessionId}-${idx}`,
       role: msg.role || 'unknown',
       type: msg.type || msg.role || 'unknown',
       subtype: msg.subtype || null,
@@ -136,10 +146,10 @@ async function parse(descriptor) {
   const lastMsg = normalizedMessages[normalizedMessages.length - 1];
 
   const session = {
-    sessionId,
+    sessionId: nativeSessionId,
     projectName,
     projectDisplayName: projectName,
-    projectFullPath: null,
+    projectFullPath: typeof meta?.cwd === 'string' && meta.cwd.trim() ? meta.cwd.trim() : null,
     firstMessage: firstUserMsg ? firstUserMsg.content : null,
     gitBranch: meta ? (meta.gitBranch || null) : null,
     provider: null,

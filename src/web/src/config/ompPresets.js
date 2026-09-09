@@ -3,6 +3,17 @@ import { opencodePresets } from './opencodePresets'
 export const ompPresets = [
   ...opencodePresets,
   {
+    id: 'omp_oauth',
+    name: 'OMP OAuth',
+    category: 'oauth',
+    description: '使用本地 OMP broker OAuth 登录凭据',
+    websiteUrl: '',
+    baseUrl: '',
+    providerKey: 'omp-oauth',
+    authMode: 'oauth',
+    oauthProviderId: ''
+  },
+  {
     id: 'omp_oauth_gateway',
     name: 'OMP OAuth Auth Gateway',
     category: 'oauth',
@@ -22,7 +33,7 @@ export const ompPresets = [
 export const ompPresetCategories = {
   apikey: 'API Key',
   entry: '转换入口',
-  oauth: 'OAuth 网关',
+  oauth: 'OAuth',
   custom: '自定义'
 }
 
@@ -33,4 +44,3 @@ export function getOmpPresetById(id) {
 export function getOmpPresetsByCategory(category) {
   return ompPresets.filter(preset => preset.category === category)
 }
-

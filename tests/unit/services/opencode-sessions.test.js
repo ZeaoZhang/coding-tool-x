@@ -190,6 +190,16 @@ describe('opencode-sessions', () => {
       const fresh = require('../../../src/platforms/drivers/opencode/sessions-implementation');
       expect(fresh.isOpenCodeInstalled()).toBe(false);
     });
+
+    test('discovers profile-suffixed OpenCode databases', () => {
+      db.close();
+      fs.renameSync(dbPath, path.join(dataDir, 'opencode-.db'));
+      delete require.cache[MODULE_PATH];
+      const fresh = require('../../../src/platforms/drivers/opencode/sessions-implementation');
+
+      expect(fresh.isOpenCodeInstalled()).toBe(true);
+      expect(fresh.getProjects()).toHaveLength(2);
+    });
   });
 
   describe('getProjectAndSessionCounts', () => {
@@ -219,6 +229,38 @@ describe('opencode-sessions', () => {
 
       const proj2 = projects.find(p => p.name === 'proj-2');
       expect(proj2.displayName).toBe('Readable Project');
+    });
+
+    test('resolves embedded host project metadata from an internal project directory', () => {
+      const hostDataDir = path.join(testDir, 'host-app', 'namespaces', 'release-stable', 'data');
+      const internalProjectDir = path.join(hostDataDir, 'projects', 'host-project-id');
+      const hostDbPath = path.join(hostDataDir, 'app.sqlite');
+      fs.mkdirSync(internalProjectDir, { recursive: true });
+
+      const hostDb = new DatabaseSync(hostDbPath);
+      hostDb.exec(`
+        CREATE TABLE projects (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          metadata_json TEXT
+        );
+      `);
+      hostDb.prepare('INSERT INTO projects (id, name, metadata_json) VALUES (?, ?, ?)').run(
+        'host-project-id',
+        'Readable Host Project',
+        JSON.stringify({ linkedDirs: ['/workspace/actual-project'] })
+      );
+      hostDb.close();
+
+      db.prepare('UPDATE session SET directory = ? WHERE project_id = ?')
+        .run(internalProjectDir, 'proj-1');
+      db.prepare('UPDATE project SET worktree = ? WHERE id = ?')
+        .run('/', 'proj-1');
+
+      const project = opencodeSessions.getProjects().find(p => p.name === 'proj-1');
+      expect(project.displayName).toBe('Readable Host Project');
+      expect(project.fullPath).toBe('/workspace/actual-project');
+      expect(project.path).toBe('/workspace/actual-project');
     });
 
     test('respects project order', () => {
@@ -269,6 +311,44 @@ describe('opencode-sessions', () => {
 
     test('returns null for unknown session', () => {
       expect(opencodeSessions.getSessionById('unknown')).toBeNull();
+    });
+
+    test('returns status, outline, and paginated messages for session detail routes', () => {
+      expect(opencodeSessions.getSessionStatus('ses-1')).toMatchObject({
+        sessionId: 'ses-1',
+        filePath: 'opencode://proj-1/ses-1'
+      });
+      expect(opencodeSessions.getSessionOutline('ses-1')).toMatchObject({
+        sessionId: 'ses-1',
+        items: [{ userMessageNumber: 1, preview: 'needle question' }]
+      });
+      expect(opencodeSessions.getSessionMessages('ses-1', {
+        page: 1,
+        limit: 2,
+        order: 'asc'
+      })).toMatchObject({
+        messages: [{ role: 'user' }, { role: 'assistant' }],
+        pagination: { page: 1, limit: 2, total: 3, hasMore: true }
+      });
+    });
+
+    test('reads modern OpenCode user text from message parts', () => {
+      db.prepare('UPDATE message SET data = ? WHERE id = ?')
+        .run(JSON.stringify({ role: 'user' }), 'msg-1');
+      db.prepare(`INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?, ?)`).run(
+        'prt-user',
+        'msg-1',
+        'ses-1',
+        1001,
+        1001,
+        JSON.stringify({ type: 'text', text: 'modern user prompt' })
+      );
+
+      const session = opencodeSessions.getSessionById('ses-1');
+      expect(session.messages.find(message => message.role === 'user')?.content).toBe('modern user prompt');
+      expect(opencodeSessions.searchSessions('modern user prompt')).toEqual([
+        expect.objectContaining({ sessionId: 'ses-1' })
+      ]);
     });
   });
 

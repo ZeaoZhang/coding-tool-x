@@ -463,16 +463,16 @@ function forkSession(sessionId, options = {}) {
     throw new Error('Session not found');
   }
 
-  // 读取原会话文件内容
-  const originalContent = fs.readFileSync(sourceFile.filePath, 'utf8');
-  const content = sliceCodexContentByUserMessage(
-    originalContent,
-    options.afterUserMessageNumber
-  );
-
   // 生成新的 session ID (使用 crypto.randomUUID 生成 v4 UUID)
   const crypto = require('crypto');
   const newSessionId = crypto.randomUUID();
+
+  // 读取原会话文件内容，并确保副本的原生元数据使用新 ID
+  const originalContent = fs.readFileSync(sourceFile.filePath, 'utf8');
+  const content = rewriteCodexSessionId(
+    sliceCodexContentByUserMessage(originalContent, options.afterUserMessageNumber),
+    newSessionId
+  );
 
   // 生成新的时间戳（Codex 格式：YYYY-MM-DDTHH-MM-SS）
   const now = new Date();
@@ -661,6 +661,22 @@ function splitTextPreserveEol(content) {
 function joinTextPreserveEol(lines, eol, hasTrailingEol) {
   const text = lines.join(eol);
   return hasTrailingEol ? `${text}${eol}` : text;
+}
+
+function rewriteCodexSessionId(content, sessionId) {
+  const { lines, eol, hasTrailingEol } = splitTextPreserveEol(content);
+  const rewritten = lines.map(line => {
+    if (!line.trim()) return line;
+    try {
+      const record = JSON.parse(line);
+      if (record?.type === 'session_meta' && record.payload && typeof record.payload === 'object') {
+        record.payload.id = sessionId;
+        return JSON.stringify(record);
+      }
+    } catch (_) {}
+    return line;
+  });
+  return joinTextPreserveEol(rewritten, eol, hasTrailingEol);
 }
 
 function sliceCodexContentByUserMessage(content, afterUserMessageNumber) {

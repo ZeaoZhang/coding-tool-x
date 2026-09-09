@@ -8,6 +8,40 @@ const { getGeminiDir } = require('./config');
 
 const HASH_RE = /^[a-f0-9]{64}$/;
 const SESSION_FILE_RE = /^session-(.*)-([a-f0-9]+)\.(json|jsonl)$/;
+const DESCRIPTOR_HEADER_BYTES = 64 * 1024;
+
+function readDescriptorMetadata(filePath, size) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const buffer = Buffer.alloc(Math.min(Math.max(Number(size) || 0, 1), DESCRIPTOR_HEADER_BYTES));
+    const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
+    const chunk = buffer.toString('utf8', 0, bytesRead);
+    let state = null;
+    try {
+      const parsed = JSON.parse(chunk);
+      state = parsed?.$set || parsed;
+    } catch (_) {
+      const firstLine = chunk.split(/\r?\n/, 1)[0];
+      try {
+        const parsed = JSON.parse(firstLine);
+        state = parsed?.$set || parsed;
+      } catch (_) {}
+    }
+    if (!state || typeof state !== 'object') return {};
+    return {
+      sessionId: state.sessionId || state.id || null,
+      projectHash: state.projectHash || state.project_hash || null,
+      projectPath: state.projectPath || state.project_path || state.cwd || null
+    };
+  } catch (_) {
+    return {};
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch (_) {}
+    }
+  }
+}
 
 /**
  * Extract text content from Gemini message parts.
@@ -122,7 +156,7 @@ function parseSessionContentFromState(state, sessionId) {
   const meta = {
     sessionId: state.sessionId || state.id || sessionId,
     projectHash: state.projectHash || state.project_hash || null,
-    projectPath: state.projectPath || state.project_path || null,
+    projectPath: state.projectPath || state.project_path || state.cwd || null,
     lastUpdated: state.lastUpdated || state.last_updated || null,
     messages: state.messages || []
   };
@@ -235,6 +269,7 @@ async function inventory() {
       } catch (_) {
         continue;
       }
+      const header = readDescriptorMetadata(filePath, stat.size);
       let projectRoot = projectRoots.get(entry.name) || null;
       if (!projectRoot) {
         try {
@@ -243,13 +278,14 @@ async function inventory() {
           projectRoot = null;
         }
       }
+      projectRoot = header.projectPath || projectRoot;
 
       descriptors.push({
         filePath,
         size: stat.size,
         mtimeMs: stat.mtimeMs,
-        sessionId: match[1],
-        projectName: projectRoot ? getFilePathHash(projectRoot) : entry.name,
+        sessionId: header.sessionId || match[2] || match[1],
+        projectName: header.projectHash || (projectRoot ? getFilePathHash(projectRoot) : entry.name),
         projectRoot
       });
     }
@@ -266,8 +302,11 @@ async function parse(descriptor) {
 
   const { messages, meta } = parseSessionContent(filePath, sessionId);
   const resolvedSessionId = meta.sessionId || sessionId;
-  const resolvedProjectName = meta.projectHash || projectName || 'unknown';
   const resolvedProjectPath = meta.projectPath || projectRoot || null;
+  const resolvedProjectName = meta.projectHash
+    || (resolvedProjectPath ? getFilePathHash(resolvedProjectPath) : null)
+    || projectName
+    || 'unknown';
   const firstUserMsg = messages.find(m => m.role === 'user' && m.content);
   const usage = messages.reduce((total, message) => {
     const value = message.usage || {};

@@ -11,7 +11,27 @@ const { NATIVE_PATHS, PATHS } = require('../../../config/paths');
 
 const PROJECT_ORDER_FILE = PATHS.opencodeProjectOrder;
 const SESSION_ORDER_FILE = PATHS.opencodeSessionOrder;
-const OPENCODE_DB_PATH = path.join(NATIVE_PATHS.opencode.data, 'opencode.db');
+function getOpenCodeDbPath(dataDir = NATIVE_PATHS.opencode.data) {
+  const configuredPath = typeof process.env.OPENCODE_DB_PATH === 'string'
+    ? process.env.OPENCODE_DB_PATH.trim()
+    : '';
+  if (configuredPath && fs.existsSync(configuredPath)) return configuredPath;
+
+  const defaultPath = path.join(dataDir, 'opencode.db');
+  if (fs.existsSync(defaultPath)) return defaultPath;
+
+  try {
+    return fs.readdirSync(dataDir, { withFileTypes: true })
+      .filter(entry => entry.isFile() && /^opencode-.*\.db$/.test(entry.name))
+      .map(entry => {
+        const filePath = path.join(dataDir, entry.name);
+        return { filePath, mtimeMs: fs.statSync(filePath).mtimeMs };
+      })
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)[0]?.filePath || defaultPath;
+  } catch (_) {
+    return defaultPath;
+  }
+}
 
 function ensureParentDir(filePath) {
   const dir = path.dirname(filePath);
@@ -61,6 +81,48 @@ function parseJsonMaybe(raw, fallback = null) {
     return JSON.parse(raw);
   } catch (err) {
     return fallback;
+  }
+}
+
+function isAbsolutePath(value) {
+  return typeof value === 'string' && (
+    path.isAbsolute(value)
+    || /^[a-zA-Z]:[\\/]/.test(value)
+    || value.startsWith('\\\\')
+  );
+}
+
+function getEmbeddedProjectMetadata(directory) {
+  if (!isAbsolutePath(directory)) return null;
+
+  const projectDirectory = path.normalize(directory);
+  const projectsDirectory = path.dirname(projectDirectory);
+  if (path.basename(projectsDirectory) !== 'projects') return null;
+
+  const hostDataDirectory = path.dirname(projectsDirectory);
+  const hostDatabasePath = path.join(hostDataDirectory, 'app.sqlite');
+  if (!fs.existsSync(hostDatabasePath)) return null;
+
+  let hostDb;
+  try {
+    hostDb = new DatabaseSync(hostDatabasePath, { readOnly: true, timeout: 1000 });
+    const project = hostDb.prepare(
+      'SELECT name, metadata_json FROM projects WHERE id = ? LIMIT 1'
+    ).get(path.basename(projectDirectory));
+    if (!project) return null;
+
+    const metadata = parseJsonMaybe(project.metadata_json, {});
+    const linkedDirs = Array.isArray(metadata?.linkedDirs) ? metadata.linkedDirs : [];
+    const fullPath = linkedDirs.find(isAbsolutePath) || '';
+    const displayName = typeof project.name === 'string' && project.name.trim()
+      ? project.name.trim()
+      : (fullPath ? path.basename(fullPath) : path.basename(projectDirectory));
+
+    return { displayName, fullPath };
+  } catch (_) {
+    return null;
+  } finally {
+    try { hostDb?.close(); } catch (_) {}
   }
 }
 
@@ -145,7 +207,7 @@ function toIsoTime(input) {
 
 function _openCodeDb() {
   if (!isOpenCodeInstalled()) return null;
-  const db = new DatabaseSync(OPENCODE_DB_PATH, { readOnly: false, timeout: 5000 });
+  const db = new DatabaseSync(getOpenCodeDbPath(), { readOnly: false, timeout: 5000 });
   db.exec('PRAGMA foreign_keys = ON');
   return db;
 }
@@ -186,7 +248,7 @@ function buildContext(text, keyword, contextLength = 35) {
 
 // 检查 OpenCode 是否安装
 function isOpenCodeInstalled() {
-  return fs.existsSync(OPENCODE_DB_PATH);
+  return fs.existsSync(getOpenCodeDbPath());
 }
 
 
@@ -229,6 +291,9 @@ function removeSessionFromOrder(projectId, sessionId) {
 
 function getProjectDisplayName(project) {
   if (!project) return 'Unknown';
+  if (typeof project.name === 'string' && project.name.trim()) {
+    return project.name.trim();
+  }
   const worktree = project.worktree || '';
   if (worktree) {
     const parsed = parseJsonMaybe(project.data);
@@ -254,12 +319,10 @@ function getSessionLocation(sessionId) {
 function getProjectRows() {
   return _query(`
     SELECT
-      p.id,
-      p.worktree,
-      p.time_created,
-      p.time_updated,
-      p.time_archived,
-      p.data,
+      p.*,
+      (SELECT s.directory FROM session s
+       WHERE s.project_id = p.id AND s.time_archived IS NULL
+       ORDER BY s.time_updated DESC LIMIT 1) AS session_directory,
       (SELECT COUNT(*) FROM session s WHERE s.project_id = p.id AND s.time_archived IS NULL) AS session_count
     FROM project p
     ORDER BY p.time_updated DESC
@@ -375,15 +438,22 @@ function normalizeSession(session, projectId) {
 // ---------------------------------------------------------------------------
 
 function getProjects(_options = {}) {
-  const projects = getProjectRows().map((project) => ({
-    name: project.id,
-    displayName: getProjectDisplayName(project),
-    fullPath: project.worktree || '/',
-    path: project.worktree || '/',
-    sessionCount: Number(project.session_count) || 0,
-    lastUsed: toIsoTime(project.time_updated),
-    source: 'opencode'
-  }));
+  const projects = getProjectRows().map((project) => {
+    const fallbackPath = project.worktree && project.worktree !== '/'
+      ? project.worktree
+      : project.session_directory || project.worktree || '/';
+    const embeddedProject = getEmbeddedProjectMetadata(fallbackPath);
+    const fullPath = embeddedProject?.fullPath || fallbackPath;
+    return {
+      name: project.id,
+      displayName: embeddedProject?.displayName || getProjectDisplayName({ ...project, worktree: fullPath }),
+      fullPath,
+      path: fullPath,
+      sessionCount: Number(project.session_count) || 0,
+      lastUsed: toIsoTime(project.time_updated),
+      source: 'opencode'
+    };
+  });
 
   const order = getProjectOrder();
   return sortByOrder(projects, order, (a, b) => (b.lastUsed || '').localeCompare(a.lastUsed || ''));
@@ -429,7 +499,8 @@ function searchSessions(keyword) {
 
         if (data && data.role === 'user') {
           text = extractTextFromMessageData(data);
-        } else {
+        }
+        if (!text) {
           const messageParts = partsByMessageId.get(message.id) || [];
           for (const part of messageParts) {
             const partData = parseJsonMaybe(part.data, null);
@@ -501,6 +572,56 @@ function getSessionById(sessionId) {
   };
 }
 
+function getSessionStatus(sessionId) {
+  const session = getSessionById(sessionId);
+  if (!session) return null;
+  return {
+    sessionId,
+    lastModified: Date.parse(session.mtime) || null,
+    size: session.size || 0,
+    filePath: session.filePath
+  };
+}
+
+function getSessionMessages(sessionId, options = {}) {
+  const session = getSessionById(sessionId);
+  if (!session) return null;
+  const page = Math.max(1, Number.parseInt(options.page, 10) || 1);
+  const limit = Math.max(1, Math.min(200, Number.parseInt(options.limit, 10) || 50));
+  const order = String(options.order || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
+  const ordered = order === 'asc' ? [...session.messages] : [...session.messages].reverse();
+  const offset = (page - 1) * limit;
+  return {
+    messages: ordered.slice(offset, offset + limit),
+    metadata: { sessionId, messageCount: session.messages.length },
+    pagination: {
+      page,
+      limit,
+      total: session.messages.length,
+      hasMore: offset + limit < session.messages.length
+    }
+  };
+}
+
+function getSessionOutline(sessionId) {
+  const session = getSessionById(sessionId);
+  if (!session) return null;
+  let userMessageNumber = 0;
+  return {
+    sessionId,
+    items: session.messages.flatMap(message => {
+      if (message.role !== 'user') return [];
+      userMessageNumber += 1;
+      const firstLine = String(message.content || '').trim().split(/\r?\n/, 1)[0] || '（空消息）';
+      return [{
+        userMessageNumber,
+        preview: firstLine.length > 42 ? `${firstLine.slice(0, 42)}...` : firstLine,
+        timestamp: message.timestamp
+      }];
+    })
+  };
+}
+
 function buildSessionMessages(sessionId) {
   const messages = getMessageRowsBySessionId(sessionId);
   const parts = getPartRowsBySessionId(sessionId);
@@ -517,9 +638,8 @@ function buildSessionMessages(sessionId) {
     const messageParts = partsByMessageId.get(message.id) || [];
 
     let content = '';
-    if (data && data.role === 'user') {
-      content = extractTextFromMessageData(data);
-    } else if (messageParts.length > 0) {
+    content = extractTextFromMessageData(data);
+    if (!content && messageParts.length > 0) {
       content = messageParts
         .map(part => {
           const partData = parseJsonMaybe(part.data, null);
@@ -732,10 +852,14 @@ function getProjectAndSessionCounts(options = {}) {
 }
 
 module.exports = {
+  getOpenCodeDbPath,
   isOpenCodeInstalled,
   getProjects,
   getSessionsByProjectId,
   getSessionById,
+  getSessionStatus,
+  getSessionMessages,
+  getSessionOutline,
   searchSessions,
   getRecentSessions,
   deleteSession,

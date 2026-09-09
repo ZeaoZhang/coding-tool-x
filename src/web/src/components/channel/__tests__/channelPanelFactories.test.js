@@ -250,10 +250,11 @@ describe('channel panel model catalogs', () => {
     )
   })
 
-  it('keeps the OAuth gateway preset without an OMP native OAuth control', () => {
+  it('keeps the OAuth gateway preset separate from the OMP native OAuth control', () => {
     const config = channelPanelFactories.omp()
     const fields = config.formSections.flatMap(section => section.fields)
     const byKey = key => fields.find(field => field.key === key)
+    const oauthField = fields.find(field => field.type === 'channel-auth')
     const form = config.getInitialForm()
     const gatewayForm = config.onPresetChange('omp_oauth_gateway', form)
 
@@ -262,13 +263,91 @@ describe('channel panel model catalogs', () => {
       authMode: 'oauth',
       transport: 'pi-native'
     }))
-    expect(config.presetCategories).toHaveProperty('oauth', 'OAuth 网关')
-    expect(fields.some(field => field.type === 'channel-auth')).toBe(false)
+    expect(config.presetCategories).toHaveProperty('oauth', 'OAuth')
+    expect(oauthField).toBeDefined()
     expect(form.authMode).toBe('api_key')
     expect(form.oauthGatewayMode).toBe(false)
     expect(gatewayForm.authMode).toBe('oauth')
     expect(gatewayForm.oauthGatewayMode).toBe(true)
+    expect(oauthField.showWhen(gatewayForm)).toBe(false)
     expect(byKey('baseUrl').showWhen(gatewayForm)).toBe(true)
     expect(byKey('apiKey').showWhen(gatewayForm)).toBe(true)
+  })
+
+  it('offers a local OMP OAuth preset and sends the selected local credential', async () => {
+    const config = channelPanelFactories.omp()
+    const fields = config.formSections.flatMap(section => section.fields)
+    const oauthField = fields.find(field => field.type === 'channel-auth')
+    const form = config.onPresetChange('omp_oauth', config.getInitialForm())
+
+    expect(config.getPresetById('omp_oauth')).toEqual(expect.objectContaining({
+      id: 'omp_oauth',
+      authMode: 'oauth',
+      oauthProviderId: ''
+    }))
+    expect(oauthField).toBeDefined()
+    expect(form).toEqual(expect.objectContaining({
+      presetId: 'omp_oauth',
+      authMode: 'oauth',
+      baseUrl: '',
+      apiKey: '',
+      oauthGatewayMode: false,
+      oauthProviderId: ''
+    }))
+    expect(oauthField.showWhen(form)).toBe(true)
+    expect(fields
+      .filter(field => ['providerKey', 'baseUrl', 'apiKey', 'websiteUrl', 'speedTestModel'].includes(field.key))
+      .every(field => field.showWhen(form) === false))
+      .toBe(true)
+
+    await config.api.create({
+      ...form,
+      name: 'OMP Anthropic OAuth',
+      authRef: {
+        credentialId: 'credential-1',
+        providerId: 'anthropic',
+        accountId: 'account-1',
+        identityKey: 'account-1',
+        accountEmail: 'user@example.com'
+      },
+      authSource: 'synced-local',
+      authStatus: 'available',
+      oauthProviderId: 'anthropic'
+    })
+
+    expect(createOmpChannel).toHaveBeenCalledWith(
+      'OMP Anthropic OAuth',
+      '',
+      '',
+      expect.objectContaining({
+        authMode: 'oauth',
+        authRef: expect.objectContaining({
+          credentialId: 'credential-1',
+          providerId: 'anthropic',
+          accountId: 'account-1'
+        }),
+        authSource: 'synced-local',
+        oauthProviderId: 'anthropic',
+        transport: ''
+      })
+    )
+
+    const mapped = config.mapChannelToForm({
+      ...form,
+      authRef: {
+        credentialId: 'credential-1',
+        providerId: 'anthropic',
+        accountId: 'account-1',
+        identityKey: 'account-1',
+        accountEmail: 'user@example.com'
+      },
+      authSource: 'synced-local',
+      authStatus: 'available'
+    })
+    expect(mapped).toEqual(expect.objectContaining({
+      authRef: expect.objectContaining({ credentialId: 'credential-1', accountId: 'account-1' }),
+      authSource: 'synced-local',
+      authStatus: 'available'
+    }))
   })
 })

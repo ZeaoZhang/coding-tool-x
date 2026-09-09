@@ -7,7 +7,7 @@ function createDriver(context = {}) {
     ...context,
     platform: 'codex',
     capability: 'sessions',
-    parserVersion: 1,
+    parserVersion: 2,
     servicePath: './codex/sessions-implementation',
     localServicePath: '../platforms/drivers/codex/sessions-implementation',
     adapterLocalPath: '../platforms/drivers/codex/session-history-adapter',

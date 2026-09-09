@@ -125,4 +125,25 @@ describe('Claude session history', () => {
       expect.objectContaining({ config: { source: 'test' } })
     );
   });
+
+  it('adapts stable mutation arguments to the Claude storage service', async () => {
+    const service = {
+      deleteSession: vi.fn(() => ({ success: true })),
+      forkSession: vi.fn(() => ({ newSessionId: 'fork-1' }))
+    };
+    const invalidateSource = vi.fn();
+    const { createDriver } = require(DRIVER_PATH);
+    const driver = createDriver({
+      requireImpl: () => service,
+      sessionHistoryIndex: { invalidateSource }
+    });
+    const options = { config: { projectsDir: '/sessions' }, alias: 'copy' };
+
+    expect(driver.delete('demo', 'session-1', options)).toMatchObject({ status: 'ok' });
+    expect(driver.fork('demo', 'session-1', options)).toMatchObject({ status: 'ok' });
+
+    expect(service.deleteSession).toHaveBeenCalledWith(options.config, 'demo', 'session-1');
+    expect(service.forkSession).toHaveBeenCalledWith(options.config, 'demo', 'session-1', options);
+    expect(invalidateSource).toHaveBeenCalledTimes(2);
+  });
 });

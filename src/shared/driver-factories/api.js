@@ -14,17 +14,20 @@ function resultFor(context, status, data, error, cause) {
 }
 
 function optionsFor(context) {
+  const force = context.query?.fresh === '1' || context.query?.fresh === 'true';
   return {
     ...(context.query || {}),
     config: context.config,
-    force: context.query?.fresh === '1' || context.query?.fresh === 'true'
+    force
   };
 }
 
 function argsFor(capability, operation, context) {
   const params = context.params || {};
   const options = optionsFor(context);
-  const withConfig = args => context.platform === 'claude' ? [context.config, ...args] : args;
+  if (options.force && (capability === 'projects' || capability === 'sessions')) {
+    options.consistency = 'complete';
+  }
   if (capability === 'projects') {
     if (operation === 'listProjects') return [options];
     if (operation === 'deleteProject') return [params.projectName, options];
@@ -33,18 +36,34 @@ function argsFor(capability, operation, context) {
   }
   if (capability === 'sessions') {
     const projectName = params.projectName;
-    if (operation === 'recent') return withConfig([Number(context.query?.limit) || undefined, options]);
-    if (operation === 'searchAcrossProjects') return withConfig([context.query?.q || context.query?.query || '', Number(context.query?.limit) || undefined, options]);
-    if (operation === 'listSessions') return withConfig([projectName, options]);
+    const keyword = context.query?.keyword || context.query?.q || context.query?.query || '';
+    if (operation === 'recent') return [Number(context.query?.limit) || undefined, options];
+    if (operation === 'searchAcrossProjects') {
+      const numericOption = context.platform === 'gemini'
+        ? Number(context.query?.context) || 35
+        : Number(context.query?.limit) || undefined;
+      return [keyword, numericOption, options];
+    }
+    if (operation === 'listSessions') return [projectName, options];
     if (operation === 'search') {
-      return withConfig([projectName, context.query?.q || context.query?.query || '', Number(context.query?.context) || 15, options]);
+      return [projectName, keyword, Number(context.query?.context) || 15, options];
     }
-    if (['status', 'outline', 'messages', 'delete', 'fork', 'launch'].includes(operation)) {
-      return [params.sessionId, context.body || options];
+    if (['status', 'outline', 'messages'].includes(operation)) return [params.sessionId, options];
+    if (operation === 'delete') {
+      return context.platform === 'claude'
+        ? [projectName, params.sessionId, options]
+        : [params.sessionId, options];
     }
-    if (operation === 'batchDelete') return withConfig([projectName, context.body?.sessionIds || context.body?.ids || [], options]);
-    if (operation === 'createSession') return withConfig([projectName, context.body || {}, options]);
-    if (operation === 'saveSessionOrder') return withConfig([projectName, context.body?.order || context.body, options]);
+    if (operation === 'fork') {
+      const mutationOptions = { ...options, ...(context.body || {}) };
+      return context.platform === 'claude'
+        ? [projectName, params.sessionId, mutationOptions]
+        : [params.sessionId, mutationOptions];
+    }
+    if (operation === 'launch') return [params.sessionId, { ...options, ...(context.body || {}) }];
+    if (operation === 'batchDelete') return [projectName, context.body?.sessionIds || context.body?.ids || [], options];
+    if (operation === 'createSession') return [projectName, context.body || {}, options];
+    if (operation === 'saveSessionOrder') return [projectName, context.body?.order || context.body, options];
   }
   if (capability === 'channels') {
     if (operation === 'list' || operation === 'enabled' || operation === 'current' || operation === 'bestForRestore') return [options];
@@ -117,7 +136,7 @@ function createApiOperationsDriver({ platform, runtime, manifest, config, sessio
         if (typeof handler === 'function') {
           return resultFor(requestContext, 'ok', await handler(requestContext, { config, runtime, sessionHistoryIndex }));
         }
-        if (capability === 'sessions' && sessionHistoryIndex) {
+        if (capability === 'sessions' && sessionHistoryIndex && platform !== 'opencode') {
           const index = sessionHistoryIndex;
           const sessionId = requestContext.params?.sessionId;
           const indexCall = operation === 'status'
@@ -125,7 +144,12 @@ function createApiOperationsDriver({ platform, runtime, manifest, config, sessio
             : operation === 'outline'
               ? index.getSessionOutline?.(platform, sessionId, { consistency: 'stale-ok' })
               : operation === 'messages'
-                ? index.getMessagePage?.(platform, sessionId, Number(requestContext.query?.page) || 1, Number(requestContext.query?.limit) || 50, { consistency: 'stale-ok' })
+                ? index.getMessagePage?.(platform, sessionId, {
+                  page: Number(requestContext.query?.page) || 1,
+                  limit: Number(requestContext.query?.limit) || 50,
+                  order: requestContext.query?.order,
+                  consistency: 'stale-ok'
+                })
                 : null;
           if (indexCall) return resultFor(requestContext, 'ok', await indexCall);
         }

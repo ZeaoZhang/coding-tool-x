@@ -8,6 +8,7 @@ const path = require('path');
 const CODEX_CONFIG_PATH   = require.resolve('../../../src/platforms/drivers/codex/config');
 const CODEX_PARSER_PATH   = require.resolve('../../../src/platforms/drivers/codex/parser');
 const ENHANCED_CACHE_PATH = require.resolve('../../../src/server/services/enhanced-cache');
+const CLAUDE_SESSIONS_PATH = require.resolve('../../../src/platforms/drivers/claude/sessions-implementation');
 const MODULE_PATH         = require.resolve('../../../src/platforms/drivers/codex/sessions-implementation');
 
 let testDir;
@@ -39,12 +40,25 @@ function injectStubs() {
       CacheKeys: { PROJECTS: 'p:', SESSIONS: 's:', COUNTS: 'c:' }
     }
   };
+
+  require.cache[CLAUDE_SESSIONS_PATH] = {
+    id: CLAUDE_SESSIONS_PATH, filename: CLAUDE_SESSIONS_PATH, loaded: true,
+    exports: {
+      getForkRelations: vi.fn(() => ({})),
+      saveForkRelations: vi.fn(),
+      getSessionOrder: vi.fn(() => []),
+      saveSessionOrder: vi.fn(),
+      getProjectOrder: vi.fn(() => []),
+      saveProjectOrder: vi.fn()
+    }
+  };
 }
 
 function cleanStubs() {
   delete require.cache[CODEX_CONFIG_PATH];
   delete require.cache[CODEX_PARSER_PATH];
   delete require.cache[ENHANCED_CACHE_PATH];
+  delete require.cache[CLAUDE_SESSIONS_PATH];
   delete require.cache[MODULE_PATH];
   // Also clean up sessions dependency pulled in by getSessionsByProject
   try {
@@ -285,6 +299,28 @@ describe('codex-sessions', () => {
         expect(p).toHaveProperty('sessionCount');
         expect(p).toHaveProperty('source', 'codex');
       });
+    });
+  });
+
+  describe('forkSession', () => {
+    it('rewrites the copied session metadata to the new native session id', () => {
+      const parentId = '11111111-1111-4111-8111-111111111111';
+      const sourcePath = createRolloutFile(
+        '2026/09/08',
+        `rollout-2026-09-08T14-16-20-${parentId}.jsonl`
+      );
+      fs.writeFileSync(sourcePath, `${JSON.stringify({
+        timestamp: '2026-09-08T14:16:20.000Z',
+        type: 'session_meta',
+        payload: { id: parentId, cwd: '/tmp/project' }
+      })}\n`);
+
+      const { forkSession } = require(MODULE_PATH);
+      const result = forkSession(parentId);
+      const [metadata] = fs.readFileSync(result.newFilePath, 'utf8').trim().split('\n');
+
+      expect(JSON.parse(metadata).payload.id).toBe(result.newSessionId);
+      expect(result.newSessionId).not.toBe(parentId);
     });
   });
 });
