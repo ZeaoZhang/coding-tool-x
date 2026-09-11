@@ -253,16 +253,21 @@ class BaseChannelService {
   // ── 内部方法 ──
   _normalizeAuthFields(fields = {}, channels = [], existing = null) {
     const next = { ...fields };
-    const unsafeField = Object.keys(fields).find(key => /token|secret|password|refresh|access/i.test(key));
+    const currentMode = existing?.authMode || (existing ? 'api_key' : null);
+    const authMode = next.authMode || currentMode || 'api_key';
+    assertAuthMode(authMode);
+    const unsafeField = Object.keys(fields).find(key => {
+      if (key === 'balanceToken') {
+        return authMode === 'oauth' && String(fields[key] || '').trim() !== '';
+      }
+      return /token|secret|password|refresh|access/i.test(key);
+    });
     if (unsafeField) {
       const error = new Error('Invalid OAuth auth payload');
       error.code = 'invalid_auth_payload';
       error.statusCode = 400;
       throw error;
     }
-    const currentMode = existing?.authMode || (existing ? 'api_key' : null);
-    const authMode = next.authMode || currentMode || 'api_key';
-    assertAuthMode(authMode);
     if (currentMode && next.authMode && next.authMode !== currentMode) {
       const error = new Error('Channel authMode is immutable');
       error.code = 'auth_mode_immutable';

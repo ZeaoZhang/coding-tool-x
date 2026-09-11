@@ -87,6 +87,30 @@ describe('omp-settings-manager OMP models.yml sync', () => {
     const settings = yaml.load(fs.readFileSync(paths.settings, 'utf8'));
     expect(settings.enabledModels).toEqual(['ctx-demo/gpt-demo', 'ctx-demo/gpt-demo-mini']);
   });
+
+  test('keeps local OMP OAuth models in enabledModels without requiring a base URL', () => {
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
+
+    manager.writeManagedOmpProviders([{
+      id: 'oauth-channel',
+      name: 'OMP OAuth',
+      providerKey: 'omp-oauth',
+      authMode: 'oauth',
+      authRef: { providerId: 'openai-codex' },
+      authSource: 'synced-local',
+      baseUrl: '',
+      model: 'gpt-5.6-luna',
+      allowedModels: ['gpt-5.6-luna', 'gpt-5.6-sol'],
+      models: [{ id: 'gpt-5.6-luna' }, { id: 'gpt-5.6-sol' }]
+    }]);
+
+    const settings = yaml.load(fs.readFileSync(paths.settings, 'utf8'));
+    expect(settings.enabledModels).toEqual([
+      'openai-codex/gpt-5.6-luna',
+      'openai-codex/gpt-5.6-sol'
+    ]);
+  });
+
   test('writes Codex-source providers with the Codex Responses API while preserving generic Responses', () => {
     const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
     const target = manager.writeManagedOmpProviders([

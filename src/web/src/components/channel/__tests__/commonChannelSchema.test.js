@@ -5,6 +5,7 @@ describe('common channel schema', () => {
   it('contains shared endpoint, auth, and schedule fields', () => {
     expect(commonChannelSchema.endpoint.map(field => field.key)).toEqual(['baseUrl', 'websiteUrl'])
     expect(commonChannelSchema.auth.map(field => field.key)).toEqual(['authMode', 'apiKey'])
+    expect(commonChannelSchema.auth.find(field => field.key === 'apiKey').type).toBe('text')
     expect(commonChannelSchema.schedule.map(field => field.key)).toEqual(['maxConcurrency', 'weight', 'enabled'])
   })
 
@@ -25,6 +26,7 @@ describe('common channel schema', () => {
     expect(panel.getHeaderTags({ health: { status: 'checking' } })).toEqual([
       { text: '检测中', type: 'warning' }
     ])
+    expect(panel.buildInfoRows({ baseUrl: 'https://demo.test', apiKey: 'plain-api-key' })[1].value).toBe('plain-api-key')
     expect(panel.buildInfoRows({ baseUrl: 'https://demo.test', authMode: 'none' })[1].value).toBe('无需认证')
   })
 

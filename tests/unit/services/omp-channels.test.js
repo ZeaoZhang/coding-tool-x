@@ -271,6 +271,44 @@ describe('managed provider activation lifecycle', () => {
     ], {});
   });
 
+  it('accepts the empty balance token sent with synced OAuth channels', () => {
+    const channel = service.createChannel('OMP OAuth', '', '', {
+      providerKey: 'omp-oauth',
+      authMode: 'oauth',
+      authRef: {
+        providerId: 'openai-codex',
+        accountEmail: 'diag@example.invalid'
+      },
+      authSource: 'synced-local',
+      authStatus: 'available',
+      oauthProviderId: 'openai-codex',
+      allowedModels: ['gpt-5.6-luna', 'gpt-5.6-sol'],
+      models: [],
+      modelMetadataMode: 'hybrid',
+      balanceToken: '',
+      balanceUserId: null,
+      enabled: false
+    });
+
+    expect(channel).toMatchObject({
+      name: 'OMP OAuth',
+      authMode: 'oauth',
+      authSource: 'synced-local',
+      balanceToken: ''
+    });
+  });
+
+  it('rejects non-empty balance tokens on OAuth channels', () => {
+    expect(() => service.createChannel('OMP OAuth with token', '', '', {
+      providerKey: 'omp-oauth',
+      authMode: 'oauth',
+      authRef: { providerId: 'openai-codex' },
+      authSource: 'synced-local',
+      balanceToken: 'unexpected-oauth-token',
+      enabled: false
+    })).toThrow('Invalid OAuth auth payload');
+  });
+
   it('keeps managed providers synchronized while managed mode is enabled', () => {
     seedChannels([makeChannel('channel-a')]);
     const markerPath = path.join(testDir, 'active-omp.json');

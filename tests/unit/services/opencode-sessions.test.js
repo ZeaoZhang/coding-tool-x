@@ -258,7 +258,7 @@ describe('opencode-sessions', () => {
         .run('/', 'proj-1');
 
       const project = opencodeSessions.getProjects().find(p => p.name === 'proj-1');
-      expect(project.displayName).toBe('Readable Host Project');
+      expect(project.displayName).toBe('actual-project');
       expect(project.fullPath).toBe('/workspace/actual-project');
       expect(project.path).toBe('/workspace/actual-project');
     });
@@ -277,6 +277,13 @@ describe('opencode-sessions', () => {
       expect(sessions).toHaveLength(2);
       expect(sessions[0].sessionId).toBe('ses-2'); // newer
       expect(sessions[1].sessionId).toBe('ses-1');
+    });
+
+    test('reports logical storage size from session content', () => {
+      const sessions = opencodeSessions.getSessionsByProjectId('proj-1');
+      const session = sessions.find(item => item.sessionId === 'ses-1');
+
+      expect(session.size).toBeGreaterThan(0);
     });
 
     test('respects session order', () => {
@@ -316,8 +323,10 @@ describe('opencode-sessions', () => {
     test('returns status, outline, and paginated messages for session detail routes', () => {
       expect(opencodeSessions.getSessionStatus('ses-1')).toMatchObject({
         sessionId: 'ses-1',
-        filePath: 'opencode://proj-1/ses-1'
+        filePath: 'opencode://proj-1/ses-1',
+        size: expect.any(Number)
       });
+      expect(opencodeSessions.getSessionStatus('ses-1').size).toBeGreaterThan(0);
       expect(opencodeSessions.getSessionOutline('ses-1')).toMatchObject({
         sessionId: 'ses-1',
         items: [{ userMessageNumber: 1, preview: 'needle question' }]

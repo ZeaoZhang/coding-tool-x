@@ -25,7 +25,14 @@ function setLocalCollapse(storageKey, value) {
 }
 
 function resolveError(error, fallback) {
-  if (error?.response?.data?.error) return error.response.data.error
+  const responseError = error?.response?.data?.error
+  if (responseError) {
+    if (typeof responseError === 'string') return responseError
+    if (typeof responseError === 'object') {
+      return responseError.error || responseError.message || responseError.code || fallback || '操作失败'
+    }
+    return String(responseError)
+  }
   return fallback || error.message || '操作失败'
 }
 
@@ -434,6 +441,9 @@ export default function useChannelManager(config) {
     const getFieldLabel = (field) => (
       typeof field.label === 'function' ? field.label(state.formData) : field.label
     )
+    const isSectionVisible = (section) => (
+      !section.showWhen || section.showWhen(state.formData)
+    )
     const isFieldVisible = (field) => !field.showWhen || field.showWhen(state.formData)
     const clearFieldValidation = (field) => {
       const flatKey = field.key.replace(/\./g, '_')
@@ -488,7 +498,12 @@ export default function useChannelManager(config) {
 
   async function handleSave() {
     if (!runValidation()) {
-      message.error('请检查表单填写是否完整')
+      const details = Object.values(validation)
+        .map(item => item?.message)
+        .filter(Boolean)
+      message.error(details.length > 0
+        ? `请检查表单：${details.join('；')}`
+        : '请检查表单填写是否完整')
       return
     }
 

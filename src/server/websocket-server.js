@@ -452,13 +452,12 @@ function clearAllLogs() {
   console.log('[OK] All logs cleared');
 }
 
-// 去掉敏感字段
+// 复制渠道状态，保留 API key 供前端展示
 function sanitizeChannel(channel) {
   if (!channel || typeof channel !== 'object') {
     return null;
   }
-  const { apiKey, ...rest } = channel;
-  return rest;
+  return { ...channel };
 }
 
 function sanitizeChannels(channels) {

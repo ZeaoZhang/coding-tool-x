@@ -28,8 +28,11 @@ function createDriver(context = {}) {
   driver.syncManagedProviderExtension = (...args) => (
     driver._service().syncManagedProviderExtension(...args)
   );
-  driver.catalogMetadata = ({ body = {} } = {}) => {
+  driver.catalogMetadata = (input = {}) => {
     const operation = 'catalogMetadata';
+    const body = input && typeof input === 'object' && Object.prototype.hasOwnProperty.call(input, 'body')
+      ? input.body || {}
+      : input || {};
     try {
       const value = driver._service().getCatalogMetadata(body);
       const wrap = result => (

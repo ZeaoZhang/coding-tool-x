@@ -232,6 +232,7 @@ function sanitizeChannel(channel) {
     id: channel.id,
     name: channel.name,
     baseUrl: channel.authMode === 'oauth' ? '' : channel.baseUrl,
+    apiKey: channel.apiKey || '',
     enabled: channel.enabled !== false,
     authMode: channel.authMode || 'api_key'
   };

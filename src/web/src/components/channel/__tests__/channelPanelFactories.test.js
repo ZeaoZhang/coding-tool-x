@@ -95,8 +95,25 @@ describe('channel panel model catalogs', () => {
     }
   })
   it('normalizes array responses for OMP while preserving auth metadata', async () => {
+    fetchOmpChannels.mockResolvedValue({
+      channels: [{
+        id: 'omp-1',
+        extra: {
+          allowedModels: ['gpt-5.6-luna'],
+          model: 'gpt-5.6-luna'
+        }
+      }]
+    })
     await expect(channelPanelFactories.omp().api.fetch()).resolves.toEqual({
-      channels: [{ id: 'omp-1' }],
+      channels: [{
+        id: 'omp-1',
+        extra: {
+          allowedModels: ['gpt-5.6-luna'],
+          model: 'gpt-5.6-luna'
+        },
+        allowedModels: ['gpt-5.6-luna'],
+        model: 'gpt-5.6-luna'
+      }],
       authProviderMeta: null
     })
     expect(fetchOmpChannels).toHaveBeenCalledTimes(1)
@@ -176,6 +193,28 @@ describe('channel panel model catalogs', () => {
     }))
     expect(form.modelDefinitionsJson).toContain('deepseek/deepseek-v4-pro')
     expect(form.modelMetadataStatus).toBe('已读取 1 个模型（Models.dev 离线快照）')
+  })
+
+  it('uses selected OMP models instead of the full visible list for metadata lookup', async () => {
+    const form = {
+      providerKey: 'omp-oauth',
+      model: '',
+      speedTestModel: '',
+      allowedModels: ['gpt-5.6-luna', 'gpt-5.6-sol'],
+      availableModels: [
+        { label: 'gpt-5.6-luna', value: 'gpt-5.6-luna' },
+        { label: 'gpt-5.6-sol', value: 'gpt-5.6-sol' },
+        { label: 'gpt-5.5', value: 'gpt-5.5' }
+      ],
+      modelDefinitionsJson: '[]'
+    }
+
+    await channelPanelFactories.omp().fetchModelMetadataForChannel(form)
+
+    expect(fetchOmpCatalogMetadata).toHaveBeenCalledWith('omp-oauth', expect.objectContaining({
+      allowedModels: ['gpt-5.6-luna', 'gpt-5.6-sol'],
+      availableModels: []
+    }))
   })
 
   it('uses presets to select OAuth and hides API-only fields', () => {
@@ -303,6 +342,7 @@ describe('channel panel model catalogs', () => {
     await config.api.create({
       ...form,
       name: 'OMP Anthropic OAuth',
+      model: 'gpt-5.6-luna',
       authRef: {
         credentialId: 'credential-1',
         providerId: 'anthropic',
@@ -328,7 +368,8 @@ describe('channel panel model catalogs', () => {
         }),
         authSource: 'synced-local',
         oauthProviderId: 'anthropic',
-        transport: ''
+        transport: '',
+        model: 'gpt-5.6-luna'
       })
     )
 

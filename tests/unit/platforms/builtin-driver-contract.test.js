@@ -45,7 +45,7 @@ describe('built-in channel Driver contract', () => {
   });
 
 
-  test('returns sanitized channel DTOs with platform extensions in extra', () => {
+  test('returns channel DTOs with visible API keys and platform extensions in extra', () => {
     const { createDriver } = require('../../../src/platforms/drivers/claude/channels');
     const driver = createDriver({
       requireImpl: () => serviceFor('claude', [{ id: 'one', name: 'One', apiKey: 'secret', customFlag: true }])
@@ -53,8 +53,13 @@ describe('built-in channel Driver contract', () => {
 
     const result = driver.list();
     expect(result).toMatchObject({ status: 'ok', platform: 'claude', capability: 'channels', operation: 'list' });
-    expect(result.data.channels[0]).toEqual({ id: 'one', name: 'One', extra: { customFlag: true } });
-    expect(JSON.stringify(result)).not.toContain('secret');
+    expect(result.data.channels[0]).toEqual({
+      id: 'one',
+      name: 'One',
+      apiKey: 'secret',
+      extra: { customFlag: true }
+    });
+    expect(JSON.stringify(result)).toContain('secret');
   });
 
   test.each(platforms)('%s reports invalid input with operation context', platform => {

@@ -5,7 +5,7 @@ export const commonChannelSchema = Object.freeze({
   ]),
   auth: Object.freeze([
     { key: 'authMode', label: '认证方式', type: 'select', options: ['api_key', 'none'] },
-    { key: 'apiKey', label: 'API Key', type: 'password', required: false }
+    { key: 'apiKey', label: 'API Key', type: 'text', required: false }
   ]),
   schedule: Object.freeze([
     { key: 'maxConcurrency', label: '最大并发', type: 'number', required: false },
@@ -79,9 +79,7 @@ export function createGenericChannelPanel(manifest = {}, api = {}) {
       { label: 'URL', value: channel.baseUrl, mono: true },
       {
         label: 'Key',
-        value: channel.apiKey
-          ? (typeof helpers.maskApiKey === 'function' ? helpers.maskApiKey(channel.apiKey) : '已设置')
-          : (channel.authMode === 'none' ? '无需认证' : '未设置'),
+        value: channel.apiKey || (channel.authMode === 'none' ? '无需认证' : '未设置'),
         mono: true,
         action: channel.health?.status && channel.health.status !== 'healthy'
           && typeof helpers.handleResetHealth === 'function'

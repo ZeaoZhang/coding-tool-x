@@ -1,6 +1,7 @@
 'use strict';
 
 const { createApiOperationsDriver } = require('../../../src/shared/driver-factories/api');
+const { createDriver: createOmpChannelsDriver } = require('../../../src/platforms/drivers/omp/channels');
 
 describe('API operation Driver contract', () => {
   const manifest = {
@@ -209,6 +210,42 @@ describe('API operation Driver contract', () => {
       alias: 'copy',
       config: { projectsDir: '/sessions' }
     }));
+  });
+
+  test('passes OMP catalog metadata request bodies through the API boundary', async () => {
+    const route = { operation: 'catalogMetadata', capability: 'channels' };
+    const payload = {
+      providerKey: 'omp-oauth',
+      allowedModels: ['gpt-5.6-luna', 'gpt-5.6-sol']
+    };
+    const getCatalogMetadata = vi.fn(input => ({
+      models: input.allowedModels.map(id => ({ id })),
+      warnings: [],
+      source: { name: 'models.dev' }
+    }));
+    const channelsDriver = createOmpChannelsDriver({
+      requireImpl: () => ({
+        getChannels: () => [],
+        getCatalogMetadata
+      })
+    });
+    const driver = createApiOperationsDriver({
+      platform: 'omp',
+      runtime: { getDriver: () => channelsDriver },
+      manifest: { api: { routes: [route] } }
+    });
+
+    await expect(driver.catalogMetadata({
+      platform: 'omp',
+      route,
+      body: payload
+    })).resolves.toMatchObject({
+      status: 'ok',
+      data: {
+        models: [{ id: 'gpt-5.6-luna' }, { id: 'gpt-5.6-sol' }]
+      }
+    });
+    expect(getCatalogMetadata).toHaveBeenCalledWith(payload);
   });
 
   test('passes Gemini search keywords and project scope through the API contract', async () => {

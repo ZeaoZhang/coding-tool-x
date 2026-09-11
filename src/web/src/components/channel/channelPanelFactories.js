@@ -70,6 +70,30 @@ function normalizeChannelList(data) {
   return Array.isArray(data) ? data : (data?.channels || [])
 }
 
+function normalizeOmpChannelList(data) {
+  return normalizeChannelList(data).map(channel => {
+    const extra = channel?.extra
+    if (!extra || typeof extra !== 'object' || Array.isArray(extra)) return channel
+    const normalized = { ...channel }
+    const extraFields = [
+      'model',
+      'allowedModels',
+      'speedTestModel',
+      'presetId',
+      'models',
+      'modelMetadataMode',
+      'modelBindings',
+      'modelRedirects'
+    ]
+    extraFields.forEach(key => {
+      if ((normalized[key] === undefined || normalized[key] === null) && extra[key] !== undefined) {
+        normalized[key] = extra[key]
+      }
+    })
+    return normalized
+  })
+}
+
 function normalizeConcurrency(value) {
   const num = Number(value)
   if (!Number.isFinite(num) || num <= 0) return null
@@ -470,7 +494,7 @@ const channelPanelFactories = {
             key: 'apiKey',
             showWhen: showApiCredentialField,
             label: '接口密钥',
-            type: 'password',
+            type: 'text',
             required: true,
             placeholder: 'sk-...'
           },
@@ -770,7 +794,7 @@ const channelPanelFactories = {
         { label: 'URL', value: channel.baseUrl },
         {
           label: 'Key',
-          value: helpers.maskApiKey(channel.apiKey),
+          value: channel.apiKey || '(未设置)',
           mono: true,
           action: channel.health?.status !== 'healthy'
             ? () => helpers.handleResetHealth(channel)
@@ -839,7 +863,7 @@ const channelPanelFactories = {
             key: 'apiKey',
             showWhen: showApiCredentialField,
             label: 'API Key',
-            type: 'password',
+            type: 'text',
             required: true,
             placeholder: 'sk-...'
           },
@@ -1042,7 +1066,7 @@ const channelPanelFactories = {
       { label: 'URL', value: channel.baseUrl },
       {
         label: 'Key',
-        value: helpers.maskApiKey(channel.apiKey),
+        value: channel.apiKey || '(未设置)',
         mono: true,
         action: channel.health?.status !== 'healthy'
           ? () => helpers.handleResetHealth(channel)
@@ -1100,7 +1124,7 @@ const channelPanelFactories = {
             key: 'apiKey',
             showWhen: showApiCredentialField,
             label: 'API Key',
-            type: 'password',
+            type: 'text',
             required: true,
             placeholder: 'AIza...'
           },
@@ -1307,7 +1331,7 @@ const channelPanelFactories = {
       { label: 'URL', value: channel.baseUrl },
       {
         label: 'Key',
-        value: helpers.maskApiKey(channel.apiKey),
+        value: channel.apiKey || '(未设置)',
         mono: true,
         action: channel.health?.status !== 'healthy'
           ? () => helpers.handleResetHealth(channel)
@@ -1361,7 +1385,7 @@ const channelPanelFactories = {
           {
             key: 'apiKey',
             label: 'API Key',
-            type: 'password',
+            type: 'text',
             required: true,
             placeholder: 'sk-...'
           },
@@ -1619,7 +1643,7 @@ const channelPanelFactories = {
       { label: 'URL', value: channel.baseUrl },
       {
         label: 'Key',
-        value: helpers.maskApiKey(channel.apiKey),
+        value: channel.apiKey || '(未设置)',
         mono: true,
         action: channel.health?.status !== 'healthy'
           ? () => helpers.handleResetHealth(channel)
@@ -1690,7 +1714,7 @@ const channelPanelFactories = {
             key: 'apiKey',
             showWhen: showOmpAuthField,
             label: form => isOAuthForm(form) ? 'Gateway Token' : 'API Key',
-            type: 'password',
+            type: 'text',
             required: true,
             skipOnOAuth: false,
             placeholder: 'sk-...',
@@ -1866,6 +1890,7 @@ const channelPanelFactories = {
       newForm.wireApi = preset.wireApi || 'openai'
       newForm.gatewaySourceType = preset.gatewaySourceType || newForm.gatewaySourceType || 'openai_compatible'
       newForm.transport = preset.transport || ''
+      newForm.websiteUrl = preset.websiteUrl || ''
       newForm.oauthGatewayMode = preset.id === 'omp_oauth_gateway'
       if (preset.authMode === 'oauth') {
         return {
@@ -1960,16 +1985,19 @@ const channelPanelFactories = {
     },
     fetchModelMetadataForChannel: async (form) => {
       const providerKey = String(form.providerKey || '').trim()
+      const allowedModels = Array.isArray(form.allowedModels) ? form.allowedModels : []
       const result = await fetchOmpCatalogMetadata(providerKey, {
         model: form.model || null,
         speedTestModel: form.speedTestModel || null,
-        allowedModels: Array.isArray(form.allowedModels) ? form.allowedModels : [],
+        allowedModels,
         models: parseModelDefinitions(form.modelDefinitionsJson),
-        availableModels: Array.isArray(form.availableModels)
-          ? form.availableModels.map(item => (
-            item && typeof item === 'object' ? item.value || item.id || item.name : item
-          ))
-          : []
+        availableModels: allowedModels.length > 0
+          ? []
+          : (Array.isArray(form.availableModels)
+            ? form.availableModels.map(item => (
+              item && typeof item === 'object' ? item.value || item.id || item.name : item
+            ))
+            : [])
       })
       const existing = parseModelDefinitions(form.modelDefinitionsJson)
       const byId = new Map((result.models || []).map(model => [String(model.id || '').toLowerCase(), model]))
@@ -1990,7 +2018,7 @@ const channelPanelFactories = {
       fetch: async () => {
         const data = await getOmpChannels()
         return {
-          channels: normalizeChannelList(data),
+          channels: normalizeOmpChannelList(data),
           authProviderMeta: Array.isArray(data) ? null : (data.authProviderMeta || null)
         }
       },
@@ -2089,7 +2117,7 @@ const channelPanelFactories = {
         { label: 'URL', value: channel.baseUrl },
         {
           label: 'Key',
-          value: helpers.maskApiKey(channel.apiKey),
+          value: channel.apiKey || '(未设置)',
           mono: true,
           action: channel.health?.status !== 'healthy'
             ? () => helpers.handleResetHealth(channel)

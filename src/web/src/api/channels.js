@@ -460,6 +460,7 @@ export async function createOmpChannel(name, baseUrl, apiKey, extra = {}) {
     routingGroup: extra.routingGroup || '',
     gatewaySourceType,
     enabled: extra.enabled !== false,
+    model: extra.model || null,
     allowedModels: extra.allowedModels || [],
     speedTestModel: extra.speedTestModel || null,
     presetId: extra.presetId || null,

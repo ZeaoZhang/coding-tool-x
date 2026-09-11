@@ -305,6 +305,14 @@ function getProjectDisplayName(project) {
   return project.id || 'Unknown';
 }
 
+function getDisplayNameForPath(projectPath, fallback) {
+  if (typeof projectPath === 'string' && projectPath.trim() && projectPath !== '/') {
+    const name = path.basename(projectPath);
+    if (name) return name;
+  }
+  return fallback;
+}
+
 function getSessionLocation(sessionId) {
   const row = getSessionRowById(sessionId);
   if (!row) return null;
@@ -349,7 +357,22 @@ function getSessionRowsByProjectId(projectId) {
       s.time_created,
       s.time_updated,
       s.time_compacting,
-      s.time_archived
+      s.time_archived,
+      (
+        COALESCE((
+          SELECT SUM(LENGTH(CAST(m.data AS BLOB)))
+          FROM message m
+          WHERE m.session_id = s.id
+        ), 0)
+        + COALESCE((
+          SELECT SUM(LENGTH(CAST(p.data AS BLOB)))
+          FROM part p
+          WHERE p.session_id = s.id
+        ), 0)
+        + COALESCE(LENGTH(CAST(s.title AS BLOB)), 0)
+        + COALESCE(LENGTH(CAST(s.slug AS BLOB)), 0)
+        + COALESCE(LENGTH(CAST(s.directory AS BLOB)), 0)
+      ) AS storage_size
     FROM session s
     WHERE s.project_id = ?
       AND s.time_archived IS NULL
@@ -377,7 +400,22 @@ function getSessionRowById(sessionId) {
       s.time_created,
       s.time_updated,
       s.time_compacting,
-      s.time_archived
+      s.time_archived,
+      (
+        COALESCE((
+          SELECT SUM(LENGTH(CAST(m.data AS BLOB)))
+          FROM message m
+          WHERE m.session_id = s.id
+        ), 0)
+        + COALESCE((
+          SELECT SUM(LENGTH(CAST(p.data AS BLOB)))
+          FROM part p
+          WHERE p.session_id = s.id
+        ), 0)
+        + COALESCE(LENGTH(CAST(s.title AS BLOB)), 0)
+        + COALESCE(LENGTH(CAST(s.slug AS BLOB)), 0)
+        + COALESCE(LENGTH(CAST(s.directory AS BLOB)), 0)
+      ) AS storage_size
     FROM session s
     WHERE s.id = ?
     LIMIT 1
@@ -418,7 +456,8 @@ function normalizeSession(session, projectId) {
   return {
     sessionId: session.id,
     mtime: toIsoTime(session.time_updated) || new Date().toISOString(),
-    size: 0, // SQLite doesn't track file size natively
+    // SQLite has no per-session file, so use the UTF-8 size of its stored payloads.
+    size: Number(session.storage_size) || 0,
     filePath: `opencode://${projectId}/${session.id}`,
     gitBranch: null,
     firstMessage: session.title || null,
@@ -444,9 +483,13 @@ function getProjects(_options = {}) {
       : project.session_directory || project.worktree || '/';
     const embeddedProject = getEmbeddedProjectMetadata(fallbackPath);
     const fullPath = embeddedProject?.fullPath || fallbackPath;
+    const fallbackDisplayName = embeddedProject?.displayName
+      || getProjectDisplayName({ ...project, worktree: fullPath });
     return {
       name: project.id,
-      displayName: embeddedProject?.displayName || getProjectDisplayName({ ...project, worktree: fullPath }),
+      displayName: embeddedProject?.fullPath
+        ? getDisplayNameForPath(fullPath, fallbackDisplayName)
+        : fallbackDisplayName,
       fullPath,
       path: fullPath,
       sessionCount: Number(project.session_count) || 0,
@@ -563,7 +606,7 @@ function getSessionById(sessionId) {
   return {
     sessionId,
     mtime: toIsoTime(location.sessionData.time_updated) || new Date().toISOString(),
-    size: 0,
+    size: Number(location.sessionData.storage_size) || 0,
     filePath: `opencode://${location.projectId}/${sessionId}`,
     source: 'opencode',
     directory: location.directory || null,

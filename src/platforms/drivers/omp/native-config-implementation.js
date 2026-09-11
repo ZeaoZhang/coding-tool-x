@@ -695,6 +695,57 @@ function buildManagedModelsConfig(channels = [], baseConfig = readModelsConfig()
   return next;
 }
 
+function isNativeOmpOAuthChannel(channel = {}) {
+  return channel
+    && channel.enabled !== false
+    && channel.authMode === 'oauth'
+    && !String(channel.baseUrl || '').trim();
+}
+
+function collectNativeOmpOAuthVisibility(channels = []) {
+  const enabledModels = [];
+  let defaultModel = null;
+
+  (channels || []).filter(isNativeOmpOAuthChannel).forEach((channel) => {
+    const rawProviderId = String(
+      channel.oauthProviderId || channel.authRef?.providerId || ''
+    ).trim();
+    if (!rawProviderId) return;
+    const providerId = normalizeProviderId(rawProviderId);
+
+    const allowedModels = Array.isArray(channel.allowedModels) ? channel.allowedModels : [];
+    const candidates = allowedModels.length > 0
+      ? allowedModels
+      : [
+        ...(Array.isArray(channel.models) ? channel.models : []),
+        channel.model
+      ];
+    const modelIds = [];
+    candidates.forEach((value) => {
+      const rawId = typeof value === 'object' && value !== null
+        ? value.id || value.name
+        : value;
+      const selector = splitModelSelector(rawId || '');
+      if (selector.modelId && !modelIds.some(id => id.toLowerCase() === selector.modelId.toLowerCase())) {
+        modelIds.push(selector.modelId);
+      }
+    });
+
+    modelIds.forEach((modelId) => {
+      pushUnique(enabledModels, `${providerId}/${modelId}`);
+    });
+
+    if (!defaultModel) {
+      const selected = splitModelSelector(channel.model || '');
+      if (selected.modelId && modelIds.some(id => id.toLowerCase() === selected.modelId.toLowerCase())) {
+        defaultModel = `${providerId}/${serializeModelSelector(selected.modelId, selected.thinkingLevel)}`;
+      }
+    }
+  });
+
+  return { enabledModels, defaultModel };
+}
+
 function getOriginalProviderId(channel = {}) {
   if (channel.originalProviderId) {
     return normalizeProviderId(channel.originalProviderId);
@@ -711,6 +762,10 @@ function collectManagedVisibility(channels = [], modelsConfig = { providers: {} 
   const warnings = [];
   const providers = modelsConfig.providers || {};
   let managedDefaultModel = null;
+  const nativeOAuthVisibility = collectNativeOmpOAuthVisibility([
+    ...(Array.isArray(channels) ? channels : []),
+    ...(Array.isArray(options.nativeOAuthChannels) ? options.nativeOAuthChannels : [])
+  ]);
 
   (channels || [])
     .filter(channel => channel && channel.enabled !== false && channel.baseUrl)
@@ -761,13 +816,21 @@ function collectManagedVisibility(channels = [], modelsConfig = { providers: {} 
     }
   }
 
+  const visibleModels = uniqueStrings([
+    ...managedEnabledModels,
+    ...nativeOAuthVisibility.enabledModels
+  ]);
+
   return {
-    managedEnabledModels,
-    managedEnabledModelsForSettings: managedEnabledModels.length > 0
-      ? managedEnabledModels
+    managedEnabledModels: visibleModels,
+    managedEnabledModelsForSettings: visibleModels.length > 0
+      ? visibleModels
       : [NO_MANAGED_MODELS_SELECTOR],
     managedDisabledProviders,
-    managedDefaultModel: managedDefaultModel || managedEnabledModels[0] || null,
+    managedDefaultModel: managedDefaultModel
+      || nativeOAuthVisibility.defaultModel
+      || visibleModels[0]
+      || null,
     warnings
   };
 }
@@ -1133,7 +1196,10 @@ function writeManagedOmpProviders(channels = [], options = {}) {
     });
     const backupPath = createModelsBackupIfNeeded(paths.modelsYml, options);
     writeModelsConfig(config, paths.modelsYml);
-    const visibility = syncManagedOmpVisibility(effectiveChannels, config, options);
+    const visibility = syncManagedOmpVisibility(effectiveChannels, config, {
+      ...options,
+      nativeOAuthChannels: channels.filter(isNativeOmpOAuthChannel)
+    });
     const validation = options.validateWithCli === true
       ? validateOmpModelsConfig(options)
       : { skipped: true, reason: 'cli-validation-disabled', warnings: [] };

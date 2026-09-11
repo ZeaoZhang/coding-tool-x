@@ -2,12 +2,12 @@
 
 const { ok, unsupported, invalid, failed } = require('./driver-result');
 
-const SECRET_KEYS = new Set(['apiKey', 'key', 'token', 'secret', 'password', 'accessToken', 'refreshToken', 'idToken', 'credential', 'raw']);
+const SECRET_KEYS = new Set(['key', 'token', 'secret', 'password', 'accessToken', 'refreshToken', 'idToken', 'credential', 'raw']);
 const COMMON_KEYS = new Set([
   'id', 'name', 'baseUrl', 'enabled', 'weight', 'maxConcurrency',
   'routingGroup', 'providerKey', 'providerApi', 'model', 'wireApi',
   'gatewaySourceType', 'websiteUrl', 'createdAt', 'updatedAt',
-  'authMode', 'authRef', 'authSource', 'authStatus', 'oauthProviderId',
+  'authMode', 'authRef', 'authSource', 'authStatus', 'oauthProviderId', 'apiKey',
   'transport', 'providerConfig'
 ]);
 
