@@ -1,47 +1,47 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const http = require('http');
-const https = require('https');
-const crypto = require('crypto');
-const { HttpsProxyAgent } = require('https-proxy-agent');
 const { execSync, execFileSync } = require('child_process');
 const { PATHS, NATIVE_PATHS } = require('../config/paths');
 const { loadUIConfig, saveUIConfig } = require('../server/services/ui-config');
-const codexSettingsManager = require('./drivers/codex/native-config-implementation');
-const geminiSettingsManager = require('./drivers/gemini/native-config-implementation');
+const remoteProviderRegistry = require('./remote-notification-providers');
+const {
+  getRemoteProviderTypes,
+  normalizeRemoteProvider,
+  normalizeRemoteNotificationsConfig,
+  validateRemoteProviderConfig,
+  validateRemoteNotifications,
+  sendRemoteProviderTest,
+  validateFeishuWebhookUrl
+} = remoteProviderRegistry;
+const { getPlatformCatalog } = require('../server/services/platform-catalog');
+const notificationHooksDriver = require('./drivers/notification-hooks');
+const {
+  buildClaudeCommand,
+  buildCodexNotifyCommand,
+  buildGeminiCommand,
+  buildOpenCodePluginContent,
+  buildOmpExtensionContent,
+  getOpenCodeManagedPluginPath,
+  getOmpManagedExtensionPath,
+  getClaudeHookStatus,
+  getCodexHookStatus,
+  getGeminiHookStatus,
+  getOpenCodeHookStatus,
+  getOmpHookStatus,
+  parseCodexNotificationStatus,
+  parseGeminiNotificationStatus,
+  parseOpenCodeNotificationStatus,
+  parseOmpNotificationStatus
+} = notificationHooksDriver;
 
-const MANAGED_HOOK_NAME = 'coding-tool-notify';
-const MANAGED_OPENCODE_PLUGIN_FILE = 'coding-tool-notify.js';
-const MANAGED_OMP_EXTENSION_FILE = 'coding-tool-notify.ts';
-const REMOTE_PROVIDER_TYPES = [
-  'wechatBot',
-  'qqBot',
-  'feishuBot',
-  'wecomBot',
-  'dingtalkBot',
-  'telegramBot'
-];
+const MANAGED_HOOK_NAME = notificationHooksDriver.MANAGED_HOOK_NAME;
 
-const REMOTE_PROVIDER_LABELS = {
-  wechatBot: '微信 Bot',
-  qqBot: 'QQ Bot',
-  feishuBot: '飞书 Bot',
-  wecomBot: '企业微信 Bot',
-  dingtalkBot: '钉钉 Bot',
-  telegramBot: 'Telegram Bot'
-};
 
 function normalizeType(type) {
   return type === 'dialog' || type === 'browser' ? type : 'notification';
 }
 
-function createClientId(prefix = 'coding-tool') {
-  const randomPart = typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID().replace(/-/g, '').slice(0, 16)
-    : crypto.randomBytes(8).toString('hex');
-  return `${prefix}-${randomPart}`;
-}
 
 function ensureParentDir(filePath) {
   const dir = path.dirname(filePath);
@@ -76,89 +76,6 @@ function writeClaudeSettings(settings) {
   writeJsonFile(NATIVE_PATHS.claude.settings, settings);
 }
 
-function trimString(value) {
-  return String(value || '').trim();
-}
-
-function normalizeRemoteProviderType(type) {
-  const value = trimString(type);
-  return REMOTE_PROVIDER_TYPES.includes(value) ? value : '';
-}
-
-function createRemoteProviderId(type, index = 0) {
-  return `${type || 'provider'}-${Date.now().toString(36)}-${index}`;
-}
-
-function normalizeProviderConfig(type, config = {}) {
-  const source = config && typeof config === 'object' ? config : {};
-  switch (type) {
-    case 'wechatBot':
-      return {
-        tokenFile: trimString(source.tokenFile),
-        botToken: trimString(source.botToken),
-        targetUserId: trimString(source.targetUserId),
-        contextToken: trimString(source.contextToken)
-      };
-    case 'qqBot':
-      return {
-        endpoint: trimString(source.endpoint),
-        accessToken: trimString(source.accessToken),
-        targetType: source.targetType === 'group' ? 'group' : 'private',
-        targetId: trimString(source.targetId)
-      };
-    case 'feishuBot':
-      return {
-        webhookUrl: trimString(source.webhookUrl)
-      };
-    case 'wecomBot':
-      return {
-        webhookUrl: trimString(source.webhookUrl)
-      };
-    case 'dingtalkBot':
-      return {
-        mode: source.mode === 'app' ? 'app' : 'webhook',
-        webhookUrl: trimString(source.webhookUrl),
-        clientId: trimString(source.clientId),
-        clientSecret: trimString(source.clientSecret),
-        targetType: source.targetType === 'user' ? 'user' : 'group',
-        targetId: trimString(source.targetId)
-      };
-    case 'telegramBot':
-      return {
-        botToken: trimString(source.botToken),
-        chatId: trimString(source.chatId),
-        proxy: trimString(source.proxy)
-      };
-    default:
-      return {};
-  }
-}
-
-function normalizeRemoteProvider(provider = {}, index = 0) {
-  const type = normalizeRemoteProviderType(provider.type);
-  if (!type) {
-    return null;
-  }
-
-  return {
-    id: trimString(provider.id) || createRemoteProviderId(type, index),
-    type,
-    name: trimString(provider.name) || REMOTE_PROVIDER_LABELS[type],
-    enabled: provider.enabled === true,
-    config: normalizeProviderConfig(type, provider.config)
-  };
-}
-
-function normalizeRemoteNotificationsConfig(remoteNotifications = {}) {
-  const source = remoteNotifications && typeof remoteNotifications === 'object' ? remoteNotifications : {};
-  const providers = Array.isArray(source.providers)
-    ? source.providers.map((provider, index) => normalizeRemoteProvider(provider, index)).filter(Boolean)
-    : [];
-
-  return {
-    providers
-  };
-}
 
 function getRemoteNotificationsConfig(uiConfig = loadUIConfig()) {
   return normalizeRemoteNotificationsConfig(uiConfig.remoteNotifications);
@@ -190,115 +107,7 @@ function createValidationError(message) {
   return error;
 }
 
-function validateFeishuWebhookUrl(webhookUrl) {
-  const value = String(webhookUrl || '').trim();
-  if (!value) {
-    return null;
-  }
 
-  let urlObj;
-  try {
-    urlObj = new URL(value);
-  } catch (error) {
-    throw createValidationError('飞书 Webhook URL 格式不正确');
-  }
-
-  if (urlObj.protocol !== 'https:') {
-    throw createValidationError('飞书 Webhook 必须使用 HTTPS');
-  }
-
-  if (urlObj.hostname !== 'open.feishu.cn') {
-    throw createValidationError('仅支持 open.feishu.cn 的飞书 Webhook');
-  }
-
-  return urlObj;
-}
-
-function validateHttpsUrl(value, label, options = {}) {
-  const raw = trimString(value);
-  if (!raw) {
-    return null;
-  }
-
-  let urlObj;
-  try {
-    urlObj = new URL(raw);
-  } catch (error) {
-    throw createValidationError(`${label} 格式不正确`);
-  }
-
-  if (options.requireHttps !== false && urlObj.protocol !== 'https:') {
-    throw createValidationError(`${label} 必须使用 HTTPS`);
-  }
-
-  if (options.hostname && urlObj.hostname !== options.hostname) {
-    throw createValidationError(`${label} 仅支持 ${options.hostname}`);
-  }
-
-  return urlObj;
-}
-
-function requireConfigValue(config, key, label) {
-  if (!trimString(config?.[key])) {
-    throw createValidationError(`请填写${label}`);
-  }
-}
-
-function validateRemoteProviderConfig(provider = {}) {
-  const type = normalizeRemoteProviderType(provider.type);
-  const config = provider.config || {};
-  if (!type) {
-    throw createValidationError('远程通知渠道类型不正确');
-  }
-
-  switch (type) {
-    case 'wechatBot':
-      if (!trimString(config.botToken) && !trimString(config.tokenFile)) {
-        throw createValidationError('请填写微信 Bot Token 或 token.json 路径');
-      }
-      requireConfigValue(config, 'targetUserId', '微信接收用户 ID');
-      break;
-    case 'qqBot':
-      requireConfigValue(config, 'endpoint', 'QQ Bot HTTP 地址');
-      validateHttpsUrl(config.endpoint, 'QQ Bot HTTP 地址', { requireHttps: false });
-      requireConfigValue(config, 'targetId', 'QQ 接收对象 ID');
-      break;
-    case 'feishuBot':
-      validateFeishuWebhookUrl(config.webhookUrl);
-      requireConfigValue(config, 'webhookUrl', '飞书 Webhook URL');
-      break;
-    case 'wecomBot':
-      validateHttpsUrl(config.webhookUrl, '企业微信 Webhook URL');
-      requireConfigValue(config, 'webhookUrl', '企业微信 Webhook URL');
-      break;
-    case 'dingtalkBot':
-      if (config.mode === 'app') {
-        requireConfigValue(config, 'clientId', '钉钉 App Key');
-        requireConfigValue(config, 'clientSecret', '钉钉 App Secret');
-        requireConfigValue(config, 'targetId', '钉钉接收对象 ID');
-      } else {
-        validateHttpsUrl(config.webhookUrl, '钉钉 Webhook URL');
-        requireConfigValue(config, 'webhookUrl', '钉钉 Webhook URL');
-      }
-      break;
-    case 'telegramBot':
-      requireConfigValue(config, 'botToken', 'Telegram Bot Token');
-      requireConfigValue(config, 'chatId', 'Telegram Chat ID');
-      break;
-    default:
-      break;
-  }
-}
-
-function validateRemoteNotifications(remoteNotifications = {}) {
-  const remote = normalizeRemoteNotificationsConfig(remoteNotifications);
-  remote.providers.forEach((provider) => {
-    if (provider.enabled === true) {
-      validateRemoteProviderConfig(provider);
-    }
-  });
-  return remote;
-}
 
 function removeNotifyScript() {
   if (fs.existsSync(PATHS.notifyHook)) {
@@ -333,148 +142,6 @@ function isManagedNotifyPath(input) {
   return normalizedInput.includes('notify-hook.js') || (normalizedPath && normalizedInput.includes(normalizedPath));
 }
 
-function buildManagedArgs(source, type, extra = []) {
-  const mode = normalizeType(type);
-  return [
-    `--source=${source}`,
-    `--mode=${mode}`,
-    `--cc-notify-type=${mode}`,
-    ...extra
-  ];
-}
-
-function quoteShellArg(value) {
-  const stringValue = String(value || '');
-  if (/^[A-Za-z0-9_./:=+-]+$/.test(stringValue)) {
-    return stringValue;
-  }
-  return `"${stringValue.replace(/"/g, '\\"')}"`;
-}
-
-function buildClaudeCommand(type) {
-  const mode = normalizeType(type);
-  const args = ['node', PATHS.notifyHook, `--source=claude`, `--mode=${mode}`, `--cc-notify-type=${mode}`];
-  return `${quoteShellArg(args[0])} ${quoteShellArg(args[1])} ${args.slice(2).map(quoteShellArg).join(' ')}`;
-}
-
-function buildCodexNotifyCommand(type) {
-  const mode = normalizeType(type);
-  return ['node', PATHS.notifyHook, `--source=codex`, `--mode=${mode}`, `--cc-notify-type=${mode}`];
-}
-
-function buildGeminiCommand(type) {
-  const mode = normalizeType(type);
-  const args = ['node', PATHS.notifyHook, `--source=gemini`, `--mode=${mode}`, `--cc-notify-type=${mode}`];
-  return `${quoteShellArg(args[0])} ${quoteShellArg(args[1])} ${args.slice(2).map(quoteShellArg).join(' ')}`;
-}
-
-function getOpenCodeManagedPluginPath() {
-  return path.join(NATIVE_PATHS.opencode.config, 'plugins', MANAGED_OPENCODE_PLUGIN_FILE);
-}
-
-function getOmpManagedExtensionPath() {
-  const ompPaths = NATIVE_PATHS.omp || {};
-  const extensionsDir = ompPaths.extensions ||
-    path.join(ompPaths.dir || path.dirname(ompPaths.settings || PATHS.notifyHook), 'extensions');
-  return path.join(extensionsDir, MANAGED_OMP_EXTENSION_FILE);
-}
-
-function buildOpenCodePluginContent(type) {
-  const mode = normalizeType(type);
-  return `// Managed by Coding Tool. Do not edit manually.
-// mode:${mode}
-import { spawn } from 'node:child_process'
-
-const SCRIPT_PATH = ${JSON.stringify(PATHS.notifyHook)}
-const MODE = ${JSON.stringify(mode)}
-
-function fire(eventType) {
-  try {
-    const child = spawn('node', [
-      SCRIPT_PATH,
-      '--source=opencode',
-      \`--mode=\${MODE}\`,
-      \`--cc-notify-type=\${MODE}\`,
-      \`--event-type=\${eventType}\`
-    ], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true
-    })
-    child.unref()
-  } catch (error) {
-    // Ignore notification failures.
-  }
-}
-
-export const CodingToolNotifyPlugin = async () => ({
-  event: async ({ event }) => {
-    const eventType = event?.type
-    if (eventType === 'session.idle' || eventType === 'session.error') {
-      fire(eventType)
-    }
-  }
-})
-`;
-}
-
-function buildOmpExtensionContent(type) {
-  const mode = normalizeType(type);
-  return `// Managed by Coding Tool. Do not edit manually.
-// mode:${mode}
-import { spawn } from 'node:child_process'
-
-const SCRIPT_PATH = ${JSON.stringify(PATHS.notifyHook)}
-const MODE = ${JSON.stringify(mode)}
-let lastFireAt = 0
-
-function shouldFire() {
-  const now = Date.now()
-  if (now - lastFireAt < 1000) {
-    return false
-  }
-  lastFireAt = now
-  return true
-}
-
-function fire(eventType) {
-  if (!shouldFire()) {
-    return
-  }
-
-  try {
-    const child = spawn('node', [
-      SCRIPT_PATH,
-      '--source=omp',
-      \`--mode=\${MODE}\`,
-      \`--cc-notify-type=\${MODE}\`,
-      \`--event-type=\${eventType}\`
-    ], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true
-    })
-    child.unref()
-  } catch (error) {
-    // Ignore notification failures.
-  }
-}
-
-export default async function CodingToolNotifyExtension(omp) {
-  const register = (eventName) => {
-    if (typeof omp?.on !== 'function') {
-      return
-    }
-    omp.on(eventName, async () => {
-      fire(eventName)
-    })
-  }
-
-  register('agent_settled')
-  register('turn_end')
-}
-`;
-}
 
 function escapeForAppleScript(value) {
   return String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
@@ -1382,365 +1049,62 @@ function writeNotifyScript(remoteNotifications = {}) {
   fs.writeFileSync(PATHS.notifyHook, generateNotifyScript(remoteNotifications), { mode: 0o755 });
 }
 
-function getClaudeHookStatus() {
-  const settings = readClaudeSettings();
-  const stopHooks = Array.isArray(settings?.hooks?.Stop) ? settings.hooks.Stop : [];
-  let enabled = false;
-  let external = false;
-  let type = 'notification';
 
-  stopHooks.forEach((group) => {
-    const hooks = Array.isArray(group?.hooks) ? group.hooks : [];
-    hooks.forEach((hook) => {
-      const command = String(hook?.command || '');
-      if (!command) return;
+function getHookPlatformEntries(catalog = getPlatformCatalog()) {
+  const manifests = typeof catalog?.list === 'function'
+    ? catalog.list({ capability: 'hooks' })
+    : [];
+  const entries = [];
+  for (const manifest of manifests) {
+    const driver = typeof catalog.driver === 'function'
+      ? catalog.driver(manifest.key, 'hooks')
+      : null;
+    if (!driver
+      || typeof driver.getHooks !== 'function'
+      || typeof driver.saveHooks !== 'function'
+      || typeof driver.testHooks !== 'function'
+      || typeof driver.getDefinition !== 'function') {
+      continue;
+    }
+    const definition = driver.getDefinition();
+    if (!definition || typeof definition !== 'object') continue;
+    entries.push({ manifest, driver, definition });
+  }
+  return entries;
+}
 
-      const isManaged = isManagedNotifyPath(command);
-      if (isManaged) {
-        enabled = true;
-        type = parseManagedType(command) || type;
-      } else {
-        external = true;
-      }
-    });
-  });
-
+function toPublicHookDefinition({ manifest, definition }) {
   return {
-    enabled,
-    external,
-    type,
-    method: 'Stop Hook'
+    key: manifest.key,
+    label: manifest.label || definition.label || manifest.key,
+    description: typeof definition.description === 'string' ? definition.description : '',
+    implementation: typeof definition.implementation === 'string' ? definition.implementation : '',
+    externalMessage: typeof definition.externalMessage === 'string' ? definition.externalMessage : '',
+    hints: Array.isArray(definition.hints) ? [...definition.hints] : []
   };
 }
 
-function saveClaudeHook(enabled, type) {
-  const settings = readClaudeSettings();
-  const hooks = settings.hooks && typeof settings.hooks === 'object' ? { ...settings.hooks } : {};
-  const currentGroups = Array.isArray(hooks.Stop) ? hooks.Stop : [];
-
-  const filteredGroups = currentGroups.map((group) => {
-    const groupHooks = Array.isArray(group?.hooks) ? group.hooks : [];
-    const nextHooks = groupHooks.filter((hook) => !isManagedNotifyPath(hook?.command));
-    if (nextHooks.length === 0) {
-      return null;
-    }
-    return { ...group, hooks: nextHooks };
-  }).filter(Boolean);
-
-  if (enabled) {
-    filteredGroups.push({
-      hooks: [
-        {
-          name: MANAGED_HOOK_NAME,
-          type: 'command',
-          command: buildClaudeCommand(type)
-        }
-      ]
-    });
-  }
-
-  if (filteredGroups.length > 0) {
-    hooks.Stop = filteredGroups;
-  } else {
-    delete hooks.Stop;
-  }
-
-  if (Object.keys(hooks).length > 0) {
-    settings.hooks = hooks;
-  } else {
-    delete settings.hooks;
-  }
-
-  writeClaudeSettings(settings);
-}
-
-function safeReadCodexConfig() {
-  try {
-    if (typeof codexSettingsManager.configExists === 'function' && !codexSettingsManager.configExists()) {
-      return {};
-    }
-    return codexSettingsManager.readConfig();
-  } catch (error) {
-    return {};
-  }
-}
-
-function isManagedCodexNotify(notify) {
-  return Array.isArray(notify) && notify.some((part) => isManagedNotifyPath(part));
-}
-
-function parseCodexNotificationStatus(config = {}) {
-  const notify = Array.isArray(config?.notify) ? config.notify : [];
-
-  if (notify.length === 0) {
-    return {
-      enabled: false,
-      external: false,
-      type: 'notification',
-      method: 'notify'
-    };
-  }
-
-  const joined = notify.join(' ');
-  const managed = isManagedCodexNotify(notify);
-
-  return {
-    enabled: managed,
-    external: !managed,
-    type: parseManagedType(joined) || 'notification',
-    method: 'notify'
-  };
-}
-
-function getCodexHookStatus() {
-  return parseCodexNotificationStatus(safeReadCodexConfig());
-}
-
-function saveCodexHook(enabled, type) {
-  const config = safeReadCodexConfig();
-  const nextConfig = (config && typeof config === 'object') ? { ...config } : {};
-  const managed = isManagedCodexNotify(nextConfig.notify);
-
-  if (enabled) {
-    nextConfig.notify = buildCodexNotifyCommand(type);
-  } else if (managed) {
-    delete nextConfig.notify;
-  }
-
-  ensureParentDir(NATIVE_PATHS.codex.config);
-  codexSettingsManager.writeConfig(nextConfig);
-}
-
-function safeReadGeminiSettings() {
-  try {
-    if (typeof geminiSettingsManager.settingsExists === 'function' && !geminiSettingsManager.settingsExists()) {
-      return {};
-    }
-    return geminiSettingsManager.readSettings();
-  } catch (error) {
-    return {};
-  }
-}
-
-function isManagedGeminiHook(hook) {
-  const command = String(hook?.command || '');
-  const name = String(hook?.name || '');
-  return name === MANAGED_HOOK_NAME || isManagedNotifyPath(command);
-}
-
-function parseGeminiNotificationStatus(settings = {}) {
-  const afterAgentGroups = Array.isArray(settings?.hooks?.AfterAgent) ? settings.hooks.AfterAgent : [];
-  let enabled = false;
-  let external = false;
-  let type = 'notification';
-
-  afterAgentGroups.forEach((group) => {
-    const hooks = Array.isArray(group?.hooks) ? group.hooks : [];
-    hooks.forEach((hook) => {
-      if (isManagedGeminiHook(hook)) {
-        enabled = true;
-        type = parseManagedType(hook.command) || type;
-      } else {
-        external = true;
-      }
-    });
-  });
-
-  return {
-    enabled,
-    external,
-    type,
-    method: 'AfterAgent Hook'
-  };
-}
-
-function getGeminiHookStatus() {
-  return parseGeminiNotificationStatus(safeReadGeminiSettings());
-}
-
-function saveGeminiHook(enabled, type) {
-  const settings = safeReadGeminiSettings();
-  const nextSettings = (settings && typeof settings === 'object') ? { ...settings } : {};
-  const hooks = nextSettings.hooks && typeof nextSettings.hooks === 'object' ? { ...nextSettings.hooks } : {};
-  const currentGroups = Array.isArray(hooks.AfterAgent) ? hooks.AfterAgent : [];
-
-  const filteredGroups = currentGroups.map((group) => {
-    const groupHooks = Array.isArray(group?.hooks) ? group.hooks : [];
-    const nextHooks = groupHooks.filter((hook) => !isManagedGeminiHook(hook));
-    if (nextHooks.length === 0) {
-      return null;
-    }
-    return { ...group, hooks: nextHooks };
-  }).filter(Boolean);
-
-  if (enabled) {
-    filteredGroups.push({
-      matcher: '*',
-      hooks: [
-        {
-          name: MANAGED_HOOK_NAME,
-          type: 'command',
-          command: buildGeminiCommand(type)
-        }
-      ]
-    });
-  }
-
-  if (filteredGroups.length > 0) {
-    hooks.AfterAgent = filteredGroups;
-  } else {
-    delete hooks.AfterAgent;
-  }
-
-  if (Object.keys(hooks).length > 0) {
-    nextSettings.hooks = hooks;
-  } else {
-    delete nextSettings.hooks;
-  }
-
-  ensureParentDir(geminiSettingsManager.getSettingsPath());
-  geminiSettingsManager.writeSettings(nextSettings);
-}
-
-function parseOpenCodeNotificationStatus(content = '') {
-  if (!content) {
-    return {
-      enabled: false,
-      external: false,
-      type: 'notification',
-      method: 'Plugin Events'
-    };
-  }
-
-  return {
-    enabled: true,
-    external: false,
-    type: parseManagedType(content) || 'notification',
-    method: 'Plugin Events'
-  };
-}
-
-function parseOmpNotificationStatus(content = '') {
-  if (!content) {
-    return {
-      enabled: false,
-      external: false,
-      type: 'notification',
-      method: 'Extension Events'
-    };
-  }
-
-  return {
-    enabled: true,
-    external: false,
-    type: parseManagedType(content) || 'notification',
-    method: 'Extension Events'
-  };
-}
-
-function getOpenCodeHookStatus() {
-  const pluginPath = getOpenCodeManagedPluginPath();
-  if (!fs.existsSync(pluginPath)) {
-    return parseOpenCodeNotificationStatus('');
-  }
-
-  return parseOpenCodeNotificationStatus(fs.readFileSync(pluginPath, 'utf8'));
-}
-
-function getOmpHookStatus() {
-  const extensionPath = getOmpManagedExtensionPath();
-  if (!fs.existsSync(extensionPath)) {
-    return parseOmpNotificationStatus('');
-  }
-
-  return parseOmpNotificationStatus(fs.readFileSync(extensionPath, 'utf8'));
-}
-
-function saveOpenCodeHook(enabled, type) {
-  const pluginPath = getOpenCodeManagedPluginPath();
-  const opencodeSettingsManager = require('./drivers/opencode/native-config-implementation');
-  const configPath = opencodeSettingsManager.selectConfigPath();
-
-  if (!enabled) {
-    // Remove plugin file
-    if (fs.existsSync(pluginPath)) {
-      fs.unlinkSync(pluginPath);
-    }
-
-    // Remove from opencode.json plugins array
-    if (fs.existsSync(configPath)) {
-      try {
-        const config = opencodeSettingsManager.readConfig(configPath);
-        if (Array.isArray(config.plugins)) {
-          config.plugins = config.plugins.filter(p => p !== './plugins/coding-tool-notify.js');
-          if (config.plugins.length === 0) {
-            delete config.plugins;
-          }
-          opencodeSettingsManager.writeConfig(configPath, config);
-        }
-      } catch (error) {
-        console.error('Failed to update opencode.json:', error);
-      }
-    }
-    return;
-  }
-
-  // Create plugin file
-  ensureParentDir(pluginPath);
-  fs.writeFileSync(pluginPath, buildOpenCodePluginContent(type), 'utf8');
-
-  // Add to opencode.json plugins array
-  try {
-    const config = fs.existsSync(configPath)
-      ? opencodeSettingsManager.readConfig(configPath)
-      : {};
-
-    if (!Array.isArray(config.plugins)) {
-      config.plugins = [];
-    }
-
-    const pluginRef = './plugins/coding-tool-notify.js';
-    if (!config.plugins.includes(pluginRef)) {
-      config.plugins.push(pluginRef);
-    }
-
-    opencodeSettingsManager.writeConfig(configPath, config);
-  } catch (error) {
-    console.error('Failed to update opencode.json:', error);
-  }
-}
-
-function saveOmpHook(enabled, type) {
-  const extensionPath = getOmpManagedExtensionPath();
-
-  if (!enabled) {
-    if (fs.existsSync(extensionPath)) {
-      fs.unlinkSync(extensionPath);
-    }
-    return;
-  }
-
-  ensureParentDir(extensionPath);
-  fs.writeFileSync(extensionPath, buildOmpExtensionContent(type), 'utf8');
-}
-
-function getNotificationSettings() {
+function getNotificationSettings({ catalog } = {}) {
+  const entries = getHookPlatformEntries(catalog);
   const uiConfig = loadUIConfig();
   const remoteNotifications = getRemoteNotificationsConfig(uiConfig);
+  const platforms = {};
+  const platformDefinitions = [];
+  for (const entry of entries) {
+    platforms[entry.manifest.key] = entry.driver.getHooks();
+    platformDefinitions.push(toPublicHookDefinition(entry));
+  }
+  const claudeStatus = platforms.claude || { enabled: false, type: 'notification' };
   return {
     success: true,
     platform: os.platform(),
     remoteNotifications,
-    remoteProviderTypes: REMOTE_PROVIDER_TYPES.map((type) => ({
-      type,
-      label: REMOTE_PROVIDER_LABELS[type]
-    })),
-    platforms: {
-      claude: getClaudeHookStatus(),
-      codex: getCodexHookStatus(),
-      gemini: getGeminiHookStatus(),
-      opencode: getOpenCodeHookStatus(),
-      omp: getOmpHookStatus()
+    remoteProviderTypes: getRemoteProviderTypes(),
+    platformDefinitions,
+    platforms,
+    stopHook: {
+      enabled: claudeStatus.enabled === true,
+      type: normalizeType(claudeStatus.type)
     }
   };
 }
@@ -1804,39 +1168,40 @@ function emitBrowserNotification(input = {}) {
   broadcastBrowserNotification(payload);
   return payload;
 }
-
-function saveNotificationSettings(input = {}) {
+function saveNotificationSettings(input = {}, { catalog } = {}) {
   const remoteNotifications = validateRemoteNotifications(
     input.remoteNotifications !== undefined
       ? input.remoteNotifications
       : {}
   );
-  const platforms = {
-    claude: normalizePlatformInput(input?.platforms?.claude),
-    codex: normalizePlatformInput(input?.platforms?.codex),
-    gemini: normalizePlatformInput(input?.platforms?.gemini),
-    opencode: normalizePlatformInput(input?.platforms?.opencode),
-    omp: normalizePlatformInput(input?.platforms?.omp)
-  };
+  const entries = getHookPlatformEntries(catalog);
+  const inputPlatforms = input.platforms && typeof input.platforms === 'object' && !Array.isArray(input.platforms)
+    ? input.platforms
+    : {};
+  const platforms = Object.fromEntries(entries.map(entry => {
+    const key = entry.manifest.key;
+    const platformInput = Object.prototype.hasOwnProperty.call(inputPlatforms, key)
+      ? inputPlatforms[key]
+      : Object.prototype.hasOwnProperty.call(input, key)
+        ? input[key]
+        : key === 'claude'
+          ? input.stopHook
+          : undefined;
+    return [key, normalizePlatformInput(platformInput)];
+  }));
 
-  saveNotificationUiConfig(remoteNotifications, platforms.claude.enabled);
+  const claudeEntry = entries.find(entry => entry.manifest.key === 'claude');
+  saveNotificationUiConfig(remoteNotifications, claudeEntry ? platforms.claude.enabled : undefined);
 
-  const hasManagedPlatform = Object.values(platforms).some((platform) => platform.enabled);
-  if (hasManagedPlatform) {
-    writeNotifyScript(remoteNotifications);
+  const hasManagedPlatform = Object.values(platforms).some(platform => platform.enabled);
+  for (const entry of entries) {
+    entry.driver.saveHooks(platforms[entry.manifest.key]);
   }
 
-  saveClaudeHook(platforms.claude.enabled, platforms.claude.type);
-  saveCodexHook(platforms.codex.enabled, platforms.codex.type);
-  saveGeminiHook(platforms.gemini.enabled, platforms.gemini.type);
-  saveOpenCodeHook(platforms.opencode.enabled, platforms.opencode.type);
-  saveOmpHook(platforms.omp.enabled, platforms.omp.type);
+  if (hasManagedPlatform) writeNotifyScript(remoteNotifications);
+  else removeNotifyScript();
 
-  if (!hasManagedPlatform) {
-    removeNotifyScript();
-  }
-
-  return getNotificationSettings();
+  return getNotificationSettings({ catalog });
 }
 
 function parseNotifyTypeMarker(command) {
@@ -1950,20 +1315,19 @@ function normalizeSavedPlatformStatus(platform = {}) {
 }
 
 function buildLegacyClaudeSaveInput(input = {}, currentSettings = getNotificationSettings()) {
+  const platforms = {
+    ...(currentSettings?.platforms && typeof currentSettings.platforms === 'object'
+      ? currentSettings.platforms
+      : {})
+  };
+  platforms.claude = input.stopHook !== undefined
+    ? normalizePlatformInput(input.stopHook)
+    : { enabled: false, type: 'notification' };
   return {
-    platforms: {
-      claude: input.stopHook !== undefined
-        ? normalizePlatformInput(input.stopHook)
-        : { enabled: false, type: 'notification' },
-      codex: normalizeSavedPlatformStatus(currentSettings?.platforms?.codex),
-      gemini: normalizeSavedPlatformStatus(currentSettings?.platforms?.gemini),
-      opencode: normalizeSavedPlatformStatus(currentSettings?.platforms?.opencode),
-      omp: normalizeSavedPlatformStatus(currentSettings?.platforms?.omp)
-    },
+    platforms,
     remoteNotifications: currentSettings?.remoteNotifications || { providers: [] }
   };
 }
-
 function getLegacyClaudeHookSettings() {
   return {
     success: true,
@@ -1986,21 +1350,21 @@ function initDefaultHooks() {
       return;
     }
 
+    const entries = getHookPlatformEntries();
+    const claudeEntry = entries.find(entry => entry.manifest.key === 'claude');
+    if (!claudeEntry) return;
+
     const currentClaudeSettings = readClaudeSettings();
     const currentStatus = parseStopHookStatus(currentClaudeSettings);
+    const currentSettings = getNotificationSettings();
+    const platforms = { ...currentSettings.platforms };
 
     if (currentStatus.enabled) {
       if (shouldRepairStopHook(currentClaudeSettings)) {
-        const currentSettings = getNotificationSettings();
+        platforms.claude = { enabled: true, type: currentStatus.type || 'notification' };
         saveNotificationSettings({
-          platforms: {
-            claude: { enabled: true, type: currentStatus.type || 'notification' },
-            codex: normalizeSavedPlatformStatus(currentSettings?.platforms?.codex),
-            gemini: normalizeSavedPlatformStatus(currentSettings?.platforms?.gemini),
-            opencode: normalizeSavedPlatformStatus(currentSettings?.platforms?.opencode),
-            omp: normalizeSavedPlatformStatus(currentSettings?.platforms?.omp)
-          },
-          remoteNotifications: currentSettings?.remoteNotifications || { providers: [] }
+          platforms,
+          remoteNotifications: currentSettings.remoteNotifications || { providers: [] }
         });
         console.log('[Claude Hooks] 检测到旧版 Stop hook 路径，已自动修复');
       } else {
@@ -2009,16 +1373,10 @@ function initDefaultHooks() {
       return;
     }
 
-    const currentSettings = getNotificationSettings();
+    platforms.claude = { enabled: true, type: 'notification' };
     saveNotificationSettings({
-      platforms: {
-        claude: { enabled: true, type: 'notification' },
-        codex: normalizeSavedPlatformStatus(currentSettings?.platforms?.codex),
-        gemini: normalizeSavedPlatformStatus(currentSettings?.platforms?.gemini),
-        opencode: normalizeSavedPlatformStatus(currentSettings?.platforms?.opencode),
-        omp: normalizeSavedPlatformStatus(currentSettings?.platforms?.omp)
-      },
-      remoteNotifications: currentSettings?.remoteNotifications || { providers: [] }
+      platforms,
+      remoteNotifications: currentSettings.remoteNotifications || { providers: [] }
     });
     console.log('[Claude Hooks] 已自动开启任务完成通知（右上角卡片）');
   } catch (error) {
@@ -2026,261 +1384,6 @@ function initDefaultHooks() {
   }
 }
 
-function sendFeishuTest(webhookUrl) {
-  return new Promise((resolve, reject) => {
-    try {
-      const urlObj = validateFeishuWebhookUrl(webhookUrl);
-      const data = JSON.stringify({
-        msg_type: 'interactive',
-        card: {
-          header: {
-            title: { tag: 'plain_text', content: 'Coding Tool - 测试通知' },
-            template: 'blue'
-          },
-          elements: [
-            {
-              tag: 'div',
-              text: { tag: 'lark_md', content: '**状态**: 这是一条测试通知' }
-            },
-            {
-              tag: 'div',
-              text: { tag: 'lark_md', content: '**时间**: ' + new Date().toLocaleString('zh-CN') }
-            }
-          ]
-        }
-      });
-
-      const options = {
-        hostname: urlObj.hostname,
-        port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
-        path: urlObj.pathname + urlObj.search,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(data)
-        },
-        timeout: 10000
-      };
-
-      const requestModule = urlObj.protocol === 'https:' ? https : http;
-      const request = requestModule.request(options, () => resolve());
-      request.on('error', reject);
-      request.on('timeout', () => {
-        request.destroy(new Error('飞书测试通知超时'));
-      });
-      request.write(data);
-      request.end();
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
-function requestJson(url, data, headers = {}, extraOptions = {}) {
-  return new Promise((resolve, reject) => {
-    try {
-      const urlObj = new URL(url);
-      const body = JSON.stringify(data);
-      const requestModule = urlObj.protocol === 'https:' ? https : http;
-      const request = requestModule.request({
-        hostname: urlObj.hostname,
-        port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
-        path: urlObj.pathname + urlObj.search,
-        method: 'POST',
-        timeout: 10000,
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
-          ...headers
-        },
-        ...extraOptions
-      }, (response) => {
-        response.resume();
-        if (response.statusCode >= 200 && response.statusCode < 300) {
-          resolve();
-        } else {
-          reject(new Error(`远程通知返回 HTTP ${response.statusCode}`));
-        }
-      });
-      request.on('error', reject);
-      request.on('timeout', () => {
-        request.destroy(new Error('远程通知测试超时'));
-      });
-      request.write(body);
-      request.end();
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
-function requestDingTalkAccessToken(config = {}) {
-  if (!config.clientId || !config.clientSecret) {
-    return Promise.resolve('');
-  }
-  return new Promise((resolve, reject) => {
-    try {
-      const body = JSON.stringify({ appKey: config.clientId, appSecret: config.clientSecret });
-      const request = https.request({
-        hostname: 'api.dingtalk.com',
-        path: '/v1.0/oauth2/accessToken',
-        method: 'POST',
-        timeout: 10000,
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body)
-        }
-      }, (response) => {
-        let responseBody = '';
-        response.setEncoding('utf8');
-        response.on('data', (chunk) => { responseBody += chunk; });
-        response.on('end', () => {
-          try {
-            const parsed = JSON.parse(responseBody);
-            if (response.statusCode >= 200 && response.statusCode < 300 && parsed.accessToken) {
-              resolve(parsed.accessToken);
-              return;
-            }
-            reject(new Error(`钉钉 Access Token 获取失败: ${responseBody.slice(0, 300)}`));
-          } catch (error) {
-            reject(error);
-          }
-        });
-      });
-      request.on('error', reject);
-      request.on('timeout', () => {
-        request.destroy(new Error('钉钉 Access Token 获取超时'));
-      });
-      request.write(body);
-      request.end();
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
-function buildTestNotificationContext() {
-  return {
-    title: 'Coding Tool - 测试通知',
-    message: '这是一条测试通知',
-    source: 'test',
-    eventType: 'test',
-    timestamp: new Date().toLocaleString('zh-CN'),
-    hostname: os.hostname()
-  };
-}
-
-function formatProviderText(ctx) {
-  return [
-    ctx.title,
-    `来源: ${ctx.source}`,
-    `状态: ${ctx.message}`,
-    `时间: ${ctx.timestamp}`,
-    `设备: ${ctx.hostname}`
-  ].join('\n');
-}
-
-async function sendRemoteProviderTest(providerInput = {}) {
-  const provider = normalizeRemoteProvider(providerInput);
-  if (!provider) {
-    throw createValidationError('远程通知渠道类型不正确');
-  }
-  validateRemoteProviderConfig({ ...provider, enabled: true });
-
-  const config = provider.config || {};
-  const ctx = buildTestNotificationContext();
-  switch (provider.type) {
-    case 'feishuBot':
-      return sendFeishuTest(config.webhookUrl);
-    case 'qqBot': {
-      const pathSuffix = config.targetType === 'group' ? '/send_group_msg' : '/send_private_msg';
-      return requestJson(String(config.endpoint).replace(/\/$/, '') + pathSuffix, {
-        [config.targetType === 'group' ? 'group_id' : 'user_id']: config.targetId,
-        message: formatProviderText(ctx)
-      }, config.accessToken ? { Authorization: `Bearer ${config.accessToken}` } : {});
-    }
-    case 'wecomBot':
-      return requestJson(config.webhookUrl, {
-        msgtype: 'markdown',
-        markdown: { content: `**${ctx.title}**\n> 状态: ${ctx.message}\n> 时间: ${ctx.timestamp}` }
-      });
-    case 'dingtalkBot':
-      if (config.mode === 'app') {
-        return sendDingTalkAppProviderTest(config, ctx);
-      }
-      return requestJson(config.webhookUrl, {
-        msgtype: 'markdown',
-        markdown: { title: ctx.title, text: `### ${ctx.title}\n\n- 状态: ${ctx.message}\n- 时间: ${ctx.timestamp}` }
-      });
-    case 'telegramBot':
-      return requestTelegramMessage(config, ctx);
-    case 'wechatBot':
-      if (!config.botToken && config.tokenFile) {
-        try {
-          const raw = fs.readFileSync(config.tokenFile, 'utf8');
-          const parsed = JSON.parse(raw);
-          config.botToken = parsed.bot_token || parsed.token || '';
-        } catch (error) {
-          throw createValidationError('无法读取微信 token.json');
-        }
-      }
-      requireConfigValue(config, 'botToken', '微信 Bot Token');
-      return requestJson('https://ilinkai.weixin.qq.com/ilink/bot/sendmessage', {
-        msg: {
-          from_user_id: '',
-          to_user_id: config.targetUserId,
-          client_id: createClientId('coding-tool'),
-          message_type: 2,
-          message_state: 2,
-          item_list: [{ type: 1, text_item: { text: formatProviderText(ctx) } }],
-          ...(config.contextToken ? { context_token: config.contextToken } : {})
-        },
-        base_info: { channel_version: '2.1.8' }
-      }, {
-        AuthorizationType: 'ilink_bot_token',
-        Authorization: `Bearer ${config.botToken}`,
-        'X-WECHAT-UIN': Buffer.from(String(Math.floor(Math.random() * 0xffffffff))).toString('base64')
-      });
-    default:
-      throw createValidationError('不支持的远程通知渠道');
-  }
-}
-
-function requestTelegramMessage(config = {}, ctx) {
-  const url = `https://api.telegram.org/bot${config.botToken}/sendMessage`;
-  const payload = {
-    chat_id: config.chatId,
-    text: formatProviderText(ctx)
-  };
-  const agent = config.proxy ? new HttpsProxyAgent(config.proxy) : null;
-  return requestJson(url, payload, {}, agent ? { agent } : {});
-}
-
-async function sendDingTalkAppProviderTest(config = {}, ctx) {
-  const token = await requestDingTalkAccessToken(config);
-  if (!token) {
-    throw createValidationError('钉钉 App Access Token 获取失败');
-  }
-  const isGroup = config.targetType !== 'user';
-  const payload = {
-    robotCode: config.clientId,
-    msgKey: 'sampleMarkdown',
-    msgParam: JSON.stringify({
-      title: ctx.title,
-      text: `### ${ctx.title}\n\n- 状态: ${ctx.message}\n- 时间: ${ctx.timestamp}\n- 设备: ${ctx.hostname}`
-    })
-  };
-  if (isGroup) {
-    payload.openConversationId = config.targetId;
-  } else {
-    payload.userIds = [config.targetId];
-  }
-  return requestJson(
-    'https://api.dingtalk.com/v1.0/robot/' + (isGroup ? 'groupMessages/send' : 'oToMessages/batchSend'),
-    payload,
-    { 'x-acs-dingtalk-access-token': token }
-  );
-}
 
 function generateSystemNotificationCommand(type, message, platformOverride = os.platform()) {
   const normalizedType = normalizeType(type);
@@ -2375,14 +1478,14 @@ function syncManagedNotificationAssets() {
   return settings;
 }
 
-function testNotification({ type, provider } = {}) {
+function testNotification({ type, provider, source = 'claude' } = {}) {
   if (provider) {
     return sendRemoteProviderTest(provider);
   }
 
   if (normalizeType(type) === 'browser') {
     emitBrowserNotification({
-      source: 'claude',
+      source,
       title: 'coding-tool-x',
       message: '这是一条浏览器测试通知'
     });
@@ -2412,6 +1515,8 @@ module.exports = {
   normalizeRemoteNotificationsConfig,
   validateRemoteProviderConfig,
   _test: {
+    getHookPlatformEntries,
+    toPublicHookDefinition,
     applyClaudeDisablePreference,
     getManagedCommandType,
     parseManagedType,

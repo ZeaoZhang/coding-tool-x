@@ -477,6 +477,7 @@
     "nativeConfig": "legacy:omp",
     "projectConfig": "legacy:omp",
     "api": "legacy:omp",
+    "hooks": "legacy:omp",
     "resourceSync": "legacy:omp",
     "mcp": "legacy:omp"
   }

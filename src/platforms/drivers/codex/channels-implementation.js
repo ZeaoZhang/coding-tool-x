@@ -7,6 +7,10 @@ const { PATHS } = require('../../../config/paths');
 const { getCodexDir } = require('./config');
 const { isProxyConfig, readConfig } = require('./native-config-implementation');
 const { syncCodexUserEnvironment } = require('./env-manager');
+const {
+  readNativeOAuth,
+  clearCodexChannelConfig
+} = require('../../native-oauth-adapters');
 const BaseChannelService = require('../../../shared/base-channel-service');
 const {
   createSkippedResult,
@@ -32,7 +36,9 @@ function resolveCurrentManagedChannel(channels = []) {
   }
 
   if (currentProvider && currentProvider !== 'cc-proxy') {
-    const matched = allChannels.find(ch => ch.providerKey === currentProvider);
+    const matched = allChannels.find(ch => (
+      ch.providerKey === currentProvider && ch.enabled !== false
+    ));
     if (matched) {
       return matched;
     }
@@ -41,8 +47,71 @@ function resolveCurrentManagedChannel(channels = []) {
   return allChannels.find(ch => ch.enabled !== false) || null;
 }
 
-function channelRequiresOpenaiAuth() {
-  return false;
+function channelRequiresOpenaiAuth(channel) {
+  return channel?.authMode === 'oauth';
+}
+
+function createCodexOAuthError(message, code, statusCode) {
+  const error = new Error(message);
+  error.code = code;
+  error.statusCode = statusCode;
+  return error;
+}
+
+function readNativeCodexOAuthOrThrow() {
+  const credential = readNativeOAuth('codex');
+  if (!credential) {
+    throw createCodexOAuthError(
+      'Codex native OAuth credential is unavailable; sync local OAuth first',
+      'codex_native_oauth_unavailable',
+      422
+    );
+  }
+  return credential;
+}
+
+function assertCodexOAuthIsNativeOnly() {
+  if (isProxyConfig()) {
+    throw createCodexOAuthError(
+      'Codex OAuth channels are native-only; stop the Codex proxy first',
+      'codex_oauth_proxy_unsupported',
+      409
+    );
+  }
+}
+
+function clearManagedCodexConfig() {
+  clearCodexChannelConfig();
+  delete process.env.CC_PROXY_KEY;
+}
+
+function applyNativeOAuthChannel(channel) {
+  assertCodexOAuthIsNativeOnly();
+  readNativeCodexOAuthOrThrow();
+  clearManagedCodexConfig();
+  console.log(`[Codex Channels] Applied native OAuth channel ${channel.name}`);
+  return channel;
+}
+
+function validateCodexChannelForMutation(channel, operation) {
+  if (channel?.authMode !== 'oauth') {
+    return;
+  }
+  if (operation !== 'apply' && channel.enabled === false) {
+    return;
+  }
+  assertCodexOAuthIsNativeOnly();
+  readNativeCodexOAuthOrThrow();
+}
+
+function getCodexProxyExcludedChannelIds(channels = null) {
+  const enabledChannels = Array.isArray(channels)
+    ? channels.filter(channel => channel?.enabled !== false)
+    : getServiceInstance().getEnabledChannels();
+  return enabledChannels
+    .filter(channel => channel?.authMode === 'oauth')
+    .map(channel => channel.id)
+    .filter(Boolean);
 }
 
 function buildManagedCodexEnvMap(channels = [], { includeProxyKey = false, activeChannel = null } = {}) {
@@ -62,9 +131,31 @@ function syncAllChannelEnvVars() {
     const svc = getServiceInstance();
     const data = svc.loadChannels();
     const proxyRunning = isProxyConfig();
+    const activeChannel = proxyRunning
+      ? null
+      : resolveCurrentManagedChannel(data.channels);
+
+    if (!proxyRunning && !activeChannel) {
+      clearManagedCodexConfig();
+      return;
+    }
+
+    if (!proxyRunning && activeChannel.authMode === 'oauth') {
+      try {
+        applyNativeOAuthChannel(activeChannel);
+      } catch (err) {
+        if (err.code !== 'codex_native_oauth_unavailable') {
+          throw err;
+        }
+        console.warn(`[Codex Channels] ${err.message}; cleared managed config`);
+        clearManagedCodexConfig();
+      }
+      return;
+    }
+
     const envMap = buildManagedCodexEnvMap(data.channels, {
       includeProxyKey: proxyRunning,
-      activeChannel: proxyRunning ? null : resolveCurrentManagedChannel(data.channels)
+      activeChannel
     });
     syncCodexUserEnvironment(envMap, { replace: true });
   } catch (err) {
@@ -108,6 +199,19 @@ function writeCodexConfigForMultiChannel(channels) {
   }
 
   const enabledChannels = channels.filter(ch => ch.enabled !== false);
+  const oauthChannels = enabledChannels.filter(ch => ch.authMode === 'oauth');
+  if (oauthChannels.length > 0) {
+    if (oauthChannels.length !== enabledChannels.length) {
+      throw createCodexOAuthError(
+        'Codex native OAuth cannot be mixed with managed API-key channels',
+        'codex_oauth_mixed_channels',
+        409
+      );
+    }
+    applyNativeOAuthChannel(oauthChannels[0]);
+    return;
+  }
+
   if (enabledChannels.length > 0) {
     const primary = enabledChannels[0];
     config.model_provider = primary.providerKey;
@@ -124,6 +228,9 @@ function writeCodexConfigForMultiChannel(channels) {
         config.model_providers[ch.providerKey].query_params = ch.queryParams;
       }
     }
+  } else {
+    clearManagedCodexConfig();
+    return;
   }
 
   writeAnnotatedCodexConfig(configPath, config, [
@@ -152,15 +259,24 @@ class CodexChannelService extends BaseChannelService {
   _applyDefaults(channel) {
     const ch = super._applyDefaults(channel);
     ch.providerKey = ch.providerKey || '';
-    ch.envKey = CODEX_MANAGED_ENV_KEY;
+    ch.envKey = ch.authMode === 'oauth' ? '' : CODEX_MANAGED_ENV_KEY;
     ch.wireApi = ch.wireApi || 'responses';
     ch.model = ch.model || '';
     ch.speedTestModel = ch.speedTestModel || null;
     ch.modelRedirects = Array.isArray(ch.modelRedirects) ? ch.modelRedirects : [];
     ch.gatewaySourceType = ch.gatewaySourceType || 'codex';
-    ch.requiresOpenaiAuth = false;
+    ch.requiresOpenaiAuth = channelRequiresOpenaiAuth(ch);
     ch.queryParams = ch.queryParams || {};
     return ch;
+  }
+  _validateBeforeChannelMutation(channel, _allChannels, context = {}) {
+    validateCodexChannelForMutation(channel, context.operation);
+  }
+
+  disableAllChannels() {
+    const result = super.disableAllChannels();
+    syncAllChannelEnvVars();
+    return result;
   }
 
   _validateUniqueness(channels, fields, excludeId) {
@@ -208,6 +324,9 @@ class CodexChannelService extends BaseChannelService {
   }
 
   _applyToNativeSettings(channel) {
+    if (channel.authMode === 'oauth') {
+      return applyNativeOAuthChannel(channel);
+    }
     const codexDir = getCodexDir();
     const configPath = path.join(codexDir, 'config.toml');
 
@@ -417,10 +536,12 @@ module.exports = {
   applyChannelToSettings,
   getEffectiveApiKey,
   disableAllChannels,
+  getCodexProxyExcludedChannelIds,
   syncCurrentCodexChannel,
   _test: {
     buildManagedCodexEnvMap,
     CODEX_MANAGED_ENV_KEY,
-    resolveCurrentManagedChannel
+    resolveCurrentManagedChannel,
+    getCodexProxyExcludedChannelIds
   }
 };

@@ -127,11 +127,15 @@ function getDefaultModelsByToolType(toolType) {
 
 function getDefaultSpeedTestModels() {
   const fileConfig = loadMetadataConfigFromFile();
-  const raw = fileConfig.defaultSpeedTestModels || DEFAULT_SPEED_TEST_MODELS;
-  return Object.fromEntries(Object.entries({
-    ...DEFAULT_SPEED_TEST_MODELS,
-    ...raw
-  }).map(([key, value]) => [key, normalizeNonEmptyString(value) || value]));
+  const configured = fileConfig?.defaultSpeedTestModels;
+  const raw = configured && typeof configured === 'object' && !Array.isArray(configured)
+    ? configured
+    : DEFAULT_SPEED_TEST_MODELS;
+  return Object.fromEntries(
+    Object.entries({ ...DEFAULT_SPEED_TEST_MODELS, ...raw })
+      .map(([key, value]) => [key, normalizeNonEmptyString(value)])
+      .filter(([, value]) => value)
+  );
 }
 
 function getDefaultSpeedTestModelByToolType(toolType) {
@@ -141,20 +145,6 @@ function getDefaultSpeedTestModelByToolType(toolType) {
   return defaults[alias] || defaults.codex || null;
 }
 
-function saveDefaultSpeedTestModels(nextDefaults) {
-  const current = loadMetadataConfigFromFile();
-  const normalized = {
-    ...getDefaultSpeedTestModels(),
-    ...(nextDefaults || {})
-  };
-  const nextConfig = {
-    ...current,
-    defaultSpeedTestModels: normalized
-  };
-  fs.writeFileSync(METADATA_FILE_PATH, `${JSON.stringify(nextConfig, null, 2)}\n`, 'utf8');
-  metadataConfig.defaultSpeedTestModels = normalized;
-  return normalized;
-}
 
 module.exports = {
   MODEL_METADATA,
@@ -170,7 +160,6 @@ module.exports = {
   getDefaultModelsByToolType,
   getDefaultSpeedTestModels,
   getDefaultSpeedTestModelByToolType,
-  saveDefaultSpeedTestModels,
   METADATA_LAST_UPDATED,
   METADATA_SOURCE
 };

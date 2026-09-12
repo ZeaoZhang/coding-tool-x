@@ -537,6 +537,15 @@ function createLegacyDriver({ platform, capability, requireImpl = require, manif
       return moduleExports.createDriver({ ...context, runtime: context.runtime, platform, capability, manifest, requireImpl });
     }
   }
+  if (capability === 'hooks') {
+    const hooksModule = require('./notification-hooks');
+    return hooksModule.createNotificationHooksDriver({
+      ...context,
+      platform,
+      capability,
+      testNotification: context.testNotification
+    });
+  }
   if (useBuiltInDrivers && ['resourceSync', 'mcp', 'prompts'].includes(capability)) {
     const moduleName = capability === 'resourceSync' ? 'resource-sync' : capability;
     const capabilityModule = requireImpl(`./${platform}/${moduleName}`);

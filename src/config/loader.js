@@ -86,6 +86,15 @@ function isDefaultProjectsDir(projectsDir) {
   return previous === '.claude' && last === 'projects' && !fs.existsSync(normalized);
 }
 
+function normalizeSpeedTestModels(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([key, modelId]) => [String(key).trim(), typeof modelId === 'string' ? modelId.trim() : ''])
+      .filter(([key, modelId]) => key && modelId)
+  );
+}
+
 function normalizeConfigForSave(config = {}) {
   const normalized = { ...config };
   if (isDefaultProjectsDir(normalized.projectsDir)) {
@@ -93,6 +102,10 @@ function normalizeConfigForSave(config = {}) {
   } else if (typeof normalized.projectsDir === 'string') {
     normalized.projectsDir = collapseHome(normalized.projectsDir);
   }
+  normalized.defaultSpeedTestModels = mergeDefaultSpeedTestModels(
+    DEFAULT_CONFIG.defaultSpeedTestModels,
+    normalized.defaultSpeedTestModels
+  );
   return normalized;
 }
 
@@ -119,8 +132,8 @@ function mergeDefaultModels(defaultModels, overrides = {}) {
 
 function mergeDefaultSpeedTestModels(defaultModels, overrides = {}) {
   return {
-    ...defaultModels,
-    ...(overrides || {})
+    ...normalizeSpeedTestModels(defaultModels),
+    ...normalizeSpeedTestModels(overrides)
   };
 }
 

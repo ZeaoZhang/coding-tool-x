@@ -1,5 +1,6 @@
+import { nextTick } from 'vue'
 import { flushPromises, shallowMount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
   getUIConfig,
@@ -46,9 +47,15 @@ vi.mock('../../utils/message', () => ({
 }))
 
 import SettingsDrawer from '../SettingsDrawer.vue'
-
+const fetchMock = vi.fn()
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 describe('SettingsDrawer platform catalog', () => {
   beforeEach(() => {
+    fetchMock.mockReset()
+    vi.stubGlobal('fetch', fetchMock)
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({}) })
     getUIConfig.mockResolvedValue({
       success: true,
       config: { enabledCliPlatforms: ['demo-cli'] }
@@ -85,5 +92,198 @@ describe('SettingsDrawer platform catalog', () => {
     expect(bodyText).not.toContain('配置目录')
     expect(bodyText).not.toContain('图标 token')
     expect(wrapper.findAll('.platform-catalog-item')).toHaveLength(1)
+  })
+  it('renders and saves a non-built-in hook platform from the API descriptor', async () => {
+    const hooksData = {
+      success: true,
+      platform: 'darwin',
+      platforms: {
+        'demo-hook': { enabled: true, external: false, type: 'dialog', method: 'Demo Hook' }
+      },
+      platformDefinitions: [{
+        key: 'demo-hook',
+        label: 'Demo Hooks',
+        description: 'A dynamically registered hook',
+        implementation: 'A test adapter',
+        externalMessage: '',
+        hints: []
+      }],
+      remoteNotifications: {
+        providers: [{
+          id: 'provider-1',
+          type: 'testProvider',
+          name: 'Legacy Test Provider',
+          enabled: false,
+          config: { token: '' }
+        }]
+      },
+      remoteProviderTypes: [{
+        type: 'testProvider',
+        label: 'Test Provider',
+        description: 'A dynamic provider',
+        hint: 'Configure the test provider',
+        defaults: { token: '' },
+        fields: [{ key: 'token', label: 'Token', type: 'secret' }]
+      }]
+    }
+    fetchMock.mockImplementation(async (url) => {
+      if (url === '/api/hooks') {
+        return { ok: true, json: async () => hooksData }
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          ports: {},
+          maxLogs: 100,
+          statsInterval: 30,
+          enableSessionBinding: true
+        })
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = shallowMount(SettingsDrawer, {
+      props: { visible: false },
+      global: {
+        stubs: {
+          drawer: { template: '<div><slot /></div>' },
+          'drawer-content': { template: '<div><slot name=\"header\" /><slot /><slot name=\"footer\" /></div>' },
+          checkbox: { template: '<label><slot /></label>' },
+          text: { template: '<span><slot /></span>' }
+        }
+      }
+    })
+    await wrapper.setProps({ visible: true })
+    await flushPromises()
+    await nextTick()
+    expect(fetchMock.mock.calls.map(([url]) => url)).toContain('/api/hooks')
+    expect(wrapper.vm.notificationPlatformDefinitions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ key: 'demo-hook', label: 'Demo Hooks' })
+    ]))
+    const notificationPanel = wrapper.findAll('.settings-panel').find(panel => panel.html().includes('远程通知渠道'))
+    expect(notificationPanel).toBeTruthy()
+    expect(notificationPanel.html()).toContain('Demo Hooks')
+    expect(wrapper.text()).not.toContain('Claude Code')
+    expect(wrapper.text()).toContain('Legacy Test Provider')
+    expect(wrapper.find('remote-provider-fields-stub').exists()).toBe(true)
+
+    await wrapper.vm.handleSaveNotification()
+    const saveCall = fetchMock.mock.calls.find(([, options]) => options?.method === 'POST')
+    expect(saveCall).toBeTruthy()
+    expect(JSON.parse(saveCall[1].body).platforms).toEqual({
+      'demo-hook': { enabled: true, type: 'dialog' }
+    })
+  })
+  it('keeps legacy hook and provider keys when descriptor metadata is absent', async () => {
+    const legacyData = {
+      success: true,
+      platform: 'linux',
+      platforms: {
+        'legacy-hook': { enabled: false, type: 'notification' }
+      },
+      remoteNotifications: {
+        providers: [{
+          id: 'legacy-provider-1',
+          type: 'legacyProvider',
+          name: 'Legacy Provider',
+          enabled: false,
+          config: { legacyField: 'preserve-me' }
+        }]
+      }
+    }
+    fetchMock.mockImplementation(async (url) => {
+      if (url === '/api/hooks') {
+        return { ok: true, json: async () => legacyData }
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          ports: {},
+          maxLogs: 100,
+          statsInterval: 30,
+          enableSessionBinding: true
+        })
+      }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = shallowMount(SettingsDrawer, {
+      props: { visible: false },
+      global: {
+        stubs: {
+          drawer: { template: '<div><slot /></div>' },
+          'drawer-content': { template: '<div><slot name=\"header\" /><slot /><slot name=\"footer\" /></div>' },
+          checkbox: { template: '<label><slot /></label>' },
+          text: { template: '<span><slot /></span>' }
+        }
+      }
+    })
+    await wrapper.setProps({ visible: true })
+    await flushPromises()
+    await nextTick()
+
+    expect(wrapper.vm.notificationPlatformDefinitions).toEqual([
+      expect.objectContaining({ key: 'legacy-hook', label: 'legacy-hook' })
+    ])
+    expect(wrapper.vm.remoteProviderTypes).toEqual([
+      expect.objectContaining({ type: 'legacyProvider', label: 'legacyProvider' })
+    ])
+    expect(wrapper.vm.notificationSettings.platforms).toEqual({
+      'legacy-hook': { enabled: false, type: 'notification', external: false }
+    })
+    expect(wrapper.vm.notificationSettings.remoteNotifications.providers[0].config).toEqual({
+      legacyField: 'preserve-me'
+    })
+  })
+  it('hydrates model overrides, builtin IDs, and speed test selections before saving', async () => {
+    const modelData = {
+      metadataSource: { name: 'Models.dev', url: '/models', lastUpdated: '2026-09-11' },
+      models: {
+        'claude-built-in': {
+          limit: { context: 200000, output: 8192 },
+          pricing: { input: 3, output: 15 },
+          toolTypes: ['claude']
+        },
+        'claude-custom': {
+          limit: { context: 8192, output: 1024 },
+          pricing: { input: 0.5, output: 1.5 },
+          toolTypes: ['claude']
+        }
+      },
+      overrides: {
+        'claude-built-in': { limit: { context: 100000 } }
+      },
+      builtinModelIds: ['claude-built-in'],
+      defaultSpeedTestModels: { claude: 'claude-custom' }
+    }
+    client.get.mockResolvedValue({ data: modelData })
+    client.post.mockResolvedValue({ data: { success: true } })
+
+    const wrapper = shallowMount(SettingsDrawer, {
+      props: { visible: true },
+      global: {
+        stubs: {
+          drawer: { template: '<div><slot /></div>' },
+          'drawer-content': { template: '<div><slot name="header" /><slot /><slot name="footer" /></div>' },
+          checkbox: { template: '<label><slot /></label>' }
+        }
+      }
+    })
+    await flushPromises()
+
+    expect(wrapper.vm.modelMetaOverrides).toEqual(modelData.overrides)
+    expect(wrapper.vm.builtInModelIds).toEqual(new Set(modelData.builtinModelIds))
+    expect(wrapper.vm.isBuiltInModel('claude-built-in')).toBe(true)
+    expect(wrapper.vm.isCustomModel('claude-custom')).toBe(true)
+    expect(wrapper.vm.defaultSpeedTestModels).toEqual(modelData.defaultSpeedTestModels)
+
+    await wrapper.vm.handleSaveModelMeta()
+
+    expect(client.post).toHaveBeenCalledWith('/settings/model-settings', {
+      overrides: modelData.overrides,
+      defaultSpeedTestModels: modelData.defaultSpeedTestModels
+    })
+    expect(wrapper.vm.modelMetaOverrides).toEqual(modelData.overrides)
+    expect(wrapper.vm.defaultSpeedTestModels).toEqual(modelData.defaultSpeedTestModels)
   })
 })

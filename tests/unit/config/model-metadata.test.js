@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const {
   MODEL_METADATA,
   MODEL_ALIASES,
@@ -13,6 +14,7 @@ const {
   getModelIdsByToolType,
   getDefaultModels,
   getDefaultModelsByToolType,
+  getDefaultSpeedTestModels
 } = require('../../../src/config/model-metadata');
 
 describe('model-metadata', () => {
@@ -27,6 +29,23 @@ describe('model-metadata', () => {
     test('METADATA_LAST_UPDATED is a string', () => {
       expect(typeof METADATA_LAST_UPDATED).toBe('string');
       expect(METADATA_LAST_UPDATED.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('speed test defaults', () => {
+    test('returns a normalized model map without exposing a package writer', () => {
+      const writeFileSync = vi.spyOn(fs, 'writeFileSync');
+      const defaults = getDefaultSpeedTestModels();
+
+      expect(defaults).toMatchObject({
+        claude: expect.any(String),
+        codex: expect.any(String),
+        gemini: expect.any(String)
+      });
+      expect(typeof require('../../../src/config/model-metadata').saveDefaultSpeedTestModels).toBe('undefined');
+      expect(writeFileSync).not.toHaveBeenCalled();
+
+      writeFileSync.mockRestore();
     });
   });
 

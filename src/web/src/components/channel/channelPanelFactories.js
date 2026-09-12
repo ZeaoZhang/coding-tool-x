@@ -494,7 +494,7 @@ const channelPanelFactories = {
             key: 'apiKey',
             showWhen: showApiCredentialField,
             label: '接口密钥',
-            type: 'text',
+            type: 'password',
             required: true,
             placeholder: 'sk-...'
           },
@@ -794,7 +794,7 @@ const channelPanelFactories = {
         { label: 'URL', value: channel.baseUrl },
         {
           label: 'Key',
-          value: channel.apiKey || '(未设置)',
+          value: helpers.maskApiKey(channel.apiKey),
           mono: true,
           action: channel.health?.status !== 'healthy'
             ? () => helpers.handleResetHealth(channel)
@@ -863,7 +863,7 @@ const channelPanelFactories = {
             key: 'apiKey',
             showWhen: showApiCredentialField,
             label: 'API Key',
-            type: 'text',
+            type: 'password',
             required: true,
             placeholder: 'sk-...'
           },
@@ -1066,7 +1066,7 @@ const channelPanelFactories = {
       { label: 'URL', value: channel.baseUrl },
       {
         label: 'Key',
-        value: channel.apiKey || '(未设置)',
+        value: helpers.maskApiKey(channel.apiKey),
         mono: true,
         action: channel.health?.status !== 'healthy'
           ? () => helpers.handleResetHealth(channel)
@@ -1124,7 +1124,7 @@ const channelPanelFactories = {
             key: 'apiKey',
             showWhen: showApiCredentialField,
             label: 'API Key',
-            type: 'text',
+            type: 'password',
             required: true,
             placeholder: 'AIza...'
           },
@@ -1331,7 +1331,7 @@ const channelPanelFactories = {
       { label: 'URL', value: channel.baseUrl },
       {
         label: 'Key',
-        value: channel.apiKey || '(未设置)',
+        value: helpers.maskApiKey(channel.apiKey),
         mono: true,
         action: channel.health?.status !== 'healthy'
           ? () => helpers.handleResetHealth(channel)
@@ -1385,7 +1385,7 @@ const channelPanelFactories = {
           {
             key: 'apiKey',
             label: 'API Key',
-            type: 'text',
+            type: 'password',
             required: true,
             placeholder: 'sk-...'
           },
@@ -1643,7 +1643,7 @@ const channelPanelFactories = {
       { label: 'URL', value: channel.baseUrl },
       {
         label: 'Key',
-        value: channel.apiKey || '(未设置)',
+        value: helpers.maskApiKey(channel.apiKey),
         mono: true,
         action: channel.health?.status !== 'healthy'
           ? () => helpers.handleResetHealth(channel)
@@ -1714,7 +1714,7 @@ const channelPanelFactories = {
             key: 'apiKey',
             showWhen: showOmpAuthField,
             label: form => isOAuthForm(form) ? 'Gateway Token' : 'API Key',
-            type: 'text',
+            type: 'password',
             required: true,
             skipOnOAuth: false,
             placeholder: 'sk-...',
@@ -2117,7 +2117,7 @@ const channelPanelFactories = {
         { label: 'URL', value: channel.baseUrl },
         {
           label: 'Key',
-          value: channel.apiKey || '(未设置)',
+          value: helpers.maskApiKey(channel.apiKey),
           mono: true,
           action: channel.health?.status !== 'healthy'
             ? () => helpers.handleResetHealth(channel)

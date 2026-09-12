@@ -178,6 +178,9 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
     message: 'Skill/MCP/project configuration requires same-origin access.'
   }));
 
+  // Keep the legacy /api/hooks endpoint ahead of Claude's rootAlias /hooks route.
+  app.use('/api/hooks', require('./api/hooks'));
+
   const { getPlatformContext } = require('./platform-context');
   const platformContext = getPlatformContext({ dependencies: { config } });
   app.use('/api/platforms', require('./api/platforms')({
@@ -205,7 +208,6 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   app.use('/api/env', require('./api/env'));
   app.use('/api/skills', require('./api/skills'));
   app.use('/api/project-config', require('./api/project-config'));
-  app.use('/api/hooks', require('./api/hooks'));
 
   // 初始化 Claude hooks 默认配置（自动开启任务完成通知）
   notificationHooks.initDefaultHooks();

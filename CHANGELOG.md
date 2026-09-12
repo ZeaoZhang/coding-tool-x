@@ -11,6 +11,7 @@
 - **项目级配置控制** - 在项目历史会话页管理原生项目指令、Skills 和 MCP，配置按项目 realpath 隔离并保留用户级配置。
 - **Skill 有效控制面** - Skill 仓库只保存 source reference；手动刷新异步下载仓库中全部 Skill 的完整目录，不保存仓库归档或 tree，并按五个平台的 native format 分开持久化
 - **Skill 缓存与开关** - 所有扫描到的 Skill 默认登记为 `managed=true`；新远端 Skill 默认 `needs_review/disabled`，`enabled` 控制实际 CLI/OMP 加载，关闭只撤销 native projection
+- **配置驱动通知设置** - Hooks capability、可信 hooks/provider adapter 和公开字段 schema 统一从平台注册表发现；设置面板可消费新增平台/provider 描述，无需重复维护前端模板。
 
 ### Changed
 - **兼容性边界明确** - 用户配置禁止任意 Node.js 模块、函数值和 shell 命令；特殊 SQLite、OAuth/keychain、非标准配置及 fork 语义继续由专用 capability driver 负责；既有 CLI/API 兼容路径与 mock seam 保持有意稳定。
@@ -25,6 +26,8 @@
 - **OMP Codex Responses 路径兼容** - managed gateway 将 OMP 原生 `openai-codex-responses` 的 `/codex/responses` 请求映射到 OpenAI-compatible 渠道的 `/v1/responses`，避免 Codex-only 服务返回 HTTP 404
 - **OMP 渠道失败不再冻结** - OMP 动态切换开启后，失败渠道不再进入冻结状态。OMP 网关按请求即时回退其他渠道，冻结会导致短暂故障的渠道在恢复前被排除在后续分配之外
 - **OMP 动态切换凭据稳定** - 同步当前 OMP 渠道时不再把动态切换生成的本地网关 `base_url` 和 capability API Key 覆盖真实渠道配置；同一渠道的受管 provider 生成值现在复用持久化网关密钥保持稳定
+- **测速模型用户配置持久化** - 自定义测速模型写入用户配置并在重载时回填；包内 `src/config/model-metadata.json` 保持只读，旧配置按静态 metadata/catalog fallback 兼容。
+- **Claude Hooks 路由兼容** - 保留 `/api/claude/hooks*` 与 `/api/hooks` 的既有语义，避免 Claude root alias 截获通用通知设置接口。
 
 ## [3.6.7] - 2026-05-16
 

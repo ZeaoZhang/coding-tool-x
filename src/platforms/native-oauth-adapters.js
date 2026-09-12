@@ -933,6 +933,7 @@ module.exports = {
   inspectTool,
   readNativeOAuth,
   readAllNativeOAuth,
+  clearCodexChannelConfig,
   clearNativeOAuth,
   disableNativeOAuthCredential,
   applyOAuthCredential

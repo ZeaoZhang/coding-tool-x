@@ -14,6 +14,7 @@ const CODEX_CH_PATH       = require.resolve('../../../src/platforms/drivers/code
 const GEMINI_CH_PATH      = require.resolve('../../../src/platforms/drivers/gemini/channels-implementation');
 const MODEL_DET_PATH      = require.resolve('../../../src/server/services/model-detector');
 const API_PATH            = require.resolve('../../../src/server/api/config');
+const PLATFORM_CATALOG_PATH = require.resolve('../../../src/server/services/platform-catalog');
 
 // Stub references recreated in beforeEach
 let loadConfig;
@@ -133,6 +134,62 @@ describe('GET /advanced', () => {
     expect(data).toHaveProperty('pricing');
     expect(data).toHaveProperty('modelDiscovery');
     expect(loadConfig).toHaveBeenCalled();
+  });
+});
+
+describe('dynamic manifest ports', () => {
+
+  test('uses dynamic manifest port entries in advanced settings and saves them', () => {
+    const originalCatalogModule = require.cache[PLATFORM_CATALOG_PATH];
+    const manifest = {
+      key: 'demo-cli',
+      label: 'Demo CLI',
+      portKey: 'demoProxy',
+      defaultPort: 23100,
+      capabilities: { channels: 'generic-openai-compatible', hooks: 'demo-hooks' }
+    };
+    const catalog = {
+      keys: vi.fn(({ capability } = {}) => capability === 'channels' ? ['demo-cli'] : []),
+      get: vi.fn(key => key === 'demo-cli' ? manifest : null),
+      driver: vi.fn(() => null),
+      ports: vi.fn(() => [
+        { key: 'webUI', defaultPort: 19999 },
+        { key: 'demoProxy', defaultPort: 23100, label: 'Demo CLI', platform: 'demo-cli' }
+      ])
+    };
+    require.cache[PLATFORM_CATALOG_PATH] = {
+      id: PLATFORM_CATALOG_PATH,
+      filename: PLATFORM_CATALOG_PATH,
+      loaded: true,
+      exports: { getPlatformCatalog: () => catalog }
+    };
+    delete require.cache[API_PATH];
+
+    try {
+      loadConfig.mockReturnValue({
+        ports: { webUI: 19999, demoProxy: 23100 },
+        pricing: { 'demo-cli': { mode: 'auto', input: 1, output: 2 } },
+        modelDiscovery: { useV1ModelsEndpoint: false }
+      });
+      const customRouter = require('../../../src/server/api/config');
+      const getHandler = findHandler(customRouter, 'get', '/advanced');
+      const getRes = mockRes();
+      getHandler(mockReq(), getRes);
+      expect(getRes._data.ports).toEqual({ webUI: 19999, demoProxy: 23100 });
+
+      const postHandler = findHandler(customRouter, 'post', '/advanced');
+      const postRes = mockRes();
+      postHandler(mockReq({ body: { ports: { demoProxy: 24000 } } }), postRes);
+      expect(postRes._data.success).toBe(true);
+      expect(saveConfig.mock.calls[0][0].ports.demoProxy).toBe(24000);
+    } finally {
+      delete require.cache[API_PATH];
+      if (originalCatalogModule) {
+        require.cache[PLATFORM_CATALOG_PATH] = originalCatalogModule;
+      } else {
+        delete require.cache[PLATFORM_CATALOG_PATH];
+      }
+    }
   });
 });
 

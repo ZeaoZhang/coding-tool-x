@@ -64,7 +64,14 @@ describe('hooks API', () => {
 
   describe('GET /', () => {
     it('returns notification settings', () => {
-      const settings = { remoteNotifications: { providers: [] } };
+      const settings = {
+        success: true,
+        platform: 'darwin',
+        platforms: { demo: { enabled: true, type: 'notification' } },
+        platformDefinitions: [{ key: 'demo', label: 'Demo', fields: [] }],
+        remoteNotifications: { providers: [] },
+        remoteProviderTypes: [{ type: 'testProvider', fields: [] }]
+      };
       mockGetNotificationSettings.mockReturnValue(settings);
       const handler = findHandler(router, 'get', '/');
       const req = mockReq();
@@ -105,15 +112,24 @@ describe('hooks API', () => {
 
   describe('POST /', () => {
     it('saves settings and returns result with message', () => {
-      const saved = { remoteNotifications: { providers: [] } };
+      const saved = {
+        success: true,
+        platforms: { demo: { enabled: false, type: 'browser' } },
+        platformDefinitions: [{ key: 'demo', label: 'Demo' }],
+        remoteNotifications: { providers: [] }
+      };
       mockSaveNotificationSettings.mockReturnValue(saved);
       const handler = findHandler(router, 'post', '/');
-      const req = mockReq({ body: { remoteNotifications: { providers: [] } } });
+      const body = {
+        platforms: { demo: { enabled: false, type: 'browser' } },
+        remoteNotifications: { providers: [] }
+      };
+      const req = mockReq({ body });
       const res = mockRes();
 
       handler(req, res);
 
-      expect(mockSaveNotificationSettings).toHaveBeenCalledWith({ remoteNotifications: { providers: [] } });
+      expect(mockSaveNotificationSettings).toHaveBeenCalledWith(body);
       expect(res.json).toHaveBeenCalledWith({ ...saved, message: '通知设置已保存' });
     });
 

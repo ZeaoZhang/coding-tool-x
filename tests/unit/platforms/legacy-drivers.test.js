@@ -521,3 +521,42 @@ describe('legacy drivers', () => {
     expect(requireImpl.calls).toEqual(['./codex/channels-implementation']);
   });
 });
+
+describe('hooks driver contract', () => {
+  test.each(['claude', 'codex', 'gemini', 'opencode', 'omp'])(
+    'resolves the trusted %s hooks implementation',
+    platform => {
+      const driver = getDriverRegistry().create(`legacy:${platform}`, {
+        platform,
+        capability: 'hooks'
+      });
+
+      expect(driver).toEqual(expect.objectContaining({
+        platform,
+        capability: 'hooks'
+      }));
+      expect(typeof driver.getHooks).toBe('function');
+      expect(typeof driver.saveHooks).toBe('function');
+      expect(typeof driver.testHooks).toBe('function');
+      expect(driver.getDefinition()).toEqual(expect.objectContaining({
+        key: platform,
+        label: expect.any(String),
+        implementation: expect.any(String),
+        externalMessage: expect.any(String),
+        hints: expect.any(Array)
+      }));
+    }
+  );
+
+  test('does not create an executable driver for unknown platforms', () => {
+    const { createNotificationHooksDriver } = require('../../../src/platforms/drivers/notification-hooks');
+    expect(createNotificationHooksDriver({
+      platform: 'unknown',
+      capability: 'hooks'
+    })).toEqual({
+      status: 'unsupported',
+      platform: 'unknown',
+      capability: 'hooks'
+    });
+  });
+});

@@ -5,8 +5,7 @@ const {
   METADATA_LAST_UPDATED,
   METADATA_SOURCE,
   getModelIdsByToolType,
-  getDefaultSpeedTestModels,
-  saveDefaultSpeedTestModels
+  getDefaultSpeedTestModels
 } = require('../../config/model-metadata');
 const { getPlatformCatalog } = require('../services/platform-catalog');
 const { loadConfig, saveConfig } = require('../../config/loader');
@@ -37,6 +36,35 @@ function normalizeDefinitions(value) {
   return isPlainObject(value) ? value : {};
 }
 
+function normalizeSpeedTestModels(value) {
+  if (!isPlainObject(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value)
+      .map(([key, modelId]) => [String(key).trim(), typeof modelId === 'string' ? modelId.trim() : ''])
+      .filter(([key, modelId]) => key && modelId)
+  );
+}
+
+function getModelPlatformEntries(catalog = getPlatformCatalog()) {
+  return catalog.list({ capability: 'channels' }).map(manifest => ({
+    key: manifest.key,
+    catalogKey: manifest.modelConfig?.catalogKey || manifest.key
+  }));
+}
+
+function resolveDefaultSpeedTestModels(config = {}, catalog = getPlatformCatalog()) {
+  const configured = normalizeSpeedTestModels(config.defaultSpeedTestModels);
+  const staticDefaults = normalizeSpeedTestModels(getDefaultSpeedTestModels());
+  return Object.fromEntries(getModelPlatformEntries(catalog).map(({ key, catalogKey }) => [
+    key,
+    configured[key]
+      || configured[catalogKey]
+      || staticDefaults[catalogKey]
+      || staticDefaults[key]
+      || null
+  ]));
+}
+
 function buildResolvedModelSettings(definitions, overrides) {
   const ids = new Set([
     ...Object.keys(MODEL_METADATA),
@@ -65,20 +93,11 @@ function handleGetModelSettings(req, res) {
     const config = loadConfig();
     const overrides = config.modelMetadataOverrides || {};
     const definitions = normalizeDefinitions(config.modelDefinitions);
-    const defaultSpeedTestModels = Object.fromEntries(
-      getPlatformCatalog().keys({ capability: 'channels' }).map(toolType => {
-        const manifest = getPlatformCatalog().get(toolType);
-        const catalogKey = manifest?.modelConfig?.catalogKey || toolType;
-        return [toolType, getDefaultSpeedTestModels()[catalogKey] || null];
-      })
-    );
+    const catalog = getPlatformCatalog();
+    const platformEntries = getModelPlatformEntries(catalog);
+    const defaultSpeedTestModels = resolveDefaultSpeedTestModels(config, catalog);
     const toolModels = Object.fromEntries(
-      getPlatformCatalog().keys({ capability: 'channels' })
-        .map(toolType => {
-          const manifest = getPlatformCatalog().get(toolType);
-          const catalogKey = manifest?.modelConfig?.catalogKey || toolType;
-          return [toolType, getModelIdsByToolType(catalogKey)];
-        })
+      platformEntries.map(({ key, catalogKey }) => [key, getModelIdsByToolType(catalogKey)])
     );
 
     // Build merged table: built-in + user overrides
@@ -128,6 +147,9 @@ function handleSaveModelSettings(req, res) {
     const { overrides, definitions, defaultSpeedTestModels } = req.body || {};
     if (overrides !== undefined && (typeof overrides !== 'object' || overrides === null || Array.isArray(overrides))) {
       return res.status(400).json({ error: 'overrides must be an object' });
+    }
+    if (defaultSpeedTestModels !== undefined && !isPlainObject(defaultSpeedTestModels)) {
+      return res.status(400).json({ error: 'defaultSpeedTestModels must be an object' });
     }
 
     // Validate each override entry
@@ -185,6 +207,12 @@ function handleSaveModelSettings(req, res) {
     }
 
     const config = loadConfig();
+    const catalog = getPlatformCatalog();
+    const persistedDefaultSpeedTestModels = {
+      ...normalizeSpeedTestModels(getDefaultSpeedTestModels()),
+      ...normalizeSpeedTestModels(config.defaultSpeedTestModels),
+      ...normalizeSpeedTestModels(defaultSpeedTestModels)
+    };
     const newConfig = {
       ...config,
       modelMetadataOverrides: overrides && typeof overrides === 'object'
@@ -193,17 +221,17 @@ function handleSaveModelSettings(req, res) {
       modelDefinitions: normalizedDefinitions === undefined
         ? (config.modelDefinitions || {})
         : normalizedDefinitions,
+      defaultSpeedTestModels: persistedDefaultSpeedTestModels,
       modelMetadataSchemaVersion: MODEL_SCHEMA_VERSION
     };
     saveConfig(newConfig);
-    const persistedDefaultSpeedTestModels = saveDefaultSpeedTestModels(defaultSpeedTestModels);
 
     res.json({
       success: true,
       schemaVersion: MODEL_SCHEMA_VERSION,
       overrides: redactSensitiveFields(newConfig.modelMetadataOverrides),
       definitions: redactSensitiveFields(newConfig.modelDefinitions),
-      defaultSpeedTestModels: persistedDefaultSpeedTestModels
+      defaultSpeedTestModels: resolveDefaultSpeedTestModels(newConfig, catalog)
     });
   } catch (error) {
     console.error('Error saving model metadata:', error);

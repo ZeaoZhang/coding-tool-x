@@ -429,6 +429,7 @@
     "nativeConfig": "legacy:codex",
     "projectConfig": "legacy:codex",
     "api": "legacy:codex",
+    "hooks": "legacy:codex",
     "mcp": "legacy:codex",
     "prompts": "legacy:codex"
   }

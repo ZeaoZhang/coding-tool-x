@@ -142,7 +142,7 @@ class BaseChannelService {
 
     data.channels.push(channel);
     this._validateOAuthEnabledTransition(data.channels, channel, null);
-
+    this._validateBeforeChannelMutation(channel, data.channels, { operation: 'create' });
     if (channel.enabled && !this._isProxyRunning()) {
       this._enforceSingleChannel(data.channels, data.channels.length - 1);
     }
@@ -166,8 +166,8 @@ class BaseChannelService {
       updatedAt: Date.now(),
     });
     this._validateOAuthEnabledTransition(data.channels, nextChannel, oldChannel);
+    this._validateBeforeChannelMutation(nextChannel, data.channels, { operation: 'update', oldChannel });
     data.channels[index] = nextChannel;
-
     const isProxyRunning = this._isProxyRunning();
     if (!isProxyRunning && nextChannel.enabled && !oldChannel.enabled) {
       this._enforceSingleChannel(data.channels, index);
@@ -208,6 +208,7 @@ class BaseChannelService {
     if (!channel) {
       throw new Error('Channel not found');
     }
+    this._validateBeforeChannelMutation(channel, data.channels, { operation: 'apply' });
 
     // 单渠道模式：只启用目标渠道
     const wasEnabled = channel.enabled !== false;
@@ -298,7 +299,10 @@ class BaseChannelService {
         throw error;
       }
       next.authSource = 'synced-local';
-      if (!next.authRef && !existing?.authRef) {
+      const authRef = next.authRef || existing?.authRef;
+      const hasReference = authRef
+        && Object.values(authRef).some(value => String(value || '').trim() !== '');
+      if (!hasReference) {
         const error = new Error('OAuth reference unavailable');
         error.code = 'oauth_reference_unavailable';
         error.statusCode = 422;
@@ -318,6 +322,8 @@ class BaseChannelService {
   _validateOAuthEnabledTransition(channels, channel) {
     validateEnabledTransition(channels, channel, this.oauthChannelPolicy);
   }
+
+  _validateBeforeChannelMutation(_channel, _allChannels, _context) {}
 
   _enforceSingleChannel(channels, enabledIndex) {
     channels.forEach((ch, i) => {

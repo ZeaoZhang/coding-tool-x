@@ -251,6 +251,11 @@ describe('loadConfig with existing config file', () => {
   });
 });
 
+  it('ignores malformed legacy speed test model values when loading', () => {
+    writeConfig({ defaultSpeedTestModels: ['legacy-model'] });
+    expect(loadConfig().defaultSpeedTestModels).toEqual(DEFAULT_CONFIG.defaultSpeedTestModels);
+  });
+
 // ─── saveConfig ───────────────────────────────────────────────────────────────
 
 describe('saveConfig', () => {
@@ -293,26 +298,34 @@ describe('saveConfig', () => {
     );
   });
 
-  it('written file round-trips back to the same object', () => {
+  it('writes the effective speed test models on every config save', () => {
     const cfg = { nested: { a: 1, b: [1, 2, 3] }, flag: true };
     saveConfig(cfg);
     const parsed = JSON.parse(fs.readFileSync(testConfigFile, 'utf8'));
-    expect(parsed).toEqual(cfg);
+    expect(parsed.nested).toEqual(cfg.nested);
+    expect(parsed.flag).toBe(true);
+    expect(parsed.defaultSpeedTestModels).toEqual(DEFAULT_CONFIG.defaultSpeedTestModels);
   });
 
-  it('omits native Claude projectsDir when saving runtime config', () => {
+  it('omits native Claude projectsDir while persisting speed test models', () => {
     saveConfig({ maxLogs: 10, projectsDir: nativeProjectsDir });
     const parsed = JSON.parse(fs.readFileSync(testConfigFile, 'utf8'));
-    expect(parsed).toEqual({ maxLogs: 10 });
+    expect(parsed).toEqual({
+      maxLogs: 10,
+      defaultSpeedTestModels: DEFAULT_CONFIG.defaultSpeedTestModels
+    });
   });
 
-  it('omits stale default-shaped projectsDir when saving', () => {
+  it('omits stale default-shaped projectsDir while persisting speed test models', () => {
     saveConfig({
       maxLogs: 10,
       projectsDir: path.join(testDir, 'old-home', '.claude', 'projects')
     });
     const parsed = JSON.parse(fs.readFileSync(testConfigFile, 'utf8'));
-    expect(parsed).toEqual({ maxLogs: 10 });
+    expect(parsed).toEqual({
+      maxLogs: 10,
+      defaultSpeedTestModels: DEFAULT_CONFIG.defaultSpeedTestModels
+    });
   });
 
   it('preserves custom projectsDir when saving', () => {

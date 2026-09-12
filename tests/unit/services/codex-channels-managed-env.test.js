@@ -18,7 +18,10 @@ let configPath;
 let isProxyConfigMock;
 let readConfigMock;
 let syncCodexUserEnvironmentMock;
+let readNativeOAuthMock;
+let applyOAuthCredentialMock;
 let clearNativeOAuthMock;
+let clearCodexChannelConfigMock;
 let service;
 
 function loadConfigFromDisk() {
@@ -37,8 +40,17 @@ beforeEach(() => {
   isProxyConfigMock = vi.fn(() => false);
   readConfigMock = vi.fn(() => loadConfigFromDisk());
   syncCodexUserEnvironmentMock = vi.fn();
+  readNativeOAuthMock = vi.fn(() => ({
+    authMode: 'chatgpt',
+    accessToken: 'native-access-token',
+    refreshToken: 'native-refresh-token',
+    idToken: 'native-id-token',
+    accountId: 'account-1',
+    lastRefresh: '2026-09-01T00:00:00.000Z'
+  }));
+  applyOAuthCredentialMock = vi.fn();
+  clearCodexChannelConfigMock = vi.fn();
   clearNativeOAuthMock = vi.fn();
-
   delete require.cache[MODULE_PATH];
   require.cache[PATHS_PATH] = {
     id: PATHS_PATH,
@@ -82,7 +94,10 @@ beforeEach(() => {
     filename: NATIVE_OAUTH_PATH,
     loaded: true,
     exports: {
-      clearNativeOAuth: clearNativeOAuthMock
+      clearNativeOAuth: clearNativeOAuthMock,
+      readNativeOAuth: readNativeOAuthMock,
+      applyOAuthCredential: applyOAuthCredentialMock,
+      clearCodexChannelConfig: clearCodexChannelConfigMock
     }
   };
 
@@ -132,6 +147,218 @@ describe('codex-channels managed env sync', () => {
       replace: true
     });
     expect(clearNativeOAuthMock).not.toHaveBeenCalled();
+  });
+
+  test('applying an OAuth channel delegates to native Codex OAuth instead of managed env sync', () => {
+    const nativeCredential = {
+      authMode: 'chatgpt',
+      accessToken: 'native-access-token',
+      refreshToken: 'native-refresh-token',
+      idToken: 'native-id-token',
+      accountId: 'account-1',
+      lastRefresh: '2026-09-01T00:00:00.000Z'
+    };
+    readNativeOAuthMock.mockReturnValue(nativeCredential);
+    const channel = service.createChannel(
+      'Codex OAuth',
+      'codex-oauth',
+      '',
+      '',
+      'responses',
+      {
+        enabled: false,
+        authMode: 'oauth',
+        authRef: { credentialId: 'credential-1', providerId: 'codex', accountId: 'account-1' },
+        authSource: 'synced-local'
+      }
+    );
+
+    syncCodexUserEnvironmentMock.mockClear();
+    readNativeOAuthMock.mockClear();
+    applyOAuthCredentialMock.mockClear();
+    clearCodexChannelConfigMock.mockClear();
+
+    expect(channel.envKey).toBe('');
+    service.applyChannelToSettings(channel.id);
+
+    expect(readNativeOAuthMock).toHaveBeenCalledWith('codex');
+    expect(clearCodexChannelConfigMock).toHaveBeenCalledWith();
+    expect(applyOAuthCredentialMock).not.toHaveBeenCalled();
+    expect(syncCodexUserEnvironmentMock).not.toHaveBeenCalled();
+  });
+
+  test('enabling an OAuth channel delegates to native Codex OAuth', () => {
+    const nativeCredential = readNativeOAuthMock();
+    const channel = service.createChannel(
+      'Codex OAuth',
+      'codex-oauth',
+      '',
+      '',
+      'responses',
+      {
+        enabled: false,
+        authMode: 'oauth',
+        authRef: { credentialId: 'credential-1', providerId: 'codex', accountId: 'account-1' },
+        authSource: 'synced-local'
+      }
+    );
+
+    readNativeOAuthMock.mockClear();
+    applyOAuthCredentialMock.mockClear();
+    clearCodexChannelConfigMock.mockClear();
+    syncCodexUserEnvironmentMock.mockClear();
+
+    service.updateChannel(channel.id, { enabled: true });
+
+    expect(readNativeOAuthMock).toHaveBeenCalledWith('codex');
+    expect(clearCodexChannelConfigMock).toHaveBeenCalledWith();
+    expect(applyOAuthCredentialMock).not.toHaveBeenCalled();
+    expect(syncCodexUserEnvironmentMock).not.toHaveBeenCalled();
+  });
+
+  test('rejects enabling an OAuth channel without a native Codex OAuth credential', () => {
+    readNativeOAuthMock.mockReturnValue(null);
+    const channel = service.createChannel(
+      'Codex OAuth',
+      'codex-oauth',
+      '',
+      '',
+      'responses',
+      {
+        enabled: false,
+        authMode: 'oauth',
+        authRef: { credentialId: 'credential-1', providerId: 'codex', accountId: 'account-1' },
+        authSource: 'synced-local'
+      }
+    );
+
+    expect(() => service.updateChannel(channel.id, { enabled: true }))
+      .toThrow('Codex native OAuth credential is unavailable');
+    expect(service.getChannels().channels.find(item => item.id === channel.id).enabled).toBe(false);
+  });
+
+  test('rejects enabling an OAuth channel while Codex proxy mode is active', () => {
+    isProxyConfigMock.mockReturnValue(true);
+    const channel = service.createChannel(
+      'Codex OAuth',
+      'codex-oauth',
+      '',
+      '',
+      'responses',
+      {
+        enabled: false,
+        authMode: 'oauth',
+        authRef: { credentialId: 'credential-1', providerId: 'codex', accountId: 'account-1' },
+        authSource: 'synced-local'
+      }
+    );
+
+    expect(() => service.updateChannel(channel.id, { enabled: true }))
+      .toThrow('Codex OAuth channels are native-only');
+    expect(service.getChannels().channels.find(item => item.id === channel.id).enabled).toBe(false);
+  });
+
+  test('rejects an OAuth channel with an empty auth reference', () => {
+    expect(() => service.createChannel(
+      'Codex OAuth',
+      'codex-oauth',
+      '',
+      '',
+      'responses',
+      {
+        enabled: false,
+        authMode: 'oauth',
+        authRef: {},
+        authSource: 'synced-local'
+      }
+    )).toThrow('OAuth reference unavailable');
+  });
+
+  test('identifies enabled OAuth channels as incompatible with the Codex proxy', () => {
+    const oauthChannel = {
+      id: 'oauth-channel',
+      authMode: 'oauth',
+      enabled: true
+    };
+    const apiChannel = {
+      id: 'api-channel',
+      authMode: 'api_key',
+      enabled: true
+    };
+
+    expect(service._test.getCodexProxyExcludedChannelIds([oauthChannel, apiChannel]))
+      .toEqual(['oauth-channel']);
+  });
+  test('multi-channel OAuth config uses the native Codex OAuth path', () => {
+    const oauthChannel = {
+      id: 'oauth-channel',
+      name: 'Codex OAuth',
+      providerKey: 'codex-oauth',
+      baseUrl: '',
+      apiKey: '',
+      authMode: 'oauth',
+      authRef: { credentialId: 'credential-1', providerId: 'codex', accountId: 'account-1' },
+      enabled: true
+    };
+
+    service.writeCodexConfigForMultiChannel([oauthChannel]);
+
+    expect(readNativeOAuthMock).toHaveBeenCalledWith('codex');
+    expect(clearCodexChannelConfigMock).toHaveBeenCalledWith();
+    expect(syncCodexUserEnvironmentMock).not.toHaveBeenCalled();
+  });
+
+  test('multi-channel OAuth config requires a native Codex OAuth credential', () => {
+    readNativeOAuthMock.mockReturnValue(null);
+
+    expect(() => service.writeCodexConfigForMultiChannel([{
+      id: 'oauth-channel',
+      name: 'Codex OAuth',
+      providerKey: 'codex-oauth',
+      authMode: 'oauth',
+      authRef: { credentialId: 'credential-1', providerId: 'codex', accountId: 'account-1' },
+      enabled: true
+    }])).toThrow('Codex native OAuth credential is unavailable');
+    expect(clearCodexChannelConfigMock).not.toHaveBeenCalled();
+  });
+
+  test('multi-channel OAuth config cannot clear active Codex proxy state', () => {
+    isProxyConfigMock.mockReturnValue(true);
+
+    expect(() => service.writeCodexConfigForMultiChannel([{
+      id: 'oauth-channel',
+      name: 'Codex OAuth',
+      providerKey: 'codex-oauth',
+      authMode: 'oauth',
+      authRef: { credentialId: 'credential-1', providerId: 'codex', accountId: 'account-1' },
+      enabled: true
+    }])).toThrow('Codex OAuth channels are native-only');
+    expect(clearCodexChannelConfigMock).not.toHaveBeenCalled();
+  });
+
+  test('ignores a disabled current provider when resolving the managed Codex channel', () => {
+    fs.writeFileSync(configPath, tomlStringify({
+      model_provider: 'codex-oauth',
+      model_providers: {
+        'codex-oauth': { base_url: '' }
+      }
+    }), 'utf8');
+
+    const oauthChannel = {
+      id: 'oauth-channel',
+      providerKey: 'codex-oauth',
+      authMode: 'oauth',
+      enabled: false
+    };
+    const apiChannel = {
+      id: 'api-channel',
+      providerKey: 'api-provider',
+      authMode: 'api_key',
+      apiKey: 'api-key',
+      enabled: true
+    };
+
+    expect(service._test.resolveCurrentManagedChannel([oauthChannel, apiChannel])).toBe(apiChannel);
   });
 
   test('enabling another channel in single-channel mode auto-applies config and shared env', () => {

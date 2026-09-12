@@ -428,6 +428,7 @@
     "nativeConfig": "legacy:gemini",
     "projectConfig": "legacy:gemini",
     "api": "legacy:gemini",
+    "hooks": "legacy:gemini",
     "mcp": "legacy:gemini",
     "prompts": "legacy:gemini"
   }

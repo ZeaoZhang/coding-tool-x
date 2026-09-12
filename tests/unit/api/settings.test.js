@@ -84,8 +84,11 @@ describe('settings API router', () => {
       getModelIdsByToolType: vi.fn((toolType) => (
         toolType === 'claude' ? ['claude-3-opus'] : ['deepseek/deepseek-v4-pro']
       )),
-      getDefaultSpeedTestModels: vi.fn().mockReturnValue(['claude-3-opus']),
-      saveDefaultSpeedTestModels: vi.fn(v => v || [])
+      getDefaultSpeedTestModels: vi.fn().mockReturnValue({
+        claude: 'claude-3-opus',
+        codex: 'gpt-5.4',
+        gemini: 'gemini-2.5-pro'
+      })
     };
 
     loaderStub = {
@@ -139,12 +142,30 @@ describe('settings API router', () => {
     expect(data.builtinModelIds).toContain('claude-3-opus');
   });
 
+  it('keeps the /model-metadata compatibility alias', () => {
+    const router = loadRouter();
+    const handler = findHandler(router, 'get', '/model-metadata');
+    const res = mockRes();
+
+    handler(mockReq(), res);
+
+    expect(res._data).toMatchObject({
+      schemaVersion: 2,
+      defaultSpeedTestModels: {
+        claude: 'claude-3-opus',
+        codex: 'gpt-5.4',
+        gemini: 'gemini-2.5-pro'
+      }
+    });
+  });
+
   it('GET /model-settings merges overrides into built-in metadata', () => {
     loaderStub.loadConfig.mockReturnValue({
       projectsDir: '/home/user/projects',
       modelMetadataOverrides: {
         'claude-3-opus': { limit: { context: 100000 } },
       },
+      defaultSpeedTestModels: { claude: 'custom-claude', codex: 'custom-codex' },
     });
 
     const router = loadRouter();
@@ -156,6 +177,13 @@ describe('settings API router', () => {
 
     expect(res._data.models['claude-3-opus'].limit.context).toBe(100000);
     // output is preserved from built-in
+    expect(res._data.defaultSpeedTestModels).toMatchObject({
+      claude: 'custom-claude',
+      codex: 'custom-codex',
+      opencode: 'custom-codex',
+      omp: 'custom-codex',
+      gemini: 'gemini-2.5-pro'
+    });
     expect(res._data.models['claude-3-opus'].limit.output).toBe(4096);
   });
 
@@ -186,7 +214,7 @@ describe('settings API router', () => {
             pricing: { input: 0.5, output: 1.5 },
           },
         },
-        defaultSpeedTestModels: ['my-model'],
+        defaultSpeedTestModels: { claude: ' my-model ' },
       },
     });
     const res = mockRes();
@@ -194,7 +222,28 @@ describe('settings API router', () => {
     handler(req, res);
 
     expect(loaderStub.saveConfig).toHaveBeenCalled();
+    const savedConfig = loaderStub.saveConfig.mock.calls[0][0];
+    expect(savedConfig.defaultSpeedTestModels.claude).toBe('my-model');
+    expect(res._data.defaultSpeedTestModels).toMatchObject({
+      claude: 'my-model',
+      codex: 'gpt-5.4',
+      opencode: 'gpt-5.4',
+      omp: 'gpt-5.4',
+      gemini: 'gemini-2.5-pro'
+    });
     expect(res._data).toMatchObject({ success: true });
+  });
+  it('POST /model-settings rejects non-object speed test models', () => {
+    const router = loadRouter();
+    const handler = findHandler(router, 'post', '/model-settings');
+    const req = mockReq({ body: { defaultSpeedTestModels: ['invalid'] } });
+    const res = mockRes();
+
+    handler(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res._data).toEqual({ error: 'defaultSpeedTestModels must be an object' });
+    expect(loaderStub.saveConfig).not.toHaveBeenCalled();
   });
 
   it('POST /model-settings persists versioned complete model definitions', () => {

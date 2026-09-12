@@ -20,6 +20,8 @@ function createDriver({ requireImpl, ...context } = {}) {
     ...context,
     ...settings,
     ...snapshotMethods,
+    preserveNativeOAuthOnProxyStart: true,
+    restoreNativeSettingsOnProxyStop: true,
     clearNativeOAuth: () => require('../../native-oauth-adapters').clearNativeOAuth('codex'),
     clearActiveChannelMarker() {
       try {

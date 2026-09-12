@@ -11,7 +11,7 @@ const { resolveModelPricing, calculateTokenCost } = require('../../../server/uti
 const { recordRequest: recordCodexRequest } = require('./statistics-implementation');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('../../../server/services/proxy-runtime');
 const { createDecodedStream } = require('../../../server/services/response-decoder');
-const { getEffectiveApiKey } = require('./channels-implementation');
+const { getEffectiveApiKey, getCodexProxyExcludedChannelIds } = require('./channels-implementation');
 const { persistProxyRequestSnapshot } = require('../../../server/services/request-logger');
 const { publishUsageLog, publishFailureLog } = require('../../../server/services/proxy-log-helper');
 const {
@@ -72,6 +72,11 @@ async function startCodexProxyServer(options = {}) {
     return { success: true, port: currentPort };
   }
 
+  const excludedChannelIds = getCodexProxyExcludedChannelIds();
+  if (excludedChannelIds.length > 0) {
+    throw new Error('Codex dynamic proxy supports API-key channels only; disable OAuth channels first');
+  }
+
   try {
     const config = loadConfig();
     const port = config.ports?.codexProxy || 20089;
@@ -121,7 +126,11 @@ async function startCodexProxyServer(options = {}) {
 
     proxyApp.use(async (req, res) => {
       try {
-        const channel = await allocateChannel({ source: 'codex', enableSessionBinding: false });
+        const channel = await allocateChannel({
+          source: 'codex',
+          enableSessionBinding: false,
+          excludeChannelIds: getCodexProxyExcludedChannelIds()
+        });
         req.selectedChannel = channel;
 
         const release = (() => {

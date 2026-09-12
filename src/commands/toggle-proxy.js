@@ -59,6 +59,11 @@ function getSettingsManager(cliType, runtime = getPlatformRuntime()) {
 
   return {
     setProxyConfig: (...args) => unwrapDriverResult(driver.setProxyConfig(...args)),
+    clearNativeOAuth: typeof driver.clearNativeOAuth === 'function'
+      ? (...args) => unwrapDriverResult(driver.clearNativeOAuth(...args))
+      : undefined,
+    preserveNativeOAuthOnProxyStart: driver.preserveNativeOAuthOnProxyStart === true,
+    restoreNativeSettingsOnProxyStop: driver.restoreNativeSettingsOnProxyStop === true,
     restoreSettings: typeof driver.restoreSettings === 'function'
       ? (...args) => unwrapDriverResult(driver.restoreSettings(...args))
       : undefined,
@@ -71,9 +76,6 @@ function getSettingsManager(cliType, runtime = getPlatformRuntime()) {
     deleteBackup: typeof driver.deleteBackup === 'function'
       ? (...args) => unwrapDriverResult(driver.deleteBackup(...args))
       : undefined,
-    clearNativeOAuth: typeof driver.clearNativeOAuth === 'function'
-      ? (...args) => unwrapDriverResult(driver.clearNativeOAuth(...args))
-      : undefined
   };
 }
 
@@ -243,16 +245,13 @@ async function handleStartProxy(cliType, services) {
         console.log(chalk.yellow(`[WARN]  ${warning}`));
       });
     } else {
-      console.log(chalk.green(`[OK] 代理服务已启动: http://127.0.0.1:${proxyResult.port}`));
-    }
-
-    // 修改配置文件
-    if (!services.managedProviderConfig) {
       const settingsManager = getSettingsManager(cliType);
       if (!settingsManager) {
         throw new Error(`平台 ${cliType} 未提供 nativeConfig 能力`);
       }
-      settingsManager.clearNativeOAuth?.(cliType);
+      if (!settingsManager.preserveNativeOAuthOnProxyStart) {
+        settingsManager.clearNativeOAuth?.(cliType);
+      }
       settingsManager.setProxyConfig(proxyResult.port);
       console.log(chalk.green('[OK] 配置文件已更新'));
 
@@ -349,7 +348,12 @@ async function handleStopProxy(cliType, services) {
     // 恢复配置文件
     if (!services.managedProviderConfig) {
       const settingsManager = getSettingsManager(cliType);
-      settingsManager.deleteBackup?.();
+      const hasBackup = settingsManager?.hasBackup?.() === true;
+      if (hasBackup && settingsManager.restoreNativeSettingsOnProxyStop && settingsManager.restoreSettings) {
+        settingsManager.restoreSettings();
+      } else if (hasBackup) {
+        settingsManager.deleteBackup?.();
+      }
       const restoredChannel = restoreSingleChannelMode(cliType);
       removeActiveChannelMarker(cliType);
       if (restoredChannel?.name) {

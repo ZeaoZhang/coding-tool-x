@@ -238,7 +238,7 @@
             <div class="panel-body">
               <div class="setting-group">
                 <template
-                  v-for="(platform, index) in notificationHookPlatforms"
+                  v-for="(platform, index) in notificationPlatformDefinitions"
                   :key="platform.key"
                 >
                   <div class="setting-item">
@@ -258,12 +258,12 @@
                           </n-text>
                         </div>
                         <n-switch
-                          v-model:value="notificationSettings[platform.key].enabled"
+                          v-model:value="notificationSettings.platforms[platform.key].enabled"
                         />
                       </div>
 
                       <n-alert
-                        v-if="notificationSettings[platform.key].external"
+                        v-if="notificationSettings.platforms[platform.key].external"
                         type="warning"
                         :bordered="false"
                         style="margin-top: 16px;"
@@ -271,11 +271,11 @@
                         {{ platform.externalMessage }}
                       </n-alert>
 
-                        <div v-if="notificationSettings[platform.key].enabled" class="notification-type-section">
+                        <div v-if="notificationSettings.platforms[platform.key].enabled" class="notification-type-section">
                           <n-text depth="2" style="font-size: 13px; margin-bottom: 12px; display: block;">
                             选择通知方式
                           </n-text>
-                          <n-radio-group v-model:value="notificationSettings[platform.key].type">
+                          <n-radio-group v-model:value="notificationSettings.platforms[platform.key].type">
                             <n-space vertical>
                               <n-radio value="notification">
                                 <div class="radio-content">
@@ -322,7 +322,7 @@
                             </div>
                           </n-alert>
                           <n-alert
-                            v-if="notificationSettings[platform.key].type === 'browser'"
+                            v-if="notificationSettings.platforms[platform.key].type === 'browser'"
                             type="info"
                             :bordered="false"
                             style="margin-top: 16px;"
@@ -333,7 +333,7 @@
                     </div>
                   </div>
 
-                  <n-divider v-if="index < notificationHookPlatforms.length - 1" />
+                  <n-divider v-if="index < notificationPlatformDefinitions.length - 1" />
                 </template>
 
                 <n-divider />
@@ -343,7 +343,7 @@
                   <div class="setting-label">
                     <n-text strong>远程通知渠道</n-text>
                     <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
-                      支持微信、QQ、飞书、企业微信、钉钉、Telegram
+                      支持服务端注册的远程通知渠道
                     </n-text>
                   </div>
 
@@ -406,7 +406,7 @@
                       </div>
 
                       <div class="remote-provider-fields">
-                        <div class="remote-field">
+                        <div class="remote-field remote-field-wide">
                           <span class="remote-field-label">渠道名称</span>
                           <n-input
                             v-model:value="provider.name"
@@ -414,102 +414,12 @@
                             placeholder="例如：我的飞书"
                           />
                         </div>
-
-                        <template v-if="provider.type === 'wechatBot'">
-                          <div class="remote-field remote-field-wide">
-                            <span class="remote-field-label">token.json 路径</span>
-                            <n-input v-model:value="provider.config.tokenFile" size="small" placeholder="~/.wxbot/token.json" />
-                          </div>
-                          <div class="remote-field">
-                            <span class="remote-field-label">Token</span>
-                            <n-input v-model:value="provider.config.botToken" size="small" type="password" show-password-on="click" placeholder="可直接填写 token" />
-                          </div>
-                          <div class="remote-field">
-                            <span class="remote-field-label">接收用户 ID</span>
-                            <n-input v-model:value="provider.config.targetUserId" size="small" placeholder="user id" />
-                          </div>
-                          <div class="remote-field">
-                            <span class="remote-field-label">Context Token</span>
-                            <n-input v-model:value="provider.config.contextToken" size="small" placeholder="可选" />
-                          </div>
-                        </template>
-
-                        <template v-else-if="provider.type === 'qqBot'">
-                          <div class="remote-field remote-field-wide">
-                            <span class="remote-field-label">OneBot HTTP 地址</span>
-                            <n-input v-model:value="provider.config.endpoint" size="small" placeholder="http://127.0.0.1:3000" />
-                          </div>
-                          <div class="remote-field">
-                            <span class="remote-field-label">Access Token</span>
-                            <n-input v-model:value="provider.config.accessToken" size="small" type="password" show-password-on="click" placeholder="可选" />
-                          </div>
-                          <div class="remote-field">
-                            <span class="remote-field-label">接收类型</span>
-                            <n-select v-model:value="provider.config.targetType" size="small" :options="qqTargetOptions" />
-                          </div>
-                          <div class="remote-field">
-                            <span class="remote-field-label">用户号或群号</span>
-                            <n-input v-model:value="provider.config.targetId" size="small" placeholder="QQ ID" />
-                          </div>
-                        </template>
-
-                        <template v-else-if="provider.type === 'feishuBot'">
-                          <div class="remote-field remote-field-wide">
-                            <span class="remote-field-label">Webhook URL</span>
-                            <n-input v-model:value="provider.config.webhookUrl" size="small" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." />
-                          </div>
-                        </template>
-
-                        <template v-else-if="provider.type === 'wecomBot'">
-                          <div class="remote-field remote-field-wide">
-                            <span class="remote-field-label">Webhook URL</span>
-                            <n-input v-model:value="provider.config.webhookUrl" size="small" placeholder="企业微信群机器人 Webhook URL" />
-                          </div>
-                        </template>
-
-                        <template v-else-if="provider.type === 'dingtalkBot'">
-                          <div class="remote-field">
-                            <span class="remote-field-label">接入模式</span>
-                            <n-select v-model:value="provider.config.mode" size="small" :options="dingtalkModeOptions" />
-                          </div>
-                          <template v-if="provider.config.mode === 'app'">
-                            <div class="remote-field">
-                              <span class="remote-field-label">App Key</span>
-                              <n-input v-model:value="provider.config.clientId" size="small" placeholder="Client ID" />
-                            </div>
-                            <div class="remote-field">
-                              <span class="remote-field-label">App Secret</span>
-                              <n-input v-model:value="provider.config.clientSecret" size="small" type="password" show-password-on="click" placeholder="Secret" />
-                            </div>
-                            <div class="remote-field">
-                              <span class="remote-field-label">接收类型</span>
-                              <n-select v-model:value="provider.config.targetType" size="small" :options="dingtalkTargetOptions" />
-                            </div>
-                            <div class="remote-field">
-                              <span class="remote-field-label">接收对象 ID</span>
-                              <n-input v-model:value="provider.config.targetId" size="small" placeholder="用户 ID 或群会话 ID" />
-                            </div>
-                          </template>
-                          <div v-else class="remote-field remote-field-wide">
-                            <span class="remote-field-label">Webhook URL</span>
-                            <n-input v-model:value="provider.config.webhookUrl" size="small" placeholder="钉钉自定义机器人 Webhook URL" />
-                          </div>
-                        </template>
-
-                        <template v-else-if="provider.type === 'telegramBot'">
-                          <div class="remote-field">
-                            <span class="remote-field-label">Token</span>
-                            <n-input v-model:value="provider.config.botToken" size="small" type="password" show-password-on="click" placeholder="Telegram token" />
-                          </div>
-                          <div class="remote-field">
-                            <span class="remote-field-label">Chat ID</span>
-                            <n-input v-model:value="provider.config.chatId" size="small" placeholder="Chat ID" />
-                          </div>
-                          <div class="remote-field remote-field-wide">
-                            <span class="remote-field-label">Proxy</span>
-                            <n-input v-model:value="provider.config.proxy" size="small" placeholder="可选，例如 http://127.0.0.1:2082" />
-                          </div>
-                        </template>
+                        <div class="remote-fields-descriptor">
+                          <RemoteProviderFields
+                            :provider="provider"
+                            :definition="getRemoteProviderDefinition(provider.type)"
+                          />
+                        </div>
                       </div>
 
                       <div class="remote-provider-actions">
@@ -1199,7 +1109,7 @@ import {
   SparklesOutline, ShieldCheckmarkOutline, AddOutline, ChevronForwardOutline,
   TrashOutline, ChevronUpOutline, ChevronDownOutline
 } from '@vicons/ionicons5'
-import { getUIConfig, saveUIConfig, updateNestedUIConfig } from '../api/ui-config'
+import RemoteProviderFields from './RemoteProviderFields.vue'
 import { DEFAULT_ENABLED_CLI_PLATFORMS } from '../config/platforms'
 import { usePlatformStore } from '../stores/platforms'
 import { getSecurityStatus, setSecurityPassword } from '../api/security'
@@ -1207,6 +1117,7 @@ import { getAutoStartStatus, enableAutoStart, disableAutoStart } from '../api/pm
 import message from '../utils/message'
 import { useTheme } from '../composables/useTheme'
 import { useUIConfig } from '../composables/useUIConfig'
+import { getUIConfig, saveUIConfig, updateNestedUIConfig } from '../api/ui-config'
 import { client } from '../api/client'
 
 const platformStore = usePlatformStore()
@@ -1292,43 +1203,71 @@ const originalAdvancedSettings = ref({
 })
 
 // 通知设置
-const notificationHookPlatforms = [
-  {
-    key: 'claude',
-    label: 'Claude Code',
-    description: '当 Claude Code 任务完成或等待交互时发送系统通知',
-    implementation: '通过 Claude Code 的 Stop Hook 在任务完成时发送通知',
-    externalMessage: '检测到已有非 Coding Tool 的 Stop Hook。本界面只管理 Coding Tool 写入的通知配置。'
-  },
-  {
-    key: 'codex',
-    label: 'Codex CLI',
-    description: '当 Codex CLI 当前回合完成并等待下一步交互时发送系统通知',
-    implementation: '通过 Codex CLI 的 notify 命令在回合完成后发送通知',
-    externalMessage: '检测到现有 notify 配置。启用 Coding Tool 托管通知会替换当前 notify 命令；关闭时只会移除 Coding Tool 写入的 notify。'
-  },
-  {
-    key: 'gemini',
-    label: 'Gemini CLI',
-    description: '当 Gemini CLI 回合完成或等待下一步交互时发送系统通知',
-    implementation: '通过 Gemini CLI 的 AfterAgent Hook 在任务完成时发送通知',
-    externalMessage: '检测到已有非 Coding Tool 的 Gemini Hook。本界面只管理 Coding Tool 写入的通知配置。'
-  },
-  {
-    key: 'opencode',
-    label: 'OpenCode',
-    description: '当 OpenCode 会话空闲或发生错误时发送系统通知',
-    implementation: '通过 OpenCode 插件事件（session.idle / session.error）发送通知',
-    externalMessage: '检测到其他 OpenCode 通知配置时，本界面只管理 Coding Tool 生成的插件文件。'
-  },
-  {
-    key: 'omp',
-    label: 'OMP',
-    description: '当 OMP 回合完成或等待下一步交互时发送系统通知',
-    implementation: '通过 OMP 托管 Extension 事件发送通知',
-    externalMessage: '检测到其他 OMP 通知扩展时，本界面只管理 Coding Tool 生成的扩展文件。'
+const notificationPlatformDefinitions = ref([])
+const remoteProviderTypes = ref([])
+
+function normalizeNotificationPlatformDefinition(definition = {}) {
+  const key = String(definition.key || '').trim()
+  if (!key) return null
+  return {
+    key,
+    label: String(definition.label || key),
+    description: typeof definition.description === 'string' ? definition.description : '',
+    implementation: typeof definition.implementation === 'string' ? definition.implementation : '',
+    externalMessage: typeof definition.externalMessage === 'string' ? definition.externalMessage : '',
+    hints: Array.isArray(definition.hints) ? definition.hints.filter(item => typeof item === 'string') : []
   }
-]
+}
+
+function getNotificationPlatformDefinitions(data = {}) {
+  const definitions = Array.isArray(data.platformDefinitions)
+    ? data.platformDefinitions.map(normalizeNotificationPlatformDefinition).filter(Boolean)
+    : []
+  if (definitions.length > 0) {
+    return definitions
+  }
+
+  const platforms = data.platforms && typeof data.platforms === 'object' && !Array.isArray(data.platforms)
+    ? data.platforms
+    : {}
+  const keys = Object.keys(platforms)
+  if (keys.length === 0 && data.stopHook && typeof data.stopHook === 'object') {
+    keys.push('claude')
+  }
+  return keys.map(key => normalizeNotificationPlatformDefinition({
+    key,
+    label: key
+  })).filter(Boolean)
+}
+
+function getRemoteProviderDefinitions(data = {}) {
+  const definitions = Array.isArray(data.remoteProviderTypes)
+    ? data.remoteProviderTypes
+      .map(definition => ({
+        ...definition,
+        type: String(definition?.type || '').trim()
+      }))
+      .filter(definition => definition.type)
+    : []
+  const knownTypes = new Set(definitions.map(definition => definition.type))
+  const providers = Array.isArray(data.remoteNotifications?.providers)
+    ? data.remoteNotifications.providers
+    : []
+  for (const provider of providers) {
+    const type = String(provider?.type || '').trim()
+    if (!type || knownTypes.has(type)) continue
+    definitions.push({
+      type,
+      label: type,
+      description: '',
+      hint: '',
+      defaults: {},
+      fields: []
+    })
+    knownTypes.add(type)
+  }
+  return definitions
+}
 
 function createNotificationPlatformState(platform = {}) {
   return {
@@ -1338,150 +1277,89 @@ function createNotificationPlatformState(platform = {}) {
   }
 }
 
-const REMOTE_PROVIDER_DEFINITIONS = {
-  wechatBot: {
-    label: '微信',
-    description: '使用个人微信 iLink token 发送通知',
-    hint: '首次 token 可由 GA 微信扫码生成；也可以直接填写 token。'
-  },
-  qqBot: {
-    label: 'QQ',
-    description: '通过 OneBot / NapCat / go-cqhttp 兼容 HTTP 接口发送通知',
-    hint: 'GA 当前构建已移除 QQ 前端，这里按 OneBot 兼容桥接入。'
-  },
-  feishuBot: {
-    label: '飞书',
-    description: '通过飞书自定义机器人 Webhook 发送通知',
-    hint: '填写飞书自定义机器人 Webhook URL。'
-  },
-  wecomBot: {
-    label: '企业微信',
-    description: '通过企业微信群机器人 Webhook 发送通知',
-    hint: '当前通知发送使用企业微信群机器人 Webhook；GA 的 bot_id / secret 长连接模式不适合单向通知。'
-  },
-  dingtalkBot: {
-    label: '钉钉',
-    description: '支持钉钉自定义机器人 Webhook 和 GA 同款 App 模式',
-    hint: 'App 模式需要 App Key / App Secret，并填写用户 ID 或群会话 ID。'
-  },
-  telegramBot: {
-    label: 'Telegram',
-    description: '通过 Telegram Bot API sendMessage 发送通知',
-    hint: '需要 Token 和 Chat ID。'
-  }
+function getRemoteProviderDefinition(type, definitions = remoteProviderTypes.value) {
+  return definitions.find(definition => definition.type === type) || null
 }
 
-const REMOTE_PROVIDER_INITIALS = {
-  wechatBot: '微',
-  qqBot: 'Q',
-  feishuBot: '飞',
-  wecomBot: '企',
-  dingtalkBot: '钉',
-  telegramBot: 'T'
-}
-
-const LEGACY_REMOTE_PROVIDER_NAMES = {
-  wechatBot: '微信 Bot',
-  qqBot: 'QQ Bot',
-  feishuBot: '飞书 Bot',
-  wecomBot: '企业微信 Bot',
-  dingtalkBot: '钉钉 Bot',
-  telegramBot: 'Telegram Bot'
-}
-
-const remoteProviderOptions = Object.entries(REMOTE_PROVIDER_DEFINITIONS).map(([value, item]) => ({
-  label: item.label,
-  value
-}))
-const qqTargetOptions = [
-  { label: '私聊', value: 'private' },
-  { label: '群聊', value: 'group' }
-]
-const dingtalkModeOptions = [
-  { label: 'Webhook', value: 'webhook' },
-  { label: 'GA App 模式', value: 'app' }
-]
-const dingtalkTargetOptions = [
-  { label: '群会话', value: 'group' },
-  { label: '用户', value: 'user' }
-]
-
-function createRemoteProviderConfig(type) {
-  switch (type) {
-    case 'wechatBot':
-      return { tokenFile: '~/.wxbot/token.json', botToken: '', targetUserId: '', contextToken: '' }
-    case 'qqBot':
-      return { endpoint: 'http://127.0.0.1:3000', accessToken: '', targetType: 'private', targetId: '' }
-    case 'feishuBot':
-      return { webhookUrl: '' }
-    case 'wecomBot':
-      return { webhookUrl: '' }
-    case 'dingtalkBot':
-      return { mode: 'webhook', webhookUrl: '', clientId: '', clientSecret: '', targetType: 'group', targetId: '' }
-    case 'telegramBot':
-      return { botToken: '', chatId: '', proxy: '' }
-    default:
-      return {}
-  }
-}
-
-function createRemoteProvider(type = 'telegramBot') {
+function createRemoteProvider(type = remoteProviderTypes.value[0]?.type) {
+  const definition = getRemoteProviderDefinition(type)
+  if (!definition) return null
   return {
     id: `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     type,
     name: getRemoteProviderLabel(type),
     enabled: false,
-    config: createRemoteProviderConfig(type)
+    config: {
+      ...(definition.defaults && typeof definition.defaults === 'object' ? definition.defaults : {})
+    }
   }
 }
 
-function normalizeRemoteProvider(provider = {}) {
-  const type = REMOTE_PROVIDER_DEFINITIONS[provider.type] ? provider.type : 'telegramBot'
-  const legacyName = LEGACY_REMOTE_PROVIDER_NAMES[type]
-  const name = provider.name && provider.name !== legacyName ? provider.name : getRemoteProviderLabel(type)
+function normalizeRemoteProvider(provider = {}, definitions = remoteProviderTypes.value) {
+  const suppliedType = String(provider.type || '').trim()
+  const definition = getRemoteProviderDefinition(suppliedType, definitions)
+    || definitions[0]
+  const type = definition?.type || suppliedType
+  if (!type) return null
+  const defaults = definition?.defaults && typeof definition.defaults === 'object'
+    ? definition.defaults
+    : {}
   return {
     id: provider.id || `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     type,
-    name,
+    name: provider.name || definition?.label || type,
     enabled: provider.enabled === true,
     config: {
-      ...createRemoteProviderConfig(type),
-      ...(provider.config || {})
+      ...defaults,
+      ...(provider.config && typeof provider.config === 'object' ? provider.config : {})
     }
   }
 }
 
 function getRemoteProviderLabel(type) {
-  return REMOTE_PROVIDER_DEFINITIONS[type]?.label || '远程通知'
+  return getRemoteProviderDefinition(type)?.label || type || '远程通知'
 }
 
 function getRemoteProviderDescription(type) {
-  return REMOTE_PROVIDER_DEFINITIONS[type]?.description || ''
+  return getRemoteProviderDefinition(type)?.description || ''
 }
 
 function getRemoteProviderHint(type) {
-  return REMOTE_PROVIDER_DEFINITIONS[type]?.hint || ''
+  return getRemoteProviderDefinition(type)?.hint || ''
 }
 
 function getRemoteProviderInitial(type) {
-  return REMOTE_PROVIDER_INITIALS[type] || '通'
+  const label = getRemoteProviderLabel(type).trim()
+  return Array.from(label)[0] || '通'
 }
 
-function createNotificationSettingsState(data = {}) {
+function createNotificationSettingsState(
+  data = {},
+  definitions = notificationPlatformDefinitions.value,
+  providerDefinitions = remoteProviderTypes.value
+) {
   const legacyClaudeState = {
     enabled: data?.stopHook?.enabled,
     type: data?.stopHook?.type
   }
+  const rawPlatforms = data.platforms && typeof data.platforms === 'object' && !Array.isArray(data.platforms)
+    ? data.platforms
+    : {}
+  const platforms = Object.fromEntries(definitions.map(definition => [
+    definition.key,
+    createNotificationPlatformState(
+      rawPlatforms[definition.key]
+      || (definition.key === 'claude' ? legacyClaudeState : {})
+    )
+  ]))
   const providers = Array.isArray(data?.remoteNotifications?.providers)
-    ? data.remoteNotifications.providers.map(normalizeRemoteProvider)
+    ? data.remoteNotifications.providers
+      .map(provider => normalizeRemoteProvider(provider, providerDefinitions))
+      .filter(Boolean)
     : []
 
   return {
-    claude: createNotificationPlatformState(data?.platforms?.claude || legacyClaudeState),
-    codex: createNotificationPlatformState(data?.platforms?.codex),
-    gemini: createNotificationPlatformState(data?.platforms?.gemini),
-    opencode: createNotificationPlatformState(data?.platforms?.opencode),
-    omp: createNotificationPlatformState(data?.platforms?.omp || data?.platforms?.omp),
+    platforms,
     remoteNotifications: {
       providers
     }
@@ -1492,9 +1370,14 @@ const notificationSettings = ref(createNotificationSettingsState())
 const originalNotificationSettings = ref(createNotificationSettingsState())
 const savingNotification = ref(false)
 const testingRemoteProviderId = ref('')
-const newRemoteProviderType = ref('telegramBot')
+const newRemoteProviderType = ref('')
+const remoteProviderOptions = computed(() => remoteProviderTypes.value.map(definition => ({
+  label: definition.label || definition.type,
+  value: definition.type
+})))
 const notificationPlatform = ref('')  // 'darwin' | 'win32' | 'linux'
 const browserNotificationPermission = ref('default')
+
 const browserNotificationAvailable = computed(() => {
   if (typeof window === 'undefined' || typeof Notification === 'undefined') {
     return false
@@ -1589,7 +1472,10 @@ async function ensureBrowserNotificationPermission() {
 }
 
 function addRemoteProvider() {
-  notificationSettings.value.remoteNotifications.providers.push(createRemoteProvider(newRemoteProviderType.value))
+  const provider = createRemoteProvider(newRemoteProviderType.value)
+  if (provider) {
+    notificationSettings.value.remoteNotifications.providers.push(provider)
+  }
 }
 
 function removeRemoteProvider(providerId) {
@@ -1876,9 +1762,20 @@ async function loadModelMetadata() {
       url: metadataSource.url || '',
       lastUpdated: metadataSource.lastUpdated || ''
     }
-    modelMetaTable.value = data.models || {}
+    modelMetaTable.value = data.models && typeof data.models === 'object' && !Array.isArray(data.models)
+      ? data.models
+      : {}
+    const rawOverrides = data.overrides ?? data.modelMetadataOverrides
+    const overrides = rawOverrides && typeof rawOverrides === 'object' && !Array.isArray(rawOverrides)
+      ? rawOverrides
+      : {}
+    modelMetaOverrides.value = { ...overrides }
+    const builtinIds = Array.isArray(data.builtinModelIds)
+      ? data.builtinModelIds
+      : Object.keys(modelMetaTable.value)
+    builtInModelIds.value = new Set(builtinIds.filter(modelId => typeof modelId === 'string' && modelId.trim()))
     defaultSpeedTestModels.value = Object.fromEntries(
-      Object.entries(data.defaultSpeedTestModels || {}).filter(([, value]) => typeof value === 'string')
+      Object.entries(data.defaultSpeedTestModels || {}).filter(([, value]) => typeof value === 'string' && value.trim())
     )
     normalizeDefaultSpeedTestModelSelection()
     originalDefaultSpeedTestModels.value = { ...defaultSpeedTestModels.value }
@@ -2174,13 +2071,25 @@ async function loadPortsConfig() {
   }
 }
 
+function applyNotificationResponseMetadata(data = {}) {
+  const definitions = getNotificationPlatformDefinitions(data)
+  const providerDefinitions = getRemoteProviderDefinitions(data)
+  notificationPlatformDefinitions.value = definitions
+  remoteProviderTypes.value = providerDefinitions
+  if (!providerDefinitions.some(definition => definition.type === newRemoteProviderType.value)) {
+    newRemoteProviderType.value = providerDefinitions[0]?.type || ''
+  }
+  return { definitions, providerDefinitions }
+}
+
 // 加载通知设置
 async function loadNotificationSettings() {
   try {
     const response = await fetch('/api/hooks')
     if (response.ok) {
       const data = await response.json()
-      const nextSettings = createNotificationSettingsState(data)
+      const { definitions, providerDefinitions } = applyNotificationResponseMetadata(data)
+      const nextSettings = createNotificationSettingsState(data, definitions, providerDefinitions)
       notificationSettings.value = nextSettings
       originalNotificationSettings.value = JSON.parse(JSON.stringify(nextSettings))
       // 获取平台信息用于显示安装提示
@@ -2196,10 +2105,9 @@ async function loadNotificationSettings() {
 async function handleSaveNotification() {
   savingNotification.value = true
   try {
-    const needsBrowserPermission = notificationHookPlatforms.some((platform) => {
-      const state = notificationSettings.value[platform.key]
-      return state.enabled && state.type === 'browser'
-    })
+    const needsBrowserPermission = Object.values(notificationSettings.value.platforms || {}).some((state) => (
+      state?.enabled === true && state.type === 'browser'
+    ))
 
     if (needsBrowserPermission) {
       await ensureBrowserNotificationPermission()
@@ -2210,11 +2118,11 @@ async function handleSaveNotification() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         platforms: Object.fromEntries(
-          notificationHookPlatforms.map(platform => [
-            platform.key,
+          Object.entries(notificationSettings.value.platforms || {}).map(([key, state]) => [
+            key,
             {
-              enabled: notificationSettings.value[platform.key].enabled,
-              type: notificationSettings.value[platform.key].type
+              enabled: state.enabled,
+              type: state.type
             }
           ])
         ),
@@ -2226,7 +2134,8 @@ async function handleSaveNotification() {
 
     if (response.ok) {
       const data = await response.json()
-      const nextSettings = createNotificationSettingsState(data)
+      const { definitions, providerDefinitions } = applyNotificationResponseMetadata(data)
+      const nextSettings = createNotificationSettingsState(data, definitions, providerDefinitions)
       notificationSettings.value = nextSettings
       originalNotificationSettings.value = JSON.parse(JSON.stringify(nextSettings))
       notificationPlatform.value = data.platform || notificationPlatform.value
@@ -2425,6 +2334,7 @@ onMounted(() => {
   loadPanelSettings()
   loadSecurityStatus()
   loadModelMetadata()
+  if (props.visible) loadNotificationSettings()
 })
 
 // 监听抽屉打开，加载数据
@@ -2990,6 +2900,9 @@ watch(activeMenu, (newVal, oldVal) => {
 }
 
 .remote-field-wide {
+  grid-column: 1 / -1;
+}
+.remote-fields-descriptor {
   grid-column: 1 / -1;
 }
 
