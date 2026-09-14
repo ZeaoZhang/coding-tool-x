@@ -203,6 +203,11 @@ async function stopOwnedOmpGatewayBeforeExit() {
 function shutdownProcess(code = 0, error = null) {
   if (processShutdownPromise) return processShutdownPromise;
   processShutdownPromise = (async () => {
+    try {
+      require('./platforms/drivers/omp/session-log-observer').shutdownOmpSessionLogObserver();
+    } catch (observerError) {
+      console.error(chalk.yellow(`[WARN] OMP 原生会话日志退出清理失败: ${observerError.message}`));
+    }
     await stopOwnedOmpGatewayBeforeExit();
     eventBus.emitSync('cli:shutdown', {});
     PluginManager.shutdownPlugins();

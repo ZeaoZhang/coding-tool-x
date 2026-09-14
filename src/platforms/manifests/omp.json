@@ -39,7 +39,7 @@
   "logAliases": [
     "ui"
   ],
-  "logNote": "OMP 受管 provider 配置没有独立请求代理日志，相关活动记录在 UI/server 日志中。",
+  "logNote": "ctx 会持续读取 OMP 原生会话日志，实时日志面板显示新增的会话用量事件。",
   "statisticsPath": "/api/omp/statistics",
   "pathResolverId": "omp",
   "resourceTypes": {

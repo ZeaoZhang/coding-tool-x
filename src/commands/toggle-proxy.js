@@ -240,7 +240,6 @@ async function handleStartProxy(cliType, services) {
 
     if (services.managedProviderConfig) {
       console.log(chalk.green('[OK] OMP models.yml 受管 provider 已启用'));
-      console.log(chalk.gray('OMP 新增会话用量日志观察已启用'));
       (proxyResult.warnings || []).forEach((warning) => {
         console.log(chalk.yellow(`[WARN]  ${warning}`));
       });
@@ -303,7 +302,6 @@ async function handleStopProxy(cliType, services) {
   if (services.managedProviderConfig) {
     console.log(chalk.gray(`• 动态切换: ${chalk.green('已启用')}`));
     console.log(chalk.gray(`• 配置模式: ${proxyStatus.mode || 'models-yml-provider-config'}`));
-    console.log(chalk.gray(`• 会话日志观察: ${proxyStatus.sessionLogObserver?.running ? chalk.green('运行中') : chalk.yellow('未运行')}\n`));
   } else {
     console.log(chalk.gray(`• 代理服务: ${chalk.green('运行中')}`));
     console.log(chalk.gray(`• 代理端口: ${proxyStatus.port}`));

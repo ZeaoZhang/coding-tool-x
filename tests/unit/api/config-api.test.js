@@ -19,9 +19,24 @@ const PLATFORM_CATALOG_PATH = require.resolve('../../../src/server/services/plat
 // Stub references recreated in beforeEach
 let loadConfig;
 let saveConfig;
+let normalizeNativeCliLogs;
 let router;
 
 function injectStubs() {
+  normalizeNativeCliLogs = vi.fn((value, fallback = { omp: { enabled: true, intervalSeconds: 5 } }) => {
+    const input = value?.omp || {};
+    const base = fallback?.omp || { enabled: true, intervalSeconds: 5 };
+    return {
+      omp: {
+        enabled: typeof input.enabled === 'boolean' ? input.enabled : base.enabled,
+        intervalSeconds: Number.isInteger(input.intervalSeconds)
+          && input.intervalSeconds >= 1
+          && input.intervalSeconds <= 60
+          ? input.intervalSeconds
+          : base.intervalSeconds
+      }
+    };
+  });
   loadConfig = vi.fn(() => ({
     projectsDir: '/tmp/projects',
     ports: { proxy: 9960, webUI: 9999, codexProxy: 9961, geminiProxy: 9962, opencodeProxy: 9963 },
@@ -36,13 +51,14 @@ function injectStubs() {
       gemini: ['gemini-2.5-pro'],
     },
     modelDiscovery: { useV1ModelsEndpoint: false },
+    nativeCliLogs: { omp: { enabled: true, intervalSeconds: 5 } },
     currentProject: 'test',
   }));
   saveConfig = vi.fn();
 
   require.cache[LOADER_PATH] = {
     id: LOADER_PATH, filename: LOADER_PATH, loaded: true,
-    exports: { loadConfig, saveConfig },
+    exports: { loadConfig, saveConfig, normalizeNativeCliLogs },
   };
 
   require.cache[DEFAULT_PATH] = {
@@ -60,8 +76,10 @@ function injectStubs() {
         gemini: ['gemini-2.5-pro'],
       },
       modelDiscovery: { useV1ModelsEndpoint: false },
+      nativeCliLogs: { omp: { enabled: true, intervalSeconds: 5 } },
     },
   };
+
 
   require.cache[CHANNELS_PATH] = {
     id: CHANNELS_PATH, filename: CHANNELS_PATH, loaded: true,
@@ -133,6 +151,9 @@ describe('GET /advanced', () => {
     expect(data).toHaveProperty('ports');
     expect(data).toHaveProperty('pricing');
     expect(data).toHaveProperty('modelDiscovery');
+    expect(data.nativeCliLogs).toEqual({
+      omp: { enabled: true, intervalSeconds: 5 }
+    });
     expect(loadConfig).toHaveBeenCalled();
   });
 });
@@ -204,6 +225,75 @@ describe('POST /advanced', () => {
 
     expect(saveConfig).toHaveBeenCalled();
     expect(res._data.success).toBe(true);
+  });
+
+  test('saves and returns normalized native CLI log settings', () => {
+    const handler = findHandler(router, 'post', '/advanced');
+    const res = mockRes();
+    handler(mockReq({
+      body: {
+        nativeCliLogs: { omp: { enabled: false, intervalSeconds: 12 } }
+      }
+    }), res);
+
+    expect(saveConfig.mock.calls[0][0].nativeCliLogs).toEqual({
+      omp: { enabled: false, intervalSeconds: 12 }
+    });
+    expect(res._data.config.nativeCliLogs).toEqual({
+      omp: { enabled: false, intervalSeconds: 12 }
+    });
+  });
+
+  test('preserves the current native CLI log setting when omitted', () => {
+    const currentNativeCliLogs = { omp: { enabled: false, intervalSeconds: 17 } };
+    loadConfig.mockReturnValueOnce({
+      ports: { proxy: 9960, webUI: 9999 },
+      pricing: {},
+      modelDiscovery: { useV1ModelsEndpoint: false },
+      nativeCliLogs: currentNativeCliLogs
+    });
+    const handler = findHandler(router, 'post', '/advanced');
+    const res = mockRes();
+    handler(mockReq({ body: { maxLogs: 120 } }), res);
+
+    expect(saveConfig.mock.calls[0][0].nativeCliLogs).toEqual(currentNativeCliLogs);
+  });
+
+  test.each([
+    ['zero', 0],
+    ['above the maximum', 61],
+    ['non-integer', 1.5]
+  ])('returns 400 for %s native log interval', (_label, intervalSeconds) => {
+    const handler = findHandler(router, 'post', '/advanced');
+    const res = mockRes();
+    handler(mockReq({
+      body: { nativeCliLogs: { omp: { intervalSeconds } } }
+    }), res);
+
+    expect(res.statusCode).toBe(400);
+    expect(saveConfig).not.toHaveBeenCalled();
+  });
+
+  test('returns 400 when native log enabled is not boolean', () => {
+    const handler = findHandler(router, 'post', '/advanced');
+    const res = mockRes();
+    handler(mockReq({
+      body: { nativeCliLogs: { omp: { enabled: 'false' } } }
+    }), res);
+
+    expect(res.statusCode).toBe(400);
+    expect(saveConfig).not.toHaveBeenCalled();
+  });
+
+  test('returns 400 when native log omp config is not an object', () => {
+    const handler = findHandler(router, 'post', '/advanced');
+    const res = mockRes();
+    handler(mockReq({
+      body: { nativeCliLogs: { omp: 'invalid' } }
+    }), res);
+
+    expect(res.statusCode).toBe(400);
+    expect(saveConfig).not.toHaveBeenCalled();
   });
 
   test('does not force projectsDir into saved advanced config', () => {

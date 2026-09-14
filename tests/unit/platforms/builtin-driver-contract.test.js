@@ -106,6 +106,16 @@ describe('built-in channel Driver contract', () => {
     }
   });
 });
+
+describe('native OAuth proxy lifecycle metadata', () => {
+  test.each(['claude', 'gemini'])('%s preserves native OAuth across proxy lifecycle', platform => {
+    const { createDriver } = require(`../../../src/platforms/drivers/${platform}/native-config`);
+    const driver = createDriver({ requireImpl: () => ({}) });
+
+    expect(driver.preserveNativeOAuthOnProxyStart).toBe(true);
+    expect(driver.restoreNativeSettingsOnProxyStop).toBe(true);
+  });
+});
 describe('built-in project Driver contract', () => {
   test.each(platforms)('%s exposes project operations and adapts platform config', platform => {
     const service = {

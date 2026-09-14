@@ -95,6 +95,36 @@ function normalizeSpeedTestModels(value) {
   );
 }
 
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeNativeCliLogs(value, fallback = DEFAULT_CONFIG.nativeCliLogs) {
+  const defaultConfig = isPlainObject(fallback) ? fallback : DEFAULT_CONFIG.nativeCliLogs;
+  const defaultOmp = isPlainObject(defaultConfig?.omp)
+    ? defaultConfig.omp
+    : DEFAULT_CONFIG.nativeCliLogs.omp;
+  const inputOmp = isPlainObject(value?.omp) ? value.omp : {};
+  const fallbackEnabled = typeof defaultOmp.enabled === 'boolean' ? defaultOmp.enabled : true;
+  const fallbackInterval = Number.isInteger(defaultOmp.intervalSeconds)
+    && defaultOmp.intervalSeconds >= 1
+    && defaultOmp.intervalSeconds <= 60
+    ? defaultOmp.intervalSeconds
+    : 5;
+  const intervalSeconds = Number.isInteger(inputOmp.intervalSeconds)
+    && inputOmp.intervalSeconds >= 1
+    && inputOmp.intervalSeconds <= 60
+    ? inputOmp.intervalSeconds
+    : fallbackInterval;
+
+  return {
+    omp: {
+      enabled: typeof inputOmp.enabled === 'boolean' ? inputOmp.enabled : fallbackEnabled,
+      intervalSeconds
+    }
+  };
+}
+
 function normalizeConfigForSave(config = {}) {
   const normalized = { ...config };
   if (isDefaultProjectsDir(normalized.projectsDir)) {
@@ -184,6 +214,10 @@ function loadConfig() {
         DEFAULT_CONFIG.defaultSpeedTestModels,
         userConfig.defaultSpeedTestModels
       );
+      config.nativeCliLogs = normalizeNativeCliLogs(
+        userConfig.nativeCliLogs,
+        DEFAULT_CONFIG.nativeCliLogs
+      );
 
       // 确保有 currentProject，使用 defaultProject 作为 currentProject
       if (!config.currentProject && config.defaultProject) {
@@ -199,7 +233,8 @@ function loadConfig() {
   const defaultConfig = {
     ...DEFAULT_CONFIG,
     projectsDir: resolveClaudeProjectsDir(),
-    currentProject: DEFAULT_CONFIG.defaultProject
+    currentProject: DEFAULT_CONFIG.defaultProject,
+    nativeCliLogs: normalizeNativeCliLogs(DEFAULT_CONFIG.nativeCliLogs)
   };
   eventBus.emitSync('config:loaded', { config: defaultConfig });
   return defaultConfig;
@@ -229,6 +264,7 @@ module.exports = {
   expandHome,
   resolveClaudeProjectsDir,
   normalizeConfigForSave,
+  normalizeNativeCliLogs,
   isDefaultProjectsDir,
   getConfigFilePath
 };

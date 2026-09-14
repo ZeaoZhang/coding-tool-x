@@ -588,6 +588,37 @@
                         </template>
                       </n-input-number>
                     </div>
+
+                    <!-- OMP 原生会话日志 -->
+                    <div class="option-field">
+                      <div class="option-label">
+                        <n-text depth="2" style="font-size: 13px;">OMP 原生会话日志</n-text>
+                        <n-text depth="3" style="font-size: 12px;">持续读取 OMP 原生会话日志，配置保存后立即生效</n-text>
+                      </div>
+                      <n-switch
+                        v-model:value="advancedSettings.nativeCliLogs.omp.enabled"
+                        size="medium"
+                      />
+                    </div>
+
+                    <!-- OMP 原生日志读取间隔 -->
+                    <div class="option-field">
+                      <div class="option-label">
+                        <n-text depth="2" style="font-size: 13px;">OMP 原生日志读取间隔</n-text>
+                        <n-text depth="3" style="font-size: 12px;">轮询原生会话日志的时间间隔</n-text>
+                      </div>
+                      <n-input-number
+                        v-model:value="advancedSettings.nativeCliLogs.omp.intervalSeconds"
+                        :min="1"
+                        :max="60"
+                        :step="1"
+                        style="width: 140px;"
+                      >
+                        <template #suffix>
+                          <n-text depth="3" style="font-size: 12px;">秒</n-text>
+                        </template>
+                      </n-input-number>
+                    </div>
                   </div>
                 </div>
 
@@ -1191,16 +1222,34 @@ const autoStartHelp = computed(() => {
 })
 
 // 高级设置
-const advancedSettings = ref({
-  maxLogs: 100,
-  statsInterval: 30,
-  enableSessionBinding: true // 默认开启
-})
-const originalAdvancedSettings = ref({
-  maxLogs: 100,
-  statsInterval: 30,
-  enableSessionBinding: true
-})
+function normalizeNativeCliLogs(value = {}) {
+  const omp = value?.omp && typeof value.omp === 'object' && !Array.isArray(value.omp)
+    ? value.omp
+    : {}
+  const intervalSeconds = Number.isInteger(omp.intervalSeconds)
+    && omp.intervalSeconds >= 1
+    && omp.intervalSeconds <= 60
+    ? omp.intervalSeconds
+    : 5
+  return {
+    omp: {
+      enabled: typeof omp.enabled === 'boolean' ? omp.enabled : true,
+      intervalSeconds
+    }
+  }
+}
+
+function cloneAdvancedSettings(settings = {}) {
+  return {
+    maxLogs: settings.maxLogs ?? 100,
+    statsInterval: settings.statsInterval ?? 30,
+    enableSessionBinding: settings.enableSessionBinding !== false,
+    nativeCliLogs: normalizeNativeCliLogs(settings.nativeCliLogs)
+  }
+}
+
+const advancedSettings = ref(cloneAdvancedSettings())
+const originalAdvancedSettings = ref(cloneAdvancedSettings())
 
 // 通知设置
 const notificationPlatformDefinitions = ref([])
@@ -1866,10 +1915,15 @@ async function handleDeleteModelMeta(modelId) {
 }
 const portsChanged = computed(() => {
   const portChanged = Object.keys(ports.value).some(key => ports.value[key] !== originalPorts.value[key])
+  const nativeCliLogsChanged = advancedSettings.value.nativeCliLogs.omp.enabled
+    !== originalAdvancedSettings.value.nativeCliLogs.omp.enabled
+    || advancedSettings.value.nativeCliLogs.omp.intervalSeconds
+    !== originalAdvancedSettings.value.nativeCliLogs.omp.intervalSeconds
   return portChanged ||
     advancedSettings.value.maxLogs !== originalAdvancedSettings.value.maxLogs ||
     advancedSettings.value.statsInterval !== originalAdvancedSettings.value.statsInterval ||
-    advancedSettings.value.enableSessionBinding !== originalAdvancedSettings.value.enableSessionBinding
+    advancedSettings.value.enableSessionBinding !== originalAdvancedSettings.value.enableSessionBinding ||
+    nativeCliLogsChanged
 })
 // 菜单项配置
 const menuItems = computed(() => [
@@ -2027,11 +2081,12 @@ async function handleSessionBindingChange(value) {
         ports: ports.value,
         maxLogs: advancedSettings.value.maxLogs,
         statsInterval: advancedSettings.value.statsInterval,
-        enableSessionBinding: value
+        enableSessionBinding: value,
+        nativeCliLogs: advancedSettings.value.nativeCliLogs
       })
     })
     if (response.ok) {
-      originalAdvancedSettings.value.enableSessionBinding = value
+      originalAdvancedSettings.value = cloneAdvancedSettings(advancedSettings.value)
       message.success(value ? '会话绑定已开启' : '会话绑定已关闭')
     } else {
       // 保存失败，回滚开关状态
@@ -2059,12 +2114,13 @@ async function loadPortsConfig() {
       ports.value = nextPorts
       originalPorts.value = { ...ports.value }
 
-      advancedSettings.value = {
+      advancedSettings.value = cloneAdvancedSettings({
         maxLogs: data.maxLogs || 100,
         statsInterval: data.statsInterval || 30,
-        enableSessionBinding: data.enableSessionBinding !== false
-      }
-      originalAdvancedSettings.value = { ...advancedSettings.value }
+        enableSessionBinding: data.enableSessionBinding !== false,
+        nativeCliLogs: data.nativeCliLogs
+      })
+      originalAdvancedSettings.value = cloneAdvancedSettings(advancedSettings.value)
     }
   } catch (error) {
     console.error('Failed to load advanced config:', error)
@@ -2232,13 +2288,14 @@ async function handleSavePorts() {
         ports: ports.value,
         maxLogs: advancedSettings.value.maxLogs,
         statsInterval: advancedSettings.value.statsInterval,
-        enableSessionBinding: advancedSettings.value.enableSessionBinding
+        enableSessionBinding: advancedSettings.value.enableSessionBinding,
+        nativeCliLogs: advancedSettings.value.nativeCliLogs
       })
     })
 
     if (response.ok) {
       originalPorts.value = { ...ports.value }
-      originalAdvancedSettings.value = { ...advancedSettings.value }
+      originalAdvancedSettings.value = cloneAdvancedSettings(advancedSettings.value)
 
       // 广播配置更新事件
       window.dispatchEvent(new CustomEvent('advanced-config-change', {
@@ -2248,7 +2305,7 @@ async function handleSavePorts() {
         }
       }))
 
-      message.success('配置已保存，端口修改需要重启服务器生效')
+      message.success('配置已保存，端口修改需要重启服务器生效；OMP 原生会话日志配置立即生效')
     } else {
       const error = await response.json()
       message.error('保存失败：' + (error.error || '未知错误'))

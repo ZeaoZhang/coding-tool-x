@@ -5,29 +5,25 @@ const {
   isManagedProviderId,
   normalizeProviderId
 } = require('./native-config-implementation');
+const { normalizeNativeCliLogs } = require('../../../config/loader');
 const { buildSuccessLogPayload, hasMeaningfulUsage } = require('../../../server/services/proxy-log-helper');
 const { broadcastLog } = require('../../../server/websocket-server');
+const eventBus = require('../../../plugins/event-bus');
 
 const DEFAULT_INTERVAL_MS = 5000;
-const DEFAULT_MAX_SEEN_EVENTS = 10000;
 let pollTimer = null;
-let seenEventKeys = new Set();
-let maxSeenEvents = DEFAULT_MAX_SEEN_EVENTS;
 let usageEventCursor = null;
+let observerEnabled = false;
+let intervalMs = DEFAULT_INTERVAL_MS;
+let configSavedListener = null;
 
-function getEventKey(event = {}) {
-  return String(event.key || event.id || '').trim();
-}
-
-function rememberEventKey(key) {
-  if (!key) return;
-  if (seenEventKeys.has(key)) {
-    seenEventKeys.delete(key);
-  }
-  seenEventKeys.add(key);
-  while (seenEventKeys.size > maxSeenEvents) {
-    seenEventKeys.delete(seenEventKeys.values().next().value);
-  }
+function getOmpSessionLogObserverStatus() {
+  return {
+    running: Boolean(pollTimer),
+    enabled: observerEnabled,
+    intervalMs,
+    cursor: Boolean(usageEventCursor)
+  };
 }
 
 function resolveChannel(event = {}, channels = getEnabledChannels()) {
@@ -74,27 +70,30 @@ function publishEvent(event, channels) {
 }
 
 function pollOmpSessionLogs() {
-  if (!pollTimer) return getOmpSessionLogObserverStatus();
+  if (!observerEnabled || !usageEventCursor) return getOmpSessionLogObserverStatus();
 
   const events = usageEventCursor.read();
   const channels = getEnabledChannels();
   events.forEach((event) => {
-    const key = getEventKey(event);
-    if (!key || seenEventKeys.has(key)) return;
-    rememberEventKey(key);
     publishEvent(event, channels);
   });
   return getOmpSessionLogObserverStatus();
 }
 
-function startOmpSessionLogObserver(options = {}) {
-  if (pollTimer) return getOmpSessionLogObserverStatus();
+function clearPollTimer() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
 
-  usageEventCursor = createOmpUsageEventCursor();
-  maxSeenEvents = Math.max(1, Number(options.maxSeenEvents) || DEFAULT_MAX_SEEN_EVENTS);
-  seenEventKeys = new Set();
-  usageEventCursor.read().map(getEventKey).filter(Boolean).forEach(rememberEventKey);
-  const intervalMs = Math.max(100, Number(options.intervalMs) || DEFAULT_INTERVAL_MS);
+function resetUsageEventCursor() {
+  usageEventCursor?.reset?.();
+  usageEventCursor = null;
+}
+
+function startPollTimer() {
+  clearPollTimer();
   pollTimer = setInterval(() => {
     try {
       pollOmpSessionLogs();
@@ -105,34 +104,79 @@ function startOmpSessionLogObserver(options = {}) {
   if (typeof pollTimer.unref === 'function') {
     pollTimer.unref();
   }
-  return getOmpSessionLogObserverStatus();
 }
 
-function stopOmpSessionLogObserver() {
-  if (pollTimer) {
-    clearInterval(pollTimer);
+function createUsageEventCursor() {
+  usageEventCursor = createOmpUsageEventCursor();
+  try {
+    usageEventCursor.read();
+  } catch (error) {
+    console.warn('[OMP Sessions] Failed to establish usage log baseline:', error.message);
   }
-  pollTimer = null;
-  seenEventKeys = new Set();
-  maxSeenEvents = DEFAULT_MAX_SEEN_EVENTS;
-  usageEventCursor?.reset?.();
-  usageEventCursor = null;
+}
+
+function ensureConfigSavedListener() {
+  if (configSavedListener) return;
+  configSavedListener = ({ config } = {}) => {
+    const nativeCliLogs = normalizeNativeCliLogs(config?.nativeCliLogs);
+    configureOmpSessionLogObserver({
+      enabled: nativeCliLogs.omp.enabled,
+      intervalMs: nativeCliLogs.omp.intervalSeconds * 1000
+    });
+  };
+  eventBus.on('config:saved', configSavedListener);
+}
+
+function normalizeIntervalMs(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0
+    ? Math.max(100, parsed)
+    : DEFAULT_INTERVAL_MS;
+}
+
+function configureOmpSessionLogObserver({ enabled = true, intervalMs: nextIntervalMs = DEFAULT_INTERVAL_MS } = {}) {
+  ensureConfigSavedListener();
+
+  const nextEnabled = enabled !== false;
+  const normalizedIntervalMs = normalizeIntervalMs(nextIntervalMs);
+  const wasEnabled = observerEnabled;
+  const intervalChanged = normalizedIntervalMs !== intervalMs;
+  observerEnabled = nextEnabled;
+  intervalMs = normalizedIntervalMs;
+
+  if (!nextEnabled) {
+    clearPollTimer();
+    resetUsageEventCursor();
+    return getOmpSessionLogObserverStatus();
+  }
+
+  if (!wasEnabled || !usageEventCursor) {
+    createUsageEventCursor();
+    startPollTimer();
+  } else if (intervalChanged) {
+    startPollTimer();
+  }
   return getOmpSessionLogObserverStatus();
 }
 
-function getOmpSessionLogObserverStatus() {
-  return {
-    running: Boolean(pollTimer),
-    seenEvents: seenEventKeys.size
-  };
+function shutdownOmpSessionLogObserver() {
+  clearPollTimer();
+  resetUsageEventCursor();
+  observerEnabled = false;
+  intervalMs = DEFAULT_INTERVAL_MS;
+  if (configSavedListener) {
+    eventBus.off('config:saved', configSavedListener);
+    configSavedListener = null;
+  }
+  return getOmpSessionLogObserverStatus();
 }
 
 module.exports = {
-  startOmpSessionLogObserver,
-  stopOmpSessionLogObserver,
+  configureOmpSessionLogObserver,
+  shutdownOmpSessionLogObserver,
   pollOmpSessionLogs,
-  getOmpSessionLogObserverStatus,
   _test: {
+    getOmpSessionLogObserverStatus,
     resolveChannel
   }
 };

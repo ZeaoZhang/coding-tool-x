@@ -16,7 +16,10 @@ const { recordRequest } = require('../../../server/services/statistics-service')
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('../../../server/services/proxy-runtime');
 const { createDecodedStream } = require('../../../server/services/response-decoder');
 const eventBus = require('../../../plugins/event-bus');
-const { getEffectiveApiKey } = require('./channels-implementation');
+const {
+  getEffectiveApiKey,
+  getClaudeProxyExcludedChannelIds = () => []
+} = require('./channels-implementation');
 const { persistProxyRequestSnapshot, persistClaudeRequestTemplate } = require('../../../server/services/request-logger');
 const { publishUsageLog, publishFailureLog } = require('../../../server/services/proxy-log-helper');
 const { redirectModel, normalizeGatewaySourceType } = require('../../../shared/proxy-utils');
@@ -196,6 +199,13 @@ async function startProxyServer(options = {}) {
     console.log('Proxy server already running on port', currentPort);
     return { success: true, port: currentPort };
   }
+  const excludedChannelIds = getClaudeProxyExcludedChannelIds();
+  if (excludedChannelIds.length > 0) {
+    const error = new Error('Claude dynamic proxy supports API-key channels only; disable OAuth channels first');
+    error.code = 'claude_oauth_proxy_unsupported';
+    error.statusCode = 409;
+    throw error;
+  }
 
   try {
     const config = loadConfig();
@@ -254,7 +264,12 @@ async function startProxyServer(options = {}) {
         const sessionId = extractSessionId(req);
         const config = loadConfig();
         const enableSessionBinding = config.enableSessionBinding !== false; // 默认开启
-        const channel = await allocateChannel({ source: 'claude', sessionId, enableSessionBinding });
+        const channel = await allocateChannel({
+          source: 'claude',
+          sessionId,
+          enableSessionBinding,
+          excludeChannelIds: getClaudeProxyExcludedChannelIds()
+        });
 
         // 广播调度状态（请求开始）
         broadcastSchedulerState('claude', getSchedulerState('claude'));

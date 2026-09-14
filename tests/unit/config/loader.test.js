@@ -48,6 +48,7 @@ let saveConfig;
 let expandHome;
 let resolveClaudeProjectsDir;
 let normalizeConfigForSave;
+let normalizeNativeCliLogs;
 let getConfigFilePath;
 
 beforeEach(() => {
@@ -65,6 +66,7 @@ beforeEach(() => {
   expandHome     = loader.expandHome;
   resolveClaudeProjectsDir = loader.resolveClaudeProjectsDir;
   normalizeConfigForSave = loader.normalizeConfigForSave;
+  normalizeNativeCliLogs = loader.normalizeNativeCliLogs;
   getConfigFilePath = loader.getConfigFilePath;
 });
 
@@ -151,6 +153,11 @@ describe('loadConfig with no config file', () => {
     expect(config.ports.webUI).toBe(DEFAULT_CONFIG.ports.webUI);
     expect(config.ports.proxy).toBe(DEFAULT_CONFIG.ports.proxy);
   });
+  it('returns default native CLI log settings', () => {
+    expect(loadConfig().nativeCliLogs).toEqual({
+      omp: { enabled: true, intervalSeconds: 5 }
+    });
+  });
 
   it('sets currentProject equal to defaultProject', () => {
     const config = loadConfig();
@@ -195,6 +202,31 @@ describe('loadConfig with existing config file', () => {
   it('missing user keys fall back to defaults', () => {
     writeConfig({ maxLogs: 5 });
     expect(loadConfig().statsInterval).toBe(DEFAULT_CONFIG.statsInterval);
+  });
+  it('fills missing native CLI log fields from defaults', () => {
+    writeConfig({ nativeCliLogs: { omp: { enabled: false } } });
+    expect(loadConfig().nativeCliLogs).toEqual({
+      omp: { enabled: false, intervalSeconds: 5 }
+    });
+  });
+
+  it('falls back for invalid native CLI log values without failing', () => {
+    writeConfig({
+      nativeCliLogs: {
+        omp: { enabled: 'false', intervalSeconds: 61, ignored: true },
+        ignored: true
+      }
+    });
+    expect(loadConfig().nativeCliLogs).toEqual(DEFAULT_CONFIG.nativeCliLogs);
+  });
+
+  it('keeps native CLI log normalization limited to the supported shape', () => {
+    expect(normalizeNativeCliLogs({
+      omp: { enabled: true, intervalSeconds: 12, extra: 'ignored' },
+      extra: true
+    })).toEqual({
+      omp: { enabled: true, intervalSeconds: 12 }
+    });
   });
 
   it('merges ports: user value overrides, others keep defaults', () => {

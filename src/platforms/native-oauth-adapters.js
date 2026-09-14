@@ -151,8 +151,37 @@ function clearClaudeOAuth() {
   settings.env = settings.env || {};
   delete settings.env.ANTHROPIC_AUTH_TOKEN;
   delete settings.env.CLAUDE_CODE_OAUTH_TOKEN;
+  ensureDir(path.dirname(NATIVE_PATHS.claude.settings));
   claudeSettingsManager.writeSettings(settings);
 }
+function clearClaudeChannelConfig() {
+  let settings = {};
+  try {
+    settings = claudeSettingsManager.settingsExists()
+      ? claudeSettingsManager.readSettings()
+      : {};
+  } catch {
+    settings = {};
+  }
+
+  settings.env = settings.env || {};
+  [
+    'ANTHROPIC_BASE_URL',
+    'ANTHROPIC_API_KEY',
+    'ANTHROPIC_AUTH_TOKEN',
+    'CLAUDE_CODE_OAUTH_TOKEN',
+    'ANTHROPIC_MODEL',
+    'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+    'ANTHROPIC_DEFAULT_SONNET_MODEL',
+    'ANTHROPIC_DEFAULT_OPUS_MODEL'
+  ].forEach((key) => {
+    delete settings.env[key];
+  });
+  delete settings.apiKeyHelper;
+  ensureDir(path.dirname(NATIVE_PATHS.claude.settings));
+  claudeSettingsManager.writeSettings(settings);
+}
+
 
 function applyClaudeOAuth(credential) {
   clearClaudeOAuth();
@@ -535,6 +564,7 @@ function clearGeminiOAuth() {
 }
 
 function clearGeminiChannelConfig() {
+  ensureDir(path.dirname(NATIVE_PATHS.gemini.env));
   const env = geminiSettingsManager.configExists()
     ? geminiSettingsManager.readEnv()
     : {};
@@ -933,6 +963,8 @@ module.exports = {
   inspectTool,
   readNativeOAuth,
   readAllNativeOAuth,
+  clearClaudeChannelConfig,
+  clearGeminiChannelConfig,
   clearCodexChannelConfig,
   clearNativeOAuth,
   disableNativeOAuthCredential,
