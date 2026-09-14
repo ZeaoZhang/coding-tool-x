@@ -589,26 +589,26 @@
                       </n-input-number>
                     </div>
 
-                    <!-- OMP 原生会话日志 -->
+                    <!-- CLI 原生会话日志 -->
                     <div class="option-field">
                       <div class="option-label">
-                        <n-text depth="2" style="font-size: 13px;">OMP 原生会话日志</n-text>
-                        <n-text depth="3" style="font-size: 12px;">持续读取 OMP 原生会话日志，配置保存后立即生效</n-text>
+                        <n-text depth="2" style="font-size: 13px;">CLI 原生会话日志</n-text>
+                        <n-text depth="3" style="font-size: 12px;">读取各 CLI 工具自己的会话日志，配置保存后立即生效</n-text>
                       </div>
                       <n-switch
-                        v-model:value="advancedSettings.nativeCliLogs.omp.enabled"
+                        v-model:value="advancedSettings.nativeCliLogs.enabled"
                         size="medium"
                       />
                     </div>
 
-                    <!-- OMP 原生日志读取间隔 -->
+                    <!-- CLI 原生日志读取间隔 -->
                     <div class="option-field">
                       <div class="option-label">
-                        <n-text depth="2" style="font-size: 13px;">OMP 原生日志读取间隔</n-text>
+                        <n-text depth="2" style="font-size: 13px;">CLI 原生日志读取间隔</n-text>
                         <n-text depth="3" style="font-size: 12px;">轮询原生会话日志的时间间隔</n-text>
                       </div>
                       <n-input-number
-                        v-model:value="advancedSettings.nativeCliLogs.omp.intervalSeconds"
+                        v-model:value="advancedSettings.nativeCliLogs.intervalSeconds"
                         :min="1"
                         :max="60"
                         :step="1"
@@ -1223,19 +1223,18 @@ const autoStartHelp = computed(() => {
 
 // 高级设置
 function normalizeNativeCliLogs(value = {}) {
-  const omp = value?.omp && typeof value.omp === 'object' && !Array.isArray(value.omp)
+  const legacyOmp = value?.omp && typeof value.omp === 'object' && !Array.isArray(value.omp)
     ? value.omp
-    : {}
-  const intervalSeconds = Number.isInteger(omp.intervalSeconds)
-    && omp.intervalSeconds >= 1
-    && omp.intervalSeconds <= 60
-    ? omp.intervalSeconds
+    : null
+  const input = legacyOmp || value
+  const intervalSeconds = Number.isInteger(input.intervalSeconds)
+    && input.intervalSeconds >= 1
+    && input.intervalSeconds <= 60
+    ? input.intervalSeconds
     : 5
   return {
-    omp: {
-      enabled: typeof omp.enabled === 'boolean' ? omp.enabled : true,
-      intervalSeconds
-    }
+    enabled: typeof input.enabled === 'boolean' ? input.enabled : true,
+    intervalSeconds
   }
 }
 
@@ -1915,10 +1914,10 @@ async function handleDeleteModelMeta(modelId) {
 }
 const portsChanged = computed(() => {
   const portChanged = Object.keys(ports.value).some(key => ports.value[key] !== originalPorts.value[key])
-  const nativeCliLogsChanged = advancedSettings.value.nativeCliLogs.omp.enabled
-    !== originalAdvancedSettings.value.nativeCliLogs.omp.enabled
-    || advancedSettings.value.nativeCliLogs.omp.intervalSeconds
-    !== originalAdvancedSettings.value.nativeCliLogs.omp.intervalSeconds
+  const nativeCliLogsChanged = advancedSettings.value.nativeCliLogs.enabled
+    !== originalAdvancedSettings.value.nativeCliLogs.enabled
+    || advancedSettings.value.nativeCliLogs.intervalSeconds
+    !== originalAdvancedSettings.value.nativeCliLogs.intervalSeconds
   return portChanged ||
     advancedSettings.value.maxLogs !== originalAdvancedSettings.value.maxLogs ||
     advancedSettings.value.statsInterval !== originalAdvancedSettings.value.statsInterval ||

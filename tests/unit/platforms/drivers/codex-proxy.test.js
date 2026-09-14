@@ -12,7 +12,6 @@ const WEBSOCKET_PATH = require.resolve('../../../../src/server/websocket-server'
 const PRICING_PATH = require.resolve('../../../../src/server/utils/pricing');
 const CODEX_STATS_PATH = require.resolve('../../../../src/platforms/drivers/codex/statistics-implementation');
 const REQUEST_LOGGER_PATH = require.resolve('../../../../src/server/services/request-logger');
-const PROXY_LOG_HELPER_PATH = require.resolve('../../../../src/server/services/proxy-log-helper');
 const RESPONSE_DECODER_PATH = require.resolve('../../../../src/server/services/response-decoder');
 const PROXY_UTILS_PATH = require.resolve('../../../../src/shared/proxy-utils');
 const RESPONSE_USAGE_PATH = require.resolve('../../../../src/shared/response-usage-parser');
@@ -125,10 +124,6 @@ beforeEach(async () => {
   });
   stub(CODEX_STATS_PATH, { recordRequest: vi.fn() });
   stub(REQUEST_LOGGER_PATH, { persistProxyRequestSnapshot: vi.fn() });
-  stub(PROXY_LOG_HELPER_PATH, {
-    publishUsageLog: vi.fn(),
-    publishFailureLog: vi.fn()
-  });
   stub(RESPONSE_DECODER_PATH, { createDecodedStream: source => source });
   stub(PROXY_UTILS_PATH, {
     redirectModel: model => model,

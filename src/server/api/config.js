@@ -75,16 +75,15 @@ function isPlainObject(value) {
 }
 
 function validateNativeCliLogs(value) {
-  if (!isPlainObject(value) || !isPlainObject(value.omp)) {
-    return 'nativeCliLogs.omp must be an object';
+  if (!isPlainObject(value)) {
+    return 'nativeCliLogs must be an object';
   }
-  const omp = value.omp;
-  if (Object.prototype.hasOwnProperty.call(omp, 'enabled') && typeof omp.enabled !== 'boolean') {
-    return 'nativeCliLogs.omp.enabled must be a boolean';
+  if (Object.prototype.hasOwnProperty.call(value, 'enabled') && typeof value.enabled !== 'boolean') {
+    return 'nativeCliLogs.enabled must be a boolean';
   }
-  if (Object.prototype.hasOwnProperty.call(omp, 'intervalSeconds')
-    && (!Number.isInteger(omp.intervalSeconds) || omp.intervalSeconds < 1 || omp.intervalSeconds > 60)) {
-    return 'nativeCliLogs.omp.intervalSeconds must be an integer between 1-60';
+  if (Object.prototype.hasOwnProperty.call(value, 'intervalSeconds')
+    && (!Number.isInteger(value.intervalSeconds) || value.intervalSeconds < 1 || value.intervalSeconds > 60)) {
+    return 'nativeCliLogs.intervalSeconds must be an integer between 1-60';
   }
   return null;
 }

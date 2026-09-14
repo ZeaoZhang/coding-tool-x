@@ -11,7 +11,6 @@ const CHANNEL_SCHEDULER_PATH = require.resolve('../../../src/server/services/cha
 const CHANNEL_HEALTH_PATH = require.resolve('../../../src/server/services/channel-health');
 const PROXY_RUNTIME_PATH = require.resolve('../../../src/server/services/proxy-runtime');
 const WEBSOCKET_PATH = require.resolve('../../../src/server/websocket-server');
-const PROXY_LOG_HELPER_PATH = require.resolve('../../../src/server/services/proxy-log-helper');
 const OPENCODE_STATS_PATH = require.resolve('../../../src/platforms/drivers/opencode/statistics-implementation');
 const REQUEST_LOGGER_PATH = require.resolve('../../../src/server/services/request-logger');
 const MODEL_DETECTOR_PATH = require.resolve('../../../src/server/services/model-detector');
@@ -129,7 +128,6 @@ beforeEach(async () => {
     getProxyRuntime: () => null
   });
   stub(WEBSOCKET_PATH, { broadcastLog: vi.fn(), broadcastSchedulerState: vi.fn() });
-  stub(PROXY_LOG_HELPER_PATH, { publishUsageLog: vi.fn(), publishFailureLog: vi.fn() });
   stub(OPENCODE_STATS_PATH, { recordRequest: vi.fn() });
   stub(REQUEST_LOGGER_PATH, { persistProxyRequestSnapshot: vi.fn(), loadClaudeRequestTemplate: () => ({}) });
   stub(MODEL_DETECTOR_PATH, { probeModelAvailability: vi.fn(), fetchModelsFromProvider: vi.fn() });
@@ -151,7 +149,6 @@ afterEach(async () => {
     CHANNEL_HEALTH_PATH,
     PROXY_RUNTIME_PATH,
     WEBSOCKET_PATH,
-    PROXY_LOG_HELPER_PATH,
     OPENCODE_STATS_PATH,
     REQUEST_LOGGER_PATH,
     MODEL_DETECTOR_PATH,

@@ -4,7 +4,7 @@ const {
   getDailyStatistics: getSharedDailyStatistics,
   getTodayStatistics: getSharedTodayStatistics
 } = require('../../../server/services/statistics-service');
-const { normalizeUsageTokens, toNumber } = require('../../../server/services/proxy-log-helper');
+const { normalizeUsageTokens, toNumber } = require('../../../server/services/usage-log-utils');
 
 const TOOL_TYPE = 'gemini';
 

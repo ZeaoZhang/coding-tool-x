@@ -8,28 +8,16 @@ const chalk = require('chalk');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 const { allocateChannel, releaseChannel, getSchedulerState } = require('../../../server/services/channel-scheduler');
 const { recordSuccess, recordFailure } = require('../../../server/services/channel-health');
-const { broadcastLog, broadcastSchedulerState } = require('../../../server/websocket-server');
+const { broadcastSchedulerState } = require('../../../server/websocket-server');
 const { loadConfig } = require('../../../config/loader');
-const DEFAULT_CONFIG = require('../../../config/default');
-const { resolveModelPricing } = require('../../../server/utils/pricing');
-const { recordRequest } = require('../../../server/services/statistics-service');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('../../../server/services/proxy-runtime');
-const { createDecodedStream } = require('../../../server/services/response-decoder');
 const eventBus = require('../../../plugins/event-bus');
 const {
   getEffectiveApiKey,
   getClaudeProxyExcludedChannelIds = () => []
 } = require('./channels-implementation');
 const { persistProxyRequestSnapshot, persistClaudeRequestTemplate } = require('../../../server/services/request-logger');
-const { publishUsageLog, publishFailureLog } = require('../../../server/services/proxy-log-helper');
 const { redirectModel, normalizeGatewaySourceType } = require('../../../shared/proxy-utils');
-const { parseSSEUsage, parseNonStreamingUsage, mergeUsageIntoTokenData, createTokenData } = require('../../../shared/response-usage-parser');
-const {
-  createClaudeStreamRecoveryState,
-  mergeClaudeStreamEvent,
-  buildAssistantMessageFromStreamState,
-  recoverClaudeUsageViaCountTokens
-} = require('./token-recovery');
 const { handleClaudeOpenAiGatewayRequest } = require('./openai-gateway');
 const { attachServerShutdownHandling, expediteServerShutdown } = require('../../../server/services/server-shutdown');
 
@@ -43,33 +31,6 @@ const requestMetadata = new Map();
 // 用于缓存已打印过的模型重定向规则，避免重复打印
 // 格式: { channelId: { "originalModel": "redirectedModel", ... } }
 const printedRedirectCache = new Map();
-
-const CLAUDE_BASE_PRICING = DEFAULT_CONFIG.pricing.claude;
-const ONE_MILLION = 1000000;
-
-// detectModelTier and redirectModel imported from shared/proxy-utils
-
-/**
- * 计算请求成本
- * @param {string} model - 模型名称
- * @param {object} tokens - token 使用情况
- * @returns {number} 成本（美元）
- */
-function calculateCost(model, tokens) {
-  const pricing = resolveModelPricing('claude', model, {}, CLAUDE_BASE_PRICING);
-
-  const inputRate = typeof pricing.input === 'number' ? pricing.input : CLAUDE_BASE_PRICING.input;
-  const outputRate = typeof pricing.output === 'number' ? pricing.output : CLAUDE_BASE_PRICING.output;
-  const cacheCreationRate = typeof pricing.cacheCreation === 'number' ? pricing.cacheCreation : CLAUDE_BASE_PRICING.cacheCreation;
-  const cacheReadRate = typeof pricing.cacheRead === 'number' ? pricing.cacheRead : CLAUDE_BASE_PRICING.cacheRead;
-
-  return (
-    (tokens.input || 0) * inputRate / ONE_MILLION +
-    (tokens.output || 0) * outputRate / ONE_MILLION +
-    (tokens.cacheCreation || 0) * cacheCreationRate / ONE_MILLION +
-    (tokens.cacheRead || 0) * cacheReadRate / ONE_MILLION
-  );
-}
 
 const jsonBodyParser = express.json({
   limit: '100mb',
@@ -182,16 +143,6 @@ function buildClaudeRequestSummary(req, sessionId = null) {
   };
 }
 
-function clearTokenDataUsage(tokenData) {
-  tokenData.inputTokens = 0;
-  tokenData.outputTokens = 0;
-  tokenData.cacheCreation = 0;
-  tokenData.cacheRead = 0;
-  tokenData.cachedTokens = 0;
-  tokenData.reasoningTokens = 0;
-  tokenData.totalTokens = 0;
-}
-
 async function startProxyServer(options = {}) {
   const preserveStartTime = options.preserveStartTime || false;
 
@@ -294,14 +245,6 @@ async function startProxyServer(options = {}) {
         const effectiveKey = getEffectiveApiKey(channel);
         if (!effectiveKey) {
           release();
-          publishFailureLog({
-            source: 'claude',
-            channel: channel.name,
-            message: 'API key not configured or expired. Please update your channel key.',
-            statusCode: 401,
-            stage: 'preflight',
-            broadcastLog
-          });
           return res.status(401).json({
             error: 'API key not configured or expired. Please update your channel key.',
             type: 'authentication_error'
@@ -353,7 +296,6 @@ async function startProxyServer(options = {}) {
             res,
             channel,
             effectiveKey,
-            calculateCost,
             onDone: release
           });
           if (handled) {
@@ -377,21 +319,6 @@ async function startProxyServer(options = {}) {
           if (err) {
             // 记录请求失败
             recordFailure(channel.id, 'claude', err);
-            const metadata = requestMetadata.get(req) || {
-              id: null,
-              channel: channel.name,
-              channelId: channel.id,
-              startTime: Date.now()
-            };
-            publishFailureLog({
-              source: 'claude',
-              metadata,
-              message: err.message,
-              error: err,
-              statusCode: 502,
-              stage: 'proxy_web',
-              broadcastLog
-            });
             console.error('Proxy error:', err);
             if (res && !res.headersSent) {
               res.status(502).json({
@@ -403,13 +330,6 @@ async function startProxyServer(options = {}) {
         });
       } catch (error) {
         console.error('Channel allocation error:', error);
-        publishFailureLog({
-          source: 'claude',
-          message: error.message || '所有渠道暂时不可用',
-          statusCode: 503,
-          stage: 'allocate_channel',
-          broadcastLog
-        });
         if (!res.headersSent) {
           res.status(503).json({
             error: error.message || '所有渠道暂时不可用',
@@ -419,6 +339,7 @@ async function startProxyServer(options = {}) {
       }
     });
 
+    // 代理响应只负责维护传输健康状态；实时日志和 usage 来自 CLI 原生日志。
     proxy.on('proxyRes', (proxyRes, req, res) => {
       const metadata = requestMetadata.get(req);
       if (!metadata) return;
@@ -428,185 +349,26 @@ async function startProxyServer(options = {}) {
         return;
       }
 
-      let isResponseClosed = false;
-
-      res.on('close', () => {
-        isResponseClosed = true;
-        requestMetadata.delete(req);
-      });
-
+      res.on('close', () => requestMetadata.delete(req));
       res.on('error', (err) => {
-        isResponseClosed = true;
-        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
-          console.error('Response error:', err);
-        }
+        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Response error:', err);
+        recordFailure(metadata.channelId, 'claude', err);
         requestMetadata.delete(req);
       });
 
-      const isSseResponse = proxyRes.headers['content-type']?.includes('text/event-stream');
-      let buffer = '';
-      let tokenData = createTokenData();
-      let usageRecorded = false;
-      const streamRecoveryState = createClaudeStreamRecoveryState();
-      const usageObservation = {
-        sawAnyUsage: false,
-        sawMessageStartUsage: false,
-        sawNonInitialUsage: false
-      };
-      const parsedStream = createDecodedStream(proxyRes);
-
-      function recordUsageIfReady() {
-        if (usageRecorded) return false;
-
-        const result = publishUsageLog({
-          source: 'claude',
-          metadata,
-          model: tokenData.model,
-          tokens: {
-            input: tokenData.inputTokens,
-            output: tokenData.outputTokens,
-            cacheCreation: tokenData.cacheCreation,
-            cacheRead: tokenData.cacheRead,
-            cached: tokenData.cachedTokens,
-            reasoning: tokenData.reasoningTokens,
-            total: tokenData.totalTokens
-          },
-          calculateCost,
-          broadcastLog,
-          recordRequest,
-          recordSuccess,
-          allowBroadcast: true
-        });
-
-        if (!result) return false;
-        usageRecorded = true;
-        return true;
-      }
-
-      parsedStream.on('data', (chunk) => {
-        if (isResponseClosed) return;
-
-        buffer += chunk.toString('utf8');
-
-        if (!isSseResponse) {
-          return;
+      const statusCode = Number(proxyRes.statusCode) || 200;
+      proxyRes.on('end', () => {
+        if (statusCode >= 400) {
+          recordFailure(metadata.channelId, 'claude', new Error(`Claude upstream HTTP ${statusCode}`));
+        } else {
+          recordSuccess(metadata.channelId, 'claude');
         }
-
-        const events = buffer.split('\n\n');
-        buffer = events.pop() || '';
-
-        events.forEach(eventText => {
-          if (!eventText.trim()) return;
-
-          try {
-            const lines = eventText.split('\n');
-            let eventType = '';
-            let data = '';
-
-            lines.forEach(line => {
-              if (line.startsWith('event:')) {
-                eventType = line.substring(6).trim();
-              } else if (line.startsWith('data:')) {
-                data = line.substring(5).trim();
-              }
-            });
-
-            if (!data || data === '[DONE]') return;
-
-            const parsed = JSON.parse(data);
-            mergeClaudeStreamEvent(streamRecoveryState, eventType, parsed);
-            const usage = parseSSEUsage(parsed, eventType);
-            if (usage.tokens) {
-              usageObservation.sawAnyUsage = true;
-              if (eventType === 'message_start') {
-                usageObservation.sawMessageStartUsage = true;
-              } else {
-                usageObservation.sawNonInitialUsage = true;
-              }
-            }
-            mergeUsageIntoTokenData(tokenData, usage);
-
-            if (usage.isDone && (!isSseResponse || usageObservation.sawNonInitialUsage)) {
-              recordUsageIfReady();
-            }
-          } catch (err) {
-          }
-        });
+        requestMetadata.delete(req);
       });
-
-      const finalize = () => {
-        if (!isResponseClosed) {
-          requestMetadata.delete(req);
-        }
-        if (typeof req.__releaseChannel === 'function') {
-          req.__releaseChannel();
-        }
-      };
-
-      parsedStream.on('end', () => {
-        void (async () => {
-          if (!isSseResponse) {
-            try {
-              const parsed = JSON.parse(buffer);
-              const usage = parseNonStreamingUsage(parsed);
-              mergeUsageIntoTokenData(tokenData, usage);
-            } catch (err) {
-            }
-          } else {
-            const assistantMessage = buildAssistantMessageFromStreamState(streamRecoveryState);
-            const shouldRecoverUsage = Boolean(assistantMessage)
-              && (!usageObservation.sawAnyUsage || (usageObservation.sawMessageStartUsage && !usageObservation.sawNonInitialUsage));
-
-            if (shouldRecoverUsage) {
-              try {
-                const recoveredUsage = await recoverClaudeUsageViaCountTokens({
-                  baseUrl: req.selectedChannel?.baseUrl || '',
-                  apiKey: req.effectiveApiKey || '',
-                  requestBody: req.body,
-                  assistantMessage
-                });
-                if (recoveredUsage) {
-                  tokenData.model = tokenData.model || streamRecoveryState.model || '';
-                  tokenData.inputTokens = Number(recoveredUsage.inputTokens || 0);
-                  tokenData.outputTokens = Number(recoveredUsage.outputTokens || 0);
-                  // Let publishUsageLog recompute Claude totals from the recovered
-                  // prompt/output pair plus any cache fields already present.
-                  tokenData.totalTokens = 0;
-                } else {
-                  tokenData.model = tokenData.model || streamRecoveryState.model || '';
-                  clearTokenDataUsage(tokenData);
-                }
-              } catch (error) {
-                tokenData.model = tokenData.model || streamRecoveryState.model || '';
-                clearTokenDataUsage(tokenData);
-              }
-            }
-          }
-
-          recordUsageIfReady();
-          finalize();
-        })();
-      });
-
-      parsedStream.on('error', (err) => {
-        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
-          console.error('Proxy response error:', err);
-        }
-        // 记录响应错误
-        if (metadata && metadata.channelId) {
-          recordFailure(metadata.channelId, 'claude', err);
-        }
-        publishFailureLog({
-          source: 'claude',
-          metadata,
-          message: err.message,
-          error: err,
-          statusCode: proxyRes.statusCode,
-          stage: 'response_stream',
-          broadcastLog
-        });
-        isResponseClosed = true;
-        finalize();
+      proxyRes.on('error', (err) => {
+        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Proxy response error:', err);
+        recordFailure(metadata.channelId, 'claude', err);
+        requestMetadata.delete(req);
       });
     });
 
@@ -616,20 +378,6 @@ async function startProxyServer(options = {}) {
       if (req && req.selectedChannel && req.selectedChannel.id) {
         recordFailure(req.selectedChannel.id, 'claude', err);
       }
-      const metadata = req ? requestMetadata.get(req) : null;
-      publishFailureLog({
-        source: 'claude',
-        metadata: metadata || {
-          channel: req?.selectedChannel?.name,
-          channelId: req?.selectedChannel?.id,
-          model: req?.body?.model
-        },
-        message: err.message,
-        error: err,
-        statusCode: 502,
-        stage: 'proxy',
-        broadcastLog
-      });
       if (res && !res.headersSent) {
         res.status(502).json({
           error: 'Proxy error: ' + err.message,

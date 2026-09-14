@@ -114,7 +114,6 @@ afterEach(async () => {
 
 it('enables persistent managed mode before synchronizing providers', async () => {
   const proxy = require('../../../src/platforms/drivers/omp/proxy-implementation');
-  expect(require.cache[require.resolve('../../../src/platforms/drivers/omp/session-log-observer')]).toBeUndefined();
 
   const result = await proxy.startOmpProxyServer({ activeChannelId: 'channel-a' });
 

@@ -173,6 +173,21 @@ describe('recordRequest', () => {
     expect(stats.byChannel['ch-test'].name).toBe('TestChannel');
   });
 
+  test('keeps native usage in aggregate stats without creating an undefined channel', () => {
+    const mod = loadService();
+    mod.recordRequest(makeRequest({ channel: 'Unknown', channelId: undefined }));
+
+    const stats = mod.getStatistics();
+    expect(stats.global.totalRequests).toBe(1);
+    expect(stats.byToolType['claude-code'].requests).toBe(1);
+    expect(stats.byToolType['claude-code'].channels).not.toHaveProperty('undefined');
+    expect(stats.byChannel).not.toHaveProperty('undefined');
+
+    const daily = mod.getTodayStatistics();
+    expect(daily.byToolType['claude-code'].channels || {}).not.toHaveProperty('undefined');
+    expect(daily.byChannel).not.toHaveProperty('undefined');
+  });
+
   test('updates byModel stats', () => {
     const mod = loadService();
     mod.recordRequest(makeRequest({ model: 'claude-3-5-sonnet' }));

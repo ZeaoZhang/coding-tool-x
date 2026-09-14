@@ -424,6 +424,7 @@
     "channels": "legacy:gemini",
     "proxy": "legacy:gemini",
     "statistics": "legacy:gemini",
+    "nativeLogs": "legacy:gemini",
     "resourceSync": "legacy:gemini",
     "nativeConfig": "legacy:gemini",
     "projectConfig": "legacy:gemini",

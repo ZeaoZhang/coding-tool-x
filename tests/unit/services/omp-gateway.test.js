@@ -412,8 +412,7 @@ describe('OMP gateway data plane', () => {
       allocateChannel: vi.fn(async () => channel),
       releaseChannel,
       recordSuccess: vi.fn(),
-      recordFailure: vi.fn(),
-      publishUsageLog: vi.fn()
+      recordFailure: vi.fn()
     });
 
     try {
@@ -561,15 +560,13 @@ describe('OMP gateway data plane', () => {
     const releaseChannel = vi.fn();
     const recordSuccess = vi.fn();
     const recordFailure = vi.fn();
-    const publishFailureLog = vi.fn();
     const secret = 'retry-gateway-secret';
     const gateway = createOmpGateway({
       getChannels: () => channels,
       allocateChannel,
       releaseChannel,
       recordSuccess,
-      recordFailure,
-      publishFailureLog
+      recordFailure
     });
 
     try {
@@ -602,14 +599,6 @@ describe('OMP gateway data plane', () => {
       ]);
       expect(recordFailure).toHaveBeenCalledWith('first', 'omp');
       expect(recordSuccess).toHaveBeenCalledWith('second', 'omp');
-      expect(publishFailureLog).toHaveBeenCalledWith(expect.objectContaining({
-        source: 'omp',
-        channel: 'First',
-        model: 'gpt-5',
-        statusCode: 503,
-        stage: 'dynamic-switch',
-        routingGroup: 'primary'
-      }));
     } finally {
       await gateway.stop();
       await close(firstUpstream);
@@ -617,7 +606,7 @@ describe('OMP gateway data plane', () => {
     }
   });
 
-  it('publishes managed streaming usage from the gateway with route and actual-channel context', async () => {
+  it('does not publish managed streaming usage from the gateway', async () => {
     const upstream = http.createServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'text/event-stream' });
       res.end([
@@ -639,15 +628,13 @@ describe('OMP gateway data plane', () => {
       enabled: true,
       model: 'gpt-5'
     };
-    const publishUsageLog = vi.fn();
     const secret = 'usage-gateway-secret';
     const gateway = createOmpGateway({
       getChannels: () => [channel],
       allocateChannel: vi.fn(async () => channel),
       releaseChannel: vi.fn(),
       recordSuccess: vi.fn(),
-      recordFailure: vi.fn(),
-      publishUsageLog
+      recordFailure: vi.fn()
     });
 
     try {
@@ -668,21 +655,6 @@ describe('OMP gateway data plane', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(publishUsageLog).toHaveBeenCalledWith(expect.objectContaining({
-        source: 'omp',
-        channel: 'Usage Channel',
-        channelId: 'channel-usage',
-        originalProvider: 'openai',
-        originalModel: 'gpt-5',
-        model: 'gpt-5.1',
-        providerApi: 'openai-responses',
-        routingGroup: 'usage',
-        tokens: expect.objectContaining({
-          input: 12,
-          output: 7,
-          total: 19
-        })
-      }));
     } finally {
       await gateway.stop();
       await close(upstream);

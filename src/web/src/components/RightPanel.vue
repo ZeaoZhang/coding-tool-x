@@ -75,7 +75,7 @@
     <div
       v-if="showChannels && supportsCapability('channels')"
       class="channels-section"
-      :class="{ 'full-height': !showLogs || !proxyRunning }"
+      :class="{ 'full-height': !showLogs || !supportsCapability('nativeLogs') }"
     >
       <div class="panel-header">
         <div class="header-title">
@@ -115,7 +115,7 @@
     </div>
 
     <!-- 实时日志区域 -->
-    <div v-if="showLogs && (supportsCapability('channels') || supportsCapability('proxy'))" class="logs-section" :class="{ 'full-height': !showChannels }">
+    <div v-if="showLogs && supportsCapability('nativeLogs')" class="logs-section" :class="{ 'full-height': !showChannels }">
       <ProxyLogs :source="currentChannel" />
     </div>
   </div>

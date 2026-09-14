@@ -3,7 +3,7 @@ const { startServer } = require('../server');
 const open = require('open');
 const { getProxyStatus } = require('../platforms/drivers/claude/proxy-implementation');
 const { loadConfig } = require('../config/loader');
-const { shutdownOmpSessionLogObserver } = require('../platforms/drivers/omp/session-log-observer');
+const { shutdownNativeCliLogObserver } = require('../server/services/native-log-observer');
 const { hasHostFlag } = require('../utils/cli-flags');
 
 async function handleUI() {
@@ -98,7 +98,7 @@ async function handleUI() {
         console.error(chalk.yellow(`[WARN] OMP 动态网关退出清理失败: ${err.message}`));
       }
 
-      shutdownOmpSessionLogObserver();
+      shutdownNativeCliLogObserver();
       console.log(chalk.green('[OK] Web UI 已停止\n'));
       process.exit(0);
     });

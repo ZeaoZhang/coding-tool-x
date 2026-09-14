@@ -500,6 +500,20 @@ describe('legacy drivers', () => {
     expect(driver.status).toBeUndefined();
   });
 
+  test.each(['claude', 'codex', 'gemini', 'opencode', 'omp'])(
+    'default registry creates the %s native log driver from its capability',
+    platform => {
+      const driver = getDriverRegistry().create(`legacy:${platform}`, {
+        platform,
+        capability: 'nativeLogs'
+      });
+
+      expect(driver).toEqual(expect.objectContaining({ platform, capability: 'nativeLogs' }));
+      expect(typeof driver.createNativeLogCursor).toBe('function');
+      expect(typeof driver.createNativeLogCursor().readNewEvents).toBe('function');
+    }
+  );
+
   test('runtime caches stubs for registry-backed legacy drivers', () => {
     const requireImpl = makeRequire({
       './codex/channels-implementation': {

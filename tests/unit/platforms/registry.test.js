@@ -168,6 +168,15 @@ test('built-in manifests expose MCP and valid prompt capabilities', () => {
   expect(registry.getPublicDefinition('omp').capabilities.prompts).toBeUndefined();
 });
 
+test('built-in manifests expose native CLI log capabilities through the registry', () => {
+  const registry = createPlatformRegistry({ userFile: { platforms: [] } });
+
+  for (const platform of ['claude', 'codex', 'gemini', 'opencode', 'omp']) {
+    expect(registry.getCapability(platform, 'nativeLogs')).toBe(`legacy:${platform}`);
+    expect(registry.getPublicDefinition(platform).capabilities.nativeLogs).toBe(true);
+  }
+});
+
 test('explicit registry inputs do not load PATHS configuration', () => {
   const originalLoad = Module._load;
   Module._load = (request, parent, isMain) => request === '../config/paths'

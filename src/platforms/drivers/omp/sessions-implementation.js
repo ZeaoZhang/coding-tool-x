@@ -773,6 +773,7 @@ module.exports = {
   forkSession,
   getAllSessions,
   getOmpUsageEvents,
+  getOmpSessionPaths,
   getProjectAndSessionCounts,
   getProjects,
   getRecentSessions,

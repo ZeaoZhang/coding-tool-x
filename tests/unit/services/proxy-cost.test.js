@@ -1,8 +1,10 @@
 'use strict';
 
-const { calculateCost: calculateCodexCost } = require('../../../src/platforms/drivers/codex/proxy-implementation');
-const { calculateCost: calculateOpenCodeCost } = require('../../../src/platforms/drivers/opencode/proxy-implementation');
-const { calculateCost: calculateGeminiCost } = require('../../../src/platforms/drivers/gemini/proxy-implementation');
+const { calculateUsageCost } = require('../../../src/server/services/usage-log-utils');
+
+const calculateCodexCost = (model, tokens) => calculateUsageCost('codex', model, tokens);
+const calculateOpenCodeCost = (model, tokens) => calculateUsageCost('opencode', model, tokens);
+const calculateGeminiCost = (model, tokens) => calculateUsageCost('gemini', model, tokens);
 
 describe('proxy cost calculation', () => {
   test('Codex uses GPT-5.5 API pricing including cached input', () => {

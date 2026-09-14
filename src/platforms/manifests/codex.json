@@ -425,6 +425,7 @@
     "channels": "legacy:codex",
     "proxy": "legacy:codex",
     "statistics": "legacy:codex",
+    "nativeLogs": "legacy:codex",
     "resourceSync": "legacy:codex",
     "nativeConfig": "legacy:codex",
     "projectConfig": "legacy:codex",

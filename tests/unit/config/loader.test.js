@@ -155,7 +155,8 @@ describe('loadConfig with no config file', () => {
   });
   it('returns default native CLI log settings', () => {
     expect(loadConfig().nativeCliLogs).toEqual({
-      omp: { enabled: true, intervalSeconds: 5 }
+      enabled: true,
+      intervalSeconds: 5
     });
   });
 
@@ -204,16 +205,22 @@ describe('loadConfig with existing config file', () => {
     expect(loadConfig().statsInterval).toBe(DEFAULT_CONFIG.statsInterval);
   });
   it('fills missing native CLI log fields from defaults', () => {
-    writeConfig({ nativeCliLogs: { omp: { enabled: false } } });
+    writeConfig({ nativeCliLogs: { enabled: false } });
     expect(loadConfig().nativeCliLogs).toEqual({
-      omp: { enabled: false, intervalSeconds: 5 }
+      enabled: false,
+      intervalSeconds: 5
     });
+  });
+
+  it('migrates the legacy OMP-only native log settings to the global shape', () => {
+    writeConfig({ nativeCliLogs: { omp: { enabled: false, intervalSeconds: 12 } } });
+    expect(loadConfig().nativeCliLogs).toEqual({ enabled: false, intervalSeconds: 12 });
   });
 
   it('falls back for invalid native CLI log values without failing', () => {
     writeConfig({
       nativeCliLogs: {
-        omp: { enabled: 'false', intervalSeconds: 61, ignored: true },
+        enabled: 'false', intervalSeconds: 61, ignored: true,
         ignored: true
       }
     });
@@ -224,9 +231,7 @@ describe('loadConfig with existing config file', () => {
     expect(normalizeNativeCliLogs({
       omp: { enabled: true, intervalSeconds: 12, extra: 'ignored' },
       extra: true
-    })).toEqual({
-      omp: { enabled: true, intervalSeconds: 12 }
-    });
+    })).toEqual({ enabled: true, intervalSeconds: 12 });
   });
 
   it('merges ports: user value overrides, others keep defaults', () => {
@@ -337,6 +342,13 @@ describe('saveConfig', () => {
     expect(parsed.nested).toEqual(cfg.nested);
     expect(parsed.flag).toBe(true);
     expect(parsed.defaultSpeedTestModels).toEqual(DEFAULT_CONFIG.defaultSpeedTestModels);
+  });
+
+  it('writes legacy native CLI log settings in the global shape', () => {
+    saveConfig({ nativeCliLogs: { omp: { enabled: false, intervalSeconds: 12 } } });
+    const parsed = JSON.parse(fs.readFileSync(testConfigFile, 'utf8'));
+    expect(parsed.nativeCliLogs).toEqual({ enabled: false, intervalSeconds: 12 });
+    expect(parsed.nativeCliLogs).not.toHaveProperty('omp');
   });
 
   it('omits native Claude projectsDir while persisting speed test models', () => {

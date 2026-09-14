@@ -46,7 +46,7 @@ beforeEach(() => {
     }
   };
 
-  const logPath = require.resolve('../../../src/server/services/proxy-log-helper');
+  const logPath = require.resolve('../../../src/server/services/usage-log-utils');
   require.cache[logPath] = {
     id: logPath,
     filename: logPath,
@@ -79,7 +79,7 @@ afterEach(() => {
     MODULE_PATH,
     '../../../src/server/services/statistics-service',
     '../../../src/platforms/drivers/omp/sessions-implementation',
-    '../../../src/server/services/proxy-log-helper'
+    '../../../src/server/services/usage-log-utils'
   ].forEach((mod) => {
     try {
       delete require.cache[require.resolve(mod)];

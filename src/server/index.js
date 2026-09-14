@@ -22,7 +22,7 @@ const { createApiRequestLogger } = require('./services/request-logger');
 const { inspectWebBuildState, ensureWebDistReady } = require('./services/web-build');
 const { ensureHttpsCredentials } = require('./services/https-cert');
 const notificationHooks = require('../platforms/notification-hooks');
-const { configureOmpSessionLogObserver } = require('../platforms/drivers/omp/session-log-observer');
+const { configureNativeCliLogObserver } = require('./services/native-log-observer');
 
 function getInquirer() {
   return require('inquirer');
@@ -290,10 +290,10 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
 
   // 附加 WebSocket 服务器到同一个端口
   attachWebSocketServer(server, { host });
-  const nativeCliLogs = config.nativeCliLogs?.omp || {};
-  configureOmpSessionLogObserver({
+  const nativeCliLogs = config.nativeCliLogs || {};
+  configureNativeCliLogObserver({
     enabled: nativeCliLogs.enabled !== false,
-    intervalMs: (Number.isInteger(nativeCliLogs.intervalSeconds) ? nativeCliLogs.intervalSeconds : 5) * 1000
+    intervalSeconds: Number.isInteger(nativeCliLogs.intervalSeconds) ? nativeCliLogs.intervalSeconds : 5
   });
   console.log(`   ${wsProtocol}://localhost:${port}/ws\n`);
 

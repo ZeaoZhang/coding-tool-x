@@ -474,6 +474,7 @@
     "channels": "legacy:omp",
     "proxy": "legacy:omp",
     "statistics": "legacy:omp",
+    "nativeLogs": "legacy:omp",
     "nativeConfig": "legacy:omp",
     "projectConfig": "legacy:omp",
     "api": "legacy:omp",

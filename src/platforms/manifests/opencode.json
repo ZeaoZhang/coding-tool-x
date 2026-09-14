@@ -398,6 +398,7 @@
     "channels": "legacy:opencode",
     "proxy": "legacy:opencode",
     "statistics": "legacy:opencode",
+    "nativeLogs": "legacy:opencode",
     "resourceSync": "legacy:opencode",
     "nativeConfig": "legacy:opencode",
     "projectConfig": "legacy:opencode",
