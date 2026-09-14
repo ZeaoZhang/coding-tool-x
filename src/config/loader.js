@@ -101,27 +101,24 @@ function isPlainObject(value) {
 
 function normalizeNativeCliLogs(value, fallback = DEFAULT_CONFIG.nativeCliLogs) {
   const defaultConfig = isPlainObject(fallback) ? fallback : DEFAULT_CONFIG.nativeCliLogs;
-  const defaultOmp = isPlainObject(defaultConfig?.omp)
-    ? defaultConfig.omp
-    : DEFAULT_CONFIG.nativeCliLogs.omp;
-  const inputOmp = isPlainObject(value?.omp) ? value.omp : {};
-  const fallbackEnabled = typeof defaultOmp.enabled === 'boolean' ? defaultOmp.enabled : true;
-  const fallbackInterval = Number.isInteger(defaultOmp.intervalSeconds)
-    && defaultOmp.intervalSeconds >= 1
-    && defaultOmp.intervalSeconds <= 60
-    ? defaultOmp.intervalSeconds
+  const defaultInput = isPlainObject(defaultConfig.omp) ? defaultConfig.omp : defaultConfig;
+  const legacyOmp = isPlainObject(value?.omp) ? value.omp : {};
+  const input = isPlainObject(value) && !isPlainObject(value.omp) ? value : legacyOmp;
+  const fallbackEnabled = typeof defaultInput.enabled === 'boolean' ? defaultInput.enabled : true;
+  const fallbackInterval = Number.isInteger(defaultInput.intervalSeconds)
+    && defaultInput.intervalSeconds >= 1
+    && defaultInput.intervalSeconds <= 60
+    ? defaultInput.intervalSeconds
     : 5;
-  const intervalSeconds = Number.isInteger(inputOmp.intervalSeconds)
-    && inputOmp.intervalSeconds >= 1
-    && inputOmp.intervalSeconds <= 60
-    ? inputOmp.intervalSeconds
+  const intervalSeconds = Number.isInteger(input.intervalSeconds)
+    && input.intervalSeconds >= 1
+    && input.intervalSeconds <= 60
+    ? input.intervalSeconds
     : fallbackInterval;
 
   return {
-    omp: {
-      enabled: typeof inputOmp.enabled === 'boolean' ? inputOmp.enabled : fallbackEnabled,
-      intervalSeconds
-    }
+    enabled: typeof input.enabled === 'boolean' ? input.enabled : fallbackEnabled,
+    intervalSeconds
   };
 }
 
@@ -136,6 +133,9 @@ function normalizeConfigForSave(config = {}) {
     DEFAULT_CONFIG.defaultSpeedTestModels,
     normalized.defaultSpeedTestModels
   );
+  if (Object.prototype.hasOwnProperty.call(normalized, 'nativeCliLogs')) {
+    normalized.nativeCliLogs = normalizeNativeCliLogs(normalized.nativeCliLogs);
+  }
   return normalized;
 }
 

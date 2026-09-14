@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { PATHS } = require('../../config/paths');
-const { normalizeUsageTokens, resolveActualModel } = require('./proxy-log-helper');
+const { normalizeUsageTokens, resolveActualModel } = require('./usage-log-utils');
 
 // 北京时间辅助（UTC+8），统一所有时间计算
 const CST_OFFSET_MS = 8 * 60 * 60 * 1000;
@@ -387,18 +387,22 @@ function recordRequest(requestData) {
     }
     updateStats(globalStats.byToolType[toolType], tokens, cost);
 
-    // 按工具类型 -> 渠道统计
-    if (!globalStats.byToolType[toolType].channels[channelId]) {
-      globalStats.byToolType[toolType].channels[channelId] = {
-        name: channel,
-        ...initStatsObject(),
-        firstUsed: timestamp,
-        lastUsed: timestamp
-      };
-    } else {
-      globalStats.byToolType[toolType].channels[channelId].lastUsed = timestamp;
+    // Native CLI logs do not always contain a reliable configured-channel id.
+    // Keep aggregate totals in that case instead of creating an "undefined"
+    // channel bucket.
+    if (channelId) {
+      if (!globalStats.byToolType[toolType].channels[channelId]) {
+        globalStats.byToolType[toolType].channels[channelId] = {
+          name: channel,
+          ...initStatsObject(),
+          firstUsed: timestamp,
+          lastUsed: timestamp
+        };
+      } else {
+        globalStats.byToolType[toolType].channels[channelId].lastUsed = timestamp;
+      }
+      updateStats(globalStats.byToolType[toolType].channels[channelId], tokens, cost);
     }
-    updateStats(globalStats.byToolType[toolType].channels[channelId], tokens, cost);
 
     // 按工具类型 -> 模型统计
     if (!globalStats.byToolType[toolType].models[modelKey]) {
@@ -406,19 +410,21 @@ function recordRequest(requestData) {
     }
     updateStats(globalStats.byToolType[toolType].models[modelKey], tokens, cost);
 
-    // 按渠道统计（跨工具）
-    if (!globalStats.byChannel[channelId]) {
-      globalStats.byChannel[channelId] = {
-        toolType,
-        name: channel,
-        ...initStatsObject(),
-        firstUsed: timestamp,
-        lastUsed: timestamp
-      };
-    } else {
-      globalStats.byChannel[channelId].lastUsed = timestamp;
+    // Cross-tool channel totals follow the same rule.
+    if (channelId) {
+      if (!globalStats.byChannel[channelId]) {
+        globalStats.byChannel[channelId] = {
+          toolType,
+          name: channel,
+          ...initStatsObject(),
+          firstUsed: timestamp,
+          lastUsed: timestamp
+        };
+      } else {
+        globalStats.byChannel[channelId].lastUsed = timestamp;
+      }
+      updateStats(globalStats.byChannel[channelId], tokens, cost);
     }
-    updateStats(globalStats.byChannel[channelId], tokens, cost);
 
     // 按模型统计（跨工具）
     if (!globalStats.byModel[modelKey]) {
@@ -467,17 +473,19 @@ function recordRequest(requestData) {
     }
     updateStats(dailyStats.byToolType[toolType], tokens, cost);
 
-    // 按工具类型 -> 渠道
-    if (!dailyStats.byToolType[toolType].channels) {
-      dailyStats.byToolType[toolType].channels = {};
+    // 按工具类型 -> 渠道；原生日志没有可靠渠道时只保留平台级统计。
+    if (channelId) {
+      if (!dailyStats.byToolType[toolType].channels) {
+        dailyStats.byToolType[toolType].channels = {};
+      }
+      if (!dailyStats.byToolType[toolType].channels[channelId]) {
+        dailyStats.byToolType[toolType].channels[channelId] = {
+          name: channel,
+          ...initStatsObject()
+        };
+      }
+      updateStats(dailyStats.byToolType[toolType].channels[channelId], tokens, cost);
     }
-    if (!dailyStats.byToolType[toolType].channels[channelId]) {
-      dailyStats.byToolType[toolType].channels[channelId] = {
-        name: channel,
-        ...initStatsObject()
-      };
-    }
-    updateStats(dailyStats.byToolType[toolType].channels[channelId], tokens, cost);
 
     // 按工具类型 -> 模型
     if (!dailyStats.byToolType[toolType].models) {
@@ -488,15 +496,17 @@ function recordRequest(requestData) {
     }
     updateStats(dailyStats.byToolType[toolType].models[modelKey], tokens, cost);
 
-    // 按渠道统计
-    if (!dailyStats.byChannel[channelId]) {
-      dailyStats.byChannel[channelId] = {
-        toolType,
-        name: channel,
-        ...initStatsObject()
-      };
+    // 按渠道统计；不创建 undefined 渠道桶。
+    if (channelId) {
+      if (!dailyStats.byChannel[channelId]) {
+        dailyStats.byChannel[channelId] = {
+          toolType,
+          name: channel,
+          ...initStatsObject()
+        };
+      }
+      updateStats(dailyStats.byChannel[channelId], tokens, cost);
     }
-    updateStats(dailyStats.byChannel[channelId], tokens, cost);
 
     // 按模型统计
     if (!dailyStats.byModel[modelKey]) {

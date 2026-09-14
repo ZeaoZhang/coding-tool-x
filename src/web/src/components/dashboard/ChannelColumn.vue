@@ -791,7 +791,7 @@ const managedConfigCapability = computed(() => (
 ))
 
 function supportsKnownRuntime() {
-  return supportsCapability('channels') || supportsCapability('proxy')
+  return supportsCapability('nativeLogs')
 }
 
 function getLogTitle(log) {

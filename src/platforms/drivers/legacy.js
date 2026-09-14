@@ -6,6 +6,7 @@ const MODULE_PATHS = Object.freeze({
     sessions: './claude/sessions-implementation',
     proxy: './claude/proxy-implementation',
     statistics: './claude/statistics-implementation',
+    nativeLogs: './claude/native-logs',
     nativeConfig: './claude/native-config-implementation',
     projectConfig: './claude/project-config'
   }),
@@ -14,6 +15,7 @@ const MODULE_PATHS = Object.freeze({
     sessions: './codex/sessions-implementation',
     proxy: './codex/proxy-implementation',
     statistics: './codex/statistics-implementation',
+    nativeLogs: './codex/native-logs',
     nativeConfig: './codex/native-config-implementation',
     projectConfig: './codex/project-config'
   }),
@@ -22,6 +24,7 @@ const MODULE_PATHS = Object.freeze({
     sessions: './gemini/sessions-implementation',
     proxy: './gemini/proxy-implementation',
     statistics: './gemini/statistics-implementation',
+    nativeLogs: './gemini/native-logs',
     nativeConfig: './gemini/native-config-implementation',
     projectConfig: './gemini/project-config'
   }),
@@ -30,6 +33,7 @@ const MODULE_PATHS = Object.freeze({
     sessions: './opencode/sessions-implementation',
     proxy: './opencode/proxy-implementation',
     statistics: './opencode/statistics-implementation',
+    nativeLogs: './opencode/native-logs',
     nativeConfig: './opencode/native-config-implementation',
     projectConfig: './opencode/project-config'
   }),
@@ -38,6 +42,7 @@ const MODULE_PATHS = Object.freeze({
     sessions: './omp/sessions-implementation',
     proxy: './omp/proxy-implementation',
     statistics: './omp/statistics-implementation',
+    nativeLogs: './omp/native-logs',
     nativeConfig: './omp/native-config-implementation',
     projectConfig: './omp/project-config'
   })
@@ -621,6 +626,13 @@ function createLegacyDriver({ platform, capability, requireImpl = require, manif
     const capabilityModule = requireImpl(`./${platform}/${capability}`);
     if (typeof capabilityModule?.createDriver === 'function') {
       return capabilityModule.createDriver({ ...context, platform, capability, requireImpl });
+    }
+  }
+
+  if (useBuiltInDrivers && capability === 'nativeLogs') {
+    const capabilityModule = requireImpl(`./${platform}/native-logs`);
+    if (typeof capabilityModule?.createDriver === 'function') {
+      return capabilityModule.createDriver({ ...context, platform, capability, manifest, requireImpl });
     }
   }
 

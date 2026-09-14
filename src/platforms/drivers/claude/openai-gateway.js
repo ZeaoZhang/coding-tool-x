@@ -2,10 +2,7 @@ const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
 const { HttpsProxyAgent } = require('https-proxy-agent');
-const { broadcastLog } = require('../../../server/websocket-server');
-const { recordRequest } = require('../../../server/services/statistics-service');
 const { recordSuccess, recordFailure } = require('../../../server/services/channel-health');
-const { publishUsageLog, publishFailureLog } = require('../../../server/services/proxy-log-helper');
 const { createDecodedStream } = require('../../../server/services/response-decoder');
 const { parseNonStreamingUsage } = require('../../../shared/response-usage-parser');
 const { convertClaudeToOpenCodePayload } = require('../opencode/gateway-converter');
@@ -296,18 +293,6 @@ function buildClaudeUsageFromTokens(tokens = {}) {
     output_tokens: Number(tokens.output || 0),
     cache_creation_input_tokens: Number(tokens.cacheCreation || 0),
     cache_read_input_tokens: Number(tokens.cacheRead || tokens.cached || 0)
-  };
-}
-
-function buildPublishTokensFromClaudeUsage(usage = {}) {
-  return {
-    input: Number(usage.input_tokens || 0),
-    output: Number(usage.output_tokens || 0),
-    cacheCreation: Number(usage.cache_creation_input_tokens || 0),
-    cacheRead: Number(usage.cache_read_input_tokens || 0),
-    cached: Number(usage.cache_read_input_tokens || 0),
-    reasoning: 0,
-    total: 0
   };
 }
 
@@ -1086,31 +1071,8 @@ async function relayChatStreamAsClaude(upstreamResponse, res, fallbackModel = ''
   });
 }
 
-function publishClaudeGatewayUsage(metadata, message, calculateCost) {
-  return publishUsageLog({
-    source: 'claude',
-    metadata,
-    model: message?.model || '',
-    tokens: buildPublishTokensFromClaudeUsage(message?.usage || {}),
-    calculateCost,
-    broadcastLog,
-    recordRequest,
-    recordSuccess,
-    allowBroadcast: true
-  });
-}
-
-function reportGatewayFailure({ channel, metadata, res, statusCode, message, error, stage, onDone }) {
+function reportGatewayFailure({ channel, res, statusCode, message, error, onDone }) {
   recordFailure(channel.id, 'claude', error || new Error(message));
-  publishFailureLog({
-    source: 'claude',
-    metadata,
-    message,
-    error,
-    statusCode,
-    stage,
-    broadcastLog
-  });
   sendAnthropicError(res, statusCode, message);
   if (typeof onDone === 'function') {
     onDone();
@@ -1118,7 +1080,7 @@ function reportGatewayFailure({ channel, metadata, res, statusCode, message, err
   return true;
 }
 
-async function handleClaudeOpenAiGatewayRequest({ req, res, channel, effectiveKey, calculateCost, onDone }) {
+async function handleClaudeOpenAiGatewayRequest({ req, res, channel, effectiveKey, onDone }) {
   const pathname = getRequestPathname(req?.url || '');
   if (!isClaudeMessagesPath(pathname)) {
     return false;
@@ -1132,21 +1094,12 @@ async function handleClaudeOpenAiGatewayRequest({ req, res, channel, effectiveKe
     return true;
   }
 
-  const requestId = `claude-openai-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  const startTime = Date.now();
   const targetApi = resolveClaudeGatewayTargetApi(channel);
   const converted = convertClaudeToOpenCodePayload({
     payload: req.body,
     options: { targetApi }
   });
   const upstreamModel = converted?.requestBody?.model || req.body.model || '';
-  const metadata = {
-    id: requestId,
-    channel: channel?.name,
-    channelId: channel?.id,
-    startTime,
-    requestModel: upstreamModel
-  };
   const wantsStream = req.body.stream === true;
   const targetUrl = buildOpenAiTargetUrl(channel?.baseUrl || '', converted.endpoint || '/v1/responses');
   const headers = buildOpenAiHeaders(effectiveKey, {
@@ -1171,12 +1124,10 @@ async function handleClaudeOpenAiGatewayRequest({ req, res, channel, effectiveKe
         const upstreamMessage = parsedError?.error?.message || parsedError?.message || rawBody || `HTTP ${upstream.statusCode}`;
         return reportGatewayFailure({
           channel,
-          metadata,
           res,
           statusCode: upstream.statusCode,
           message: String(upstreamMessage).slice(0, 1000),
           error: new Error(String(upstreamMessage).slice(0, 200)),
-          stage: 'openai_gateway_upstream',
           onDone
         });
       }
@@ -1185,9 +1136,7 @@ async function handleClaudeOpenAiGatewayRequest({ req, res, channel, effectiveKe
         ? await relayChatStreamAsClaude(upstream.response, res, upstreamModel)
         : await relayResponsesStreamAsClaude(upstream.response, res, upstreamModel);
 
-      if (message) {
-        publishClaudeGatewayUsage(metadata, message, calculateCost);
-      }
+      recordSuccess(channel.id, 'claude');
       if (typeof onDone === 'function') {
         onDone();
       }
@@ -1207,12 +1156,10 @@ async function handleClaudeOpenAiGatewayRequest({ req, res, channel, effectiveKe
       const upstreamMessage = parsedBody?.error?.message || parsedBody?.message || upstream.rawBody || `HTTP ${upstream.statusCode}`;
       return reportGatewayFailure({
         channel,
-        metadata,
         res,
         statusCode: upstream.statusCode,
         message: String(upstreamMessage).slice(0, 1000),
         error: new Error(String(upstreamMessage).slice(0, 200)),
-        stage: 'openai_gateway_upstream',
         onDone
       });
     }
@@ -1220,12 +1167,10 @@ async function handleClaudeOpenAiGatewayRequest({ req, res, channel, effectiveKe
     if (!parsedBody || typeof parsedBody !== 'object') {
       return reportGatewayFailure({
         channel,
-        metadata,
         res,
         statusCode: 502,
         message: 'Invalid OpenAI gateway response',
         error: new Error('Invalid OpenAI gateway response'),
-        stage: 'openai_gateway_parse',
         onDone
       });
     }
@@ -1235,7 +1180,7 @@ async function handleClaudeOpenAiGatewayRequest({ req, res, channel, effectiveKe
       : buildClaudeMessageFromResponses(parsedBody, upstreamModel);
 
     res.json(message);
-    publishClaudeGatewayUsage(metadata, message, calculateCost);
+    recordSuccess(channel.id, 'claude');
     if (typeof onDone === 'function') {
       onDone();
     }
@@ -1243,12 +1188,10 @@ async function handleClaudeOpenAiGatewayRequest({ req, res, channel, effectiveKe
   } catch (error) {
     return reportGatewayFailure({
       channel,
-      metadata,
       res,
       statusCode: 502,
       message: `OpenAI gateway network error: ${error.message}`,
       error,
-      stage: 'openai_gateway_network',
       onDone
     });
   }

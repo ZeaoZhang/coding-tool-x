@@ -287,15 +287,13 @@ describe('SettingsDrawer platform catalog', () => {
     expect(wrapper.vm.defaultSpeedTestModels).toEqual(modelData.defaultSpeedTestModels)
   })
 
-  it('hydrates and saves native OMP log settings from both advanced save paths', async () => {
+  it('hydrates and saves global native CLI log settings from both advanced save paths', async () => {
     const advancedConfig = {
       ports: {},
       maxLogs: 120,
       statsInterval: 15,
       enableSessionBinding: true,
-      nativeCliLogs: {
-        omp: { enabled: false, intervalSeconds: 12 }
-      }
+      nativeCliLogs: { enabled: false, intervalSeconds: 12 }
     }
     fetchMock.mockImplementation(async (url) => {
       if (url === '/api/config/advanced') {
@@ -321,22 +319,20 @@ describe('SettingsDrawer platform catalog', () => {
     expect(wrapper.vm.originalAdvancedSettings.nativeCliLogs).toEqual(advancedConfig.nativeCliLogs)
     expect(wrapper.vm.portsChanged).toBe(false)
 
-    wrapper.vm.advancedSettings.nativeCliLogs.omp.intervalSeconds = 13
+    wrapper.vm.advancedSettings.nativeCliLogs.intervalSeconds = 13
     expect(wrapper.vm.portsChanged).toBe(true)
 
     await wrapper.vm.handleSavePorts()
     const advancedPosts = () => fetchMock.mock.calls
       .filter(([, options]) => options?.method === 'POST' && options?.body)
       .map(([, options]) => JSON.parse(options.body))
-    expect(advancedPosts().at(-1).nativeCliLogs).toEqual({
-      omp: { enabled: false, intervalSeconds: 13 }
-    })
+    expect(advancedPosts().at(-1).nativeCliLogs).toEqual({ enabled: false, intervalSeconds: 13 })
     expect(wrapper.vm.portsChanged).toBe(false)
 
     await wrapper.vm.handleSessionBindingChange(false)
     expect(advancedPosts().at(-1)).toEqual(expect.objectContaining({
       enableSessionBinding: false,
-      nativeCliLogs: { omp: { enabled: false, intervalSeconds: 13 } }
+      nativeCliLogs: { enabled: false, intervalSeconds: 13 }
     }))
   })
 })

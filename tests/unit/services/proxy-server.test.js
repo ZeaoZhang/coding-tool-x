@@ -29,8 +29,6 @@ let getEffectiveApiKey;
 let persistProxyRequestSnapshot;
 let persistClaudeRequestTemplate;
 let loadClaudeRequestTemplate;
-let publishUsageLog;
-let publishFailureLog;
 let redirectModel;
 let normalizeGatewaySourceType;
 let ensureOpenAiStreamUsage;
@@ -60,8 +58,6 @@ function createStubs() {
   persistProxyRequestSnapshot = vi.fn();
   persistClaudeRequestTemplate = vi.fn();
   loadClaudeRequestTemplate = vi.fn();
-  publishUsageLog = vi.fn(() => ({ model: 'MiniMax-M2.5', tokens: { input: 43, output: 32 } }));
-  publishFailureLog = vi.fn();
   redirectModel = vi.fn((model) => model);
   normalizeGatewaySourceType = vi.fn((value, fallback = 'claude') => value || fallback);
   ensureOpenAiStreamUsage = vi.fn((body) => {
@@ -122,10 +118,6 @@ function createStubs() {
       persistProxyRequestSnapshot,
       persistClaudeRequestTemplate,
       loadClaudeRequestTemplate
-    }],
-    ['../../../src/server/services/proxy-log-helper', {
-      publishUsageLog,
-      publishFailureLog
     }],
     ['../../../src/shared/proxy-utils', {
       redirectModel,
@@ -291,7 +283,7 @@ describe('clearRedirectCache', () => {
 });
 
 describe('startProxyServer', () => {
-  it('parses non-stream Anthropic JSON usage and publishes realtime usage logs', async () => {
+  it('parses non-stream Anthropic JSON usage without publishing proxy usage logs', async () => {
     upstreamServer = http.createServer((req, res) => {
       let requestBody = '';
       req.on('data', (chunk) => {
@@ -341,28 +333,10 @@ describe('startProxyServer', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(publishFailureLog).not.toHaveBeenCalled();
-    expect(publishUsageLog).toHaveBeenCalledWith(expect.objectContaining({
-      source: 'claude',
-      metadata: expect.objectContaining({
-        channel: 'MiniMax Claude',
-        channelId: 'channel-minimax',
-        requestModel: 'glm-5-local'
-      }),
-      model: 'MiniMax-M2.5',
-      tokens: expect.objectContaining({
-        input: 43,
-        output: 32,
-        cacheCreation: 0,
-        cacheRead: 0,
-        cached: 0,
-        reasoning: 0,
-        total: 0
-      })
-    }));
+    expect(recordRequest).not.toHaveBeenCalled();
   });
 
-  it('recovers complete tokens for Anthropic streams that only expose message_start usage', async () => {
+  it('recovers complete tokens for Anthropic streams without publishing proxy usage logs', async () => {
     upstreamServer = http.createServer((req, res) => {
       let requestBody = '';
       req.on('data', (chunk) => {
@@ -476,24 +450,7 @@ describe('startProxyServer', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    expect(publishUsageLog).toHaveBeenCalledWith(expect.objectContaining({
-      source: 'claude',
-      metadata: expect.objectContaining({
-        channel: 'GLM Claude Stream',
-        channelId: 'channel-glm-stream',
-        requestModel: 'glm-5-local'
-      }),
-      model: 'MiniMax-M2.5',
-      tokens: expect.objectContaining({
-        input: 43,
-        output: 32,
-        cacheCreation: 0,
-        cacheRead: 0,
-        cached: 0,
-        reasoning: 0,
-        total: 0
-      })
-    }));
+    expect(recordRequest).not.toHaveBeenCalled();
   });
 
   it('uses chat completions for non-official OpenAI-compatible Claude routes so reply and cache tokens survive', async () => {
@@ -585,21 +542,7 @@ describe('startProxyServer', () => {
         cache_read_input_tokens: 16
       }
     });
-    expect(publishUsageLog).toHaveBeenCalledWith(expect.objectContaining({
-      source: 'claude',
-      metadata: expect.objectContaining({
-        channel: 'OpenAI Claude Gateway',
-        channelId: 'channel-openai',
-        requestModel: 'claude-sonnet-4-6'
-      }),
-      model: 'MiniMax-M2.5',
-      tokens: expect.objectContaining({
-        input: 27,
-        output: 32,
-        cacheRead: 16,
-        cached: 16
-      })
-    }));
+    expect(recordRequest).not.toHaveBeenCalled();
   });
 
   it('streams chat completion tool calls back as Claude SSE events and records full usage', async () => {
@@ -732,20 +675,6 @@ describe('startProxyServer', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    expect(publishUsageLog).toHaveBeenCalledWith(expect.objectContaining({
-      source: 'claude',
-      metadata: expect.objectContaining({
-        channel: 'OpenAI Claude Stream',
-        channelId: 'channel-openai-stream',
-        requestModel: 'claude-sonnet-4-6'
-      }),
-      model: 'MiniMax-M2.5',
-      tokens: expect.objectContaining({
-        input: 10,
-        output: 5,
-        cacheRead: 4,
-        cached: 4
-      })
-    }));
+    expect(recordRequest).not.toHaveBeenCalled();
   });
 });

@@ -465,6 +465,7 @@
     "channels": "legacy:claude",
     "proxy": "legacy:claude",
     "statistics": "legacy:claude",
+    "nativeLogs": "legacy:claude",
     "resourceSync": "legacy:claude",
     "nativeConfig": "legacy:claude",
     "projectConfig": "legacy:claude",

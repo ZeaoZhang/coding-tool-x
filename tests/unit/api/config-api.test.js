@@ -23,18 +23,16 @@ let normalizeNativeCliLogs;
 let router;
 
 function injectStubs() {
-  normalizeNativeCliLogs = vi.fn((value, fallback = { omp: { enabled: true, intervalSeconds: 5 } }) => {
-    const input = value?.omp || {};
-    const base = fallback?.omp || { enabled: true, intervalSeconds: 5 };
+  normalizeNativeCliLogs = vi.fn((value, fallback = { enabled: true, intervalSeconds: 5 }) => {
+    const input = value?.omp || value || {};
+    const base = fallback?.omp || fallback || { enabled: true, intervalSeconds: 5 };
     return {
-      omp: {
-        enabled: typeof input.enabled === 'boolean' ? input.enabled : base.enabled,
-        intervalSeconds: Number.isInteger(input.intervalSeconds)
-          && input.intervalSeconds >= 1
-          && input.intervalSeconds <= 60
-          ? input.intervalSeconds
-          : base.intervalSeconds
-      }
+      enabled: typeof input.enabled === 'boolean' ? input.enabled : base.enabled,
+      intervalSeconds: Number.isInteger(input.intervalSeconds)
+        && input.intervalSeconds >= 1
+        && input.intervalSeconds <= 60
+        ? input.intervalSeconds
+        : base.intervalSeconds
     };
   });
   loadConfig = vi.fn(() => ({
@@ -51,7 +49,7 @@ function injectStubs() {
       gemini: ['gemini-2.5-pro'],
     },
     modelDiscovery: { useV1ModelsEndpoint: false },
-    nativeCliLogs: { omp: { enabled: true, intervalSeconds: 5 } },
+    nativeCliLogs: { enabled: true, intervalSeconds: 5 },
     currentProject: 'test',
   }));
   saveConfig = vi.fn();
@@ -76,7 +74,7 @@ function injectStubs() {
         gemini: ['gemini-2.5-pro'],
       },
       modelDiscovery: { useV1ModelsEndpoint: false },
-      nativeCliLogs: { omp: { enabled: true, intervalSeconds: 5 } },
+      nativeCliLogs: { enabled: true, intervalSeconds: 5 },
     },
   };
 
@@ -152,7 +150,8 @@ describe('GET /advanced', () => {
     expect(data).toHaveProperty('pricing');
     expect(data).toHaveProperty('modelDiscovery');
     expect(data.nativeCliLogs).toEqual({
-      omp: { enabled: true, intervalSeconds: 5 }
+      enabled: true,
+      intervalSeconds: 5
     });
     expect(loadConfig).toHaveBeenCalled();
   });
@@ -232,20 +231,22 @@ describe('POST /advanced', () => {
     const res = mockRes();
     handler(mockReq({
       body: {
-        nativeCliLogs: { omp: { enabled: false, intervalSeconds: 12 } }
+        nativeCliLogs: { enabled: false, intervalSeconds: 12 }
       }
     }), res);
 
     expect(saveConfig.mock.calls[0][0].nativeCliLogs).toEqual({
-      omp: { enabled: false, intervalSeconds: 12 }
+      enabled: false,
+      intervalSeconds: 12
     });
     expect(res._data.config.nativeCliLogs).toEqual({
-      omp: { enabled: false, intervalSeconds: 12 }
+      enabled: false,
+      intervalSeconds: 12
     });
   });
 
   test('preserves the current native CLI log setting when omitted', () => {
-    const currentNativeCliLogs = { omp: { enabled: false, intervalSeconds: 17 } };
+    const currentNativeCliLogs = { enabled: false, intervalSeconds: 17 };
     loadConfig.mockReturnValueOnce({
       ports: { proxy: 9960, webUI: 9999 },
       pricing: {},
@@ -267,7 +268,7 @@ describe('POST /advanced', () => {
     const handler = findHandler(router, 'post', '/advanced');
     const res = mockRes();
     handler(mockReq({
-      body: { nativeCliLogs: { omp: { intervalSeconds } } }
+      body: { nativeCliLogs: { intervalSeconds } }
     }), res);
 
     expect(res.statusCode).toBe(400);
@@ -278,18 +279,18 @@ describe('POST /advanced', () => {
     const handler = findHandler(router, 'post', '/advanced');
     const res = mockRes();
     handler(mockReq({
-      body: { nativeCliLogs: { omp: { enabled: 'false' } } }
+      body: { nativeCliLogs: { enabled: 'false' } }
     }), res);
 
     expect(res.statusCode).toBe(400);
     expect(saveConfig).not.toHaveBeenCalled();
   });
 
-  test('returns 400 when native log omp config is not an object', () => {
+  test('returns 400 when native log config is not an object', () => {
     const handler = findHandler(router, 'post', '/advanced');
     const res = mockRes();
     handler(mockReq({
-      body: { nativeCliLogs: { omp: 'invalid' } }
+      body: { nativeCliLogs: 'invalid' }
     }), res);
 
     expect(res.statusCode).toBe(400);

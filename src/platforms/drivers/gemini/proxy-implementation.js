@@ -2,30 +2,17 @@ const express = require('express');
 const httpProxy = require('http-proxy');
 const http = require('http');
 const chalk = require('chalk');
-const { broadcastLog, broadcastSchedulerState } = require('../../../server/websocket-server');
+const { broadcastSchedulerState } = require('../../../server/websocket-server');
 const { allocateChannel, releaseChannel, getSchedulerState } = require('../../../server/services/channel-scheduler');
 const { recordSuccess, recordFailure } = require('../../../server/services/channel-health');
 const { loadConfig } = require('../../../config/loader');
-const DEFAULT_CONFIG = require('../../../config/default');
-const { resolveModelPricing, calculateTokenCost } = require('../../../server/utils/pricing');
-const { recordRequest: recordGeminiRequest } = require('./statistics-implementation');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('../../../server/services/proxy-runtime');
-const { createDecodedStream } = require('../../../server/services/response-decoder');
 const {
   getEffectiveApiKey,
   getGeminiProxyExcludedChannelIds = () => []
 } = require('./channels-implementation');
 const { persistProxyRequestSnapshot } = require('../../../server/services/request-logger');
-const { publishUsageLog, publishFailureLog } = require('../../../server/services/proxy-log-helper');
 const { redirectModel: redirectModelBase, resolveTargetUrl } = require('../../../shared/proxy-utils');
-const {
-  parseSSEUsage,
-  parseNonStreamingUsage,
-  splitSSEEvents,
-  parseSSEEventText,
-  mergeUsageIntoTokenData,
-  createTokenData
-} = require('../../../shared/response-usage-parser');
 const { attachServerShutdownHandling, expediteServerShutdown } = require('../../../server/services/server-shutdown');
 
 let proxyServer = null;
@@ -40,7 +27,6 @@ const requestMetadata = new Map();
 const printedGeminiRedirectCache = new Map();
 
 
-const GEMINI_BASE_PRICING = DEFAULT_CONFIG.pricing.gemini;
 const jsonBodyParser = express.json({
   limit: '100mb',
   verify: (req, res, buf) => {
@@ -179,14 +165,6 @@ function isHttpErrorStatus(statusCode) {
   return Number.isFinite(code) && (code < 200 || code >= 300);
 }
 
-/**
- * 计算请求成本
- */
-function calculateCost(model, tokens) {
-  const pricing = resolveModelPricing('gemini', model, {}, GEMINI_BASE_PRICING);
-  return calculateTokenCost(pricing, tokens, GEMINI_BASE_PRICING);
-}
-
 // 启动 Gemini 代理服务器
 async function startGeminiProxyServer(options = {}) {
   // options.preserveStartTime - 是否保留现有的启动时间（用于切换渠道时）
@@ -285,14 +263,6 @@ async function startGeminiProxyServer(options = {}) {
         const effectiveKey = getEffectiveApiKey(channel);
         if (!effectiveKey) {
           release();
-          publishFailureLog({
-            source: 'gemini',
-            channel: channel.name,
-            message: 'API key not configured or expired. Please update your channel key.',
-            statusCode: 401,
-            stage: 'preflight',
-            broadcastLog
-          });
           return res.status(401).json({
             error: {
               message: 'API key not configured or expired. Please update your channel key.',
@@ -371,20 +341,6 @@ async function startGeminiProxyServer(options = {}) {
           release();
           if (err) {
             recordFailure(channel.id, 'gemini', err);
-            const metadata = requestMetadata.get(req) || {
-              channel: channel.name,
-              channelId: channel.id,
-              startTime: Date.now()
-            };
-            publishFailureLog({
-              source: 'gemini',
-              metadata,
-              message: err.message,
-              error: err,
-              statusCode: 502,
-              stage: 'proxy_web',
-              broadcastLog
-            });
             console.error('Gemini proxy error:', err);
             if (res && !res.headersSent) {
               res.status(502).json({
@@ -398,13 +354,6 @@ async function startGeminiProxyServer(options = {}) {
         });
       } catch (error) {
         console.error('Gemini channel allocation error:', error);
-        publishFailureLog({
-          source: 'gemini',
-          message: error.message || 'No Gemini channel available',
-          statusCode: 503,
-          stage: 'allocate_channel',
-          broadcastLog
-        });
         if (!res.headersSent) {
           res.status(503).json({
             error: {
@@ -416,170 +365,35 @@ async function startGeminiProxyServer(options = {}) {
       }
     });
 
-    // 监听代理响应 (OpenAI 兼容格式)
+    // 代理响应只负责维护传输健康状态；实时日志和 usage 来自 CLI 原生日志。
     proxy.on('proxyRes', (proxyRes, req, res) => {
       const metadata = requestMetadata.get(req);
-      if (!metadata) {
-        return;
-      }
+      if (!metadata) return;
 
-      // 检查响应是否已关闭
       if (res.writableEnded || res.destroyed) {
         requestMetadata.delete(req);
         return;
       }
 
-      // 标记响应是否已关闭
-      let isResponseClosed = false;
-
-      // 监听响应关闭事件
-      res.on('close', () => {
-        isResponseClosed = true;
-        requestMetadata.delete(req);
-      });
-
-      // 监听响应错误事件
+      res.on('close', () => requestMetadata.delete(req));
       res.on('error', (err) => {
-        isResponseClosed = true;
-        // 忽略客户端断开连接的常见错误
-        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
-          console.error('Response error:', err);
-        }
+        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Response error:', err);
+        recordFailure(metadata.channelId, 'gemini', err);
         requestMetadata.delete(req);
       });
 
-      let buffer = '';
-      let tokenData = createTokenData();
-      let usageRecorded = false;
       const upstreamStatusCode = Number(proxyRes.statusCode) || 200;
-      const isUpstreamError = isHttpErrorStatus(upstreamStatusCode);
-      const parsedStream = createDecodedStream(proxyRes);
-
-      function recordUsageIfReady() {
-        if (usageRecorded) {
-          return false;
+      proxyRes.on('end', () => {
+        if (isHttpErrorStatus(upstreamStatusCode)) {
+          recordFailure(metadata.channelId, 'gemini', new Error(`Gemini upstream HTTP ${upstreamStatusCode}`));
+        } else {
+          recordSuccess(metadata.channelId, 'gemini');
         }
-
-        if (!tokenData.model && metadata.modelFromUrl) {
-          tokenData.model = metadata.modelFromUrl;
-        }
-
-        const result = publishUsageLog({
-          source: 'gemini',
-          metadata,
-          model: tokenData.model,
-          tokens: {
-            input: tokenData.inputTokens,
-            output: tokenData.outputTokens,
-            cacheCreation: tokenData.cacheCreation,
-            cacheRead: tokenData.cacheRead,
-            cached: tokenData.cachedTokens,
-            reasoning: tokenData.reasoningTokens,
-            total: tokenData.totalTokens
-          },
-          calculateCost,
-          broadcastLog,
-          recordRequest: recordGeminiRequest,
-          recordSuccess,
-          allowBroadcast: true
-        });
-
-        if (!result) {
-          return false;
-        }
-
-        usageRecorded = true;
-        return true;
-      }
-
-      parsedStream.on('data', (chunk) => {
-        if (isResponseClosed) {
-          return;
-        }
-
-        buffer += chunk.toString('utf8');
-
-        // 检查是否是 SSE 流
-        if (!isUpstreamError && proxyRes.headers['content-type']?.includes('text/event-stream')) {
-          const parsedEvents = splitSSEEvents(buffer);
-          buffer = parsedEvents.remainder;
-
-          parsedEvents.events.forEach((eventText) => {
-            if (!eventText.trim()) return;
-
-            try {
-              const event = parseSSEEventText(eventText);
-              if (!event) return;
-
-              const parsed = JSON.parse(event.data);
-              const usage = parseSSEUsage(parsed, event.eventType);
-              mergeUsageIntoTokenData(tokenData, usage);
-
-              if (usage.isDone) {
-                recordUsageIfReady();
-              }
-            } catch (err) {
-              // 忽略解析错误
-            }
-          });
-        }
+        requestMetadata.delete(req);
       });
-
-      parsedStream.on('end', () => {
-        if (isUpstreamError) {
-          const message = extractGeminiUpstreamErrorMessage(buffer, upstreamStatusCode);
-          const error = new Error(buffer.trim() || message);
-          recordFailure(metadata.channelId, 'gemini', error);
-          publishFailureLog({
-            source: 'gemini',
-            metadata,
-            message,
-            error,
-            statusCode: upstreamStatusCode,
-            stage: 'upstream_response',
-            broadcastLog
-          });
-
-          if (!isResponseClosed) {
-            requestMetadata.delete(req);
-          }
-          return;
-        }
-
-        // 如果不是流式响应，尝试从完整响应中解析
-        if (!proxyRes.headers['content-type']?.includes('text/event-stream')) {
-          try {
-            const parsed = JSON.parse(buffer);
-            const usage = parseNonStreamingUsage(parsed);
-            mergeUsageIntoTokenData(tokenData, usage);
-          } catch (err) {
-            // 忽略解析错误
-          }
-        }
-
-        recordUsageIfReady();
-
-        if (!isResponseClosed) {
-          requestMetadata.delete(req);
-        }
-      });
-
-      parsedStream.on('error', (err) => {
-        // 忽略代理响应错误（可能是网络问题）
-        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
-          console.error('Proxy response error:', err);
-        }
-        isResponseClosed = true;
+      proxyRes.on('error', (err) => {
+        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Proxy response error:', err);
         recordFailure(metadata.channelId, 'gemini', err);
-        publishFailureLog({
-          source: 'gemini',
-          metadata,
-          message: err.message,
-          error: err,
-          statusCode: proxyRes.statusCode,
-          stage: 'response_stream',
-          broadcastLog
-        });
         requestMetadata.delete(req);
       });
     });
@@ -592,19 +406,6 @@ async function startGeminiProxyServer(options = {}) {
         releaseChannel(req.selectedChannel.id, 'gemini');
         broadcastSchedulerState('gemini', getSchedulerState('gemini'));
       }
-      publishFailureLog({
-        source: 'gemini',
-        metadata: (req && requestMetadata.get(req)) || {
-          channel: req?.selectedChannel?.name,
-          channelId: req?.selectedChannel?.id,
-          model: req?.body?.model
-        },
-        message: err.message,
-        error: err,
-        statusCode: 502,
-        stage: 'proxy',
-        broadcastLog
-      });
       if (res && !res.headersSent) {
         res.status(502).json({
           error: {
@@ -715,7 +516,6 @@ module.exports = {
   stopGeminiProxyServer,
   getGeminiProxyStatus,
   clearGeminiRedirectCache,
-  calculateCost,
   _test: {
     buildVertexAiV1Path,
     extractGeminiUpstreamErrorMessage,

@@ -7,22 +7,8 @@ const httpProxy = require('http-proxy');
 const { URL } = require('url');
 const { allocateChannel, releaseChannel } = require('../../../server/services/channel-scheduler');
 const { recordSuccess, recordFailure } = require('../../../server/services/channel-health');
-const { recordRequest: recordOmpRequest } = require('./statistics-implementation');
-const {
-  createTokenData,
-  mergeUsageIntoTokenData,
-  parseNonStreamingUsage,
-  parseSSEEventText,
-  parseSSEUsage,
-  splitSSEEvents
-} = require('../../../shared/response-usage-parser');
-const {
-  publishFailureLog: publishSharedFailureLog,
-  publishUsageLog: publishSharedUsageLog
-} = require('../../../server/services/proxy-log-helper');
 const { attachServerShutdownHandling, expediteServerShutdown } = require('../../../server/services/server-shutdown');
 const { resolveOmpGatewayRoute } = require('./gateway-routing');
-const { broadcastLog } = require('../../../server/websocket-server');
 
 const RETRYABLE_STATUS = new Set([401, 403, 429, 502, 503, 504]);
 const MAX_REQUEST_BYTES = 100 * 1024 * 1024;
@@ -221,96 +207,6 @@ function hasValidCapability(req, parsedUrl, route) {
   return candidates.some(candidate => constantTimeEqual(candidate, route.capability));
 }
 
-function mergeParsedUsage(tokenData, value, eventType = '') {
-  if (Array.isArray(value)) {
-    value.forEach(item => mergeParsedUsage(tokenData, item, eventType));
-    return;
-  }
-  mergeUsageIntoTokenData(
-    tokenData,
-    eventType ? parseSSEUsage(value, eventType) : parseNonStreamingUsage(value)
-  );
-}
-
-function createResponseUsageMonitor(contentType = '') {
-  const tokenData = createTokenData();
-  const streaming = String(contentType).toLowerCase().includes('text/event-stream');
-  const chunks = [];
-  let bufferedBytes = 0;
-  let sseBuffer = '';
-  let observationDisabled = false;
-
-  const parseEvent = (eventText) => {
-    const event = parseSSEEventText(eventText);
-    if (!event) return;
-    try {
-      mergeParsedUsage(tokenData, JSON.parse(event.data), event.eventType);
-    } catch {
-      // Usage observation must never alter or reject the transparent response.
-    }
-  };
-
-  return {
-    observe(chunk) {
-      if (observationDisabled) return;
-      if (streaming) {
-        if (Buffer.byteLength(sseBuffer) + chunk.length > MAX_REQUEST_BYTES) {
-          observationDisabled = true;
-          sseBuffer = '';
-          return;
-        }
-        sseBuffer += chunk.toString('utf8');
-        const split = splitSSEEvents(sseBuffer);
-        split.events.forEach(parseEvent);
-        sseBuffer = split.remainder;
-      } else if (bufferedBytes + chunk.length <= MAX_REQUEST_BYTES) {
-        chunks.push(Buffer.from(chunk));
-        bufferedBytes += chunk.length;
-      } else {
-        observationDisabled = true;
-        chunks.length = 0;
-      }
-    },
-    finish() {
-      if (observationDisabled) {
-        return {
-          model: tokenData.model,
-          tokens: {
-            input: tokenData.inputTokens,
-            output: tokenData.outputTokens,
-            cacheCreation: tokenData.cacheCreation,
-            cacheRead: tokenData.cacheRead,
-            cached: tokenData.cachedTokens,
-            reasoning: tokenData.reasoningTokens,
-            total: tokenData.totalTokens
-          }
-        };
-      }
-      if (streaming) {
-        parseEvent(sseBuffer);
-      } else if (chunks.length > 0) {
-        try {
-          mergeParsedUsage(tokenData, JSON.parse(Buffer.concat(chunks).toString('utf8')));
-        } catch {
-          // Non-JSON responses are valid passthrough responses without usage.
-        }
-      }
-      return {
-        model: tokenData.model,
-        tokens: {
-          input: tokenData.inputTokens,
-          output: tokenData.outputTokens,
-          cacheCreation: tokenData.cacheCreation,
-          cacheRead: tokenData.cacheRead,
-          cached: tokenData.cachedTokens,
-          reasoning: tokenData.reasoningTokens,
-          total: tokenData.totalTokens
-        }
-      };
-    }
-  };
-}
-
 function closeServer(server, forceAfterMs = 1000) {
   if (!server) return Promise.resolve();
   return new Promise((resolve, reject) => {
@@ -332,59 +228,6 @@ function createOmpGateway(options = {}) {
   const release = options.releaseChannel || releaseChannel;
   const onSuccess = options.recordSuccess || recordSuccess;
   const onFailure = options.recordFailure || recordFailure;
-  const publishUsage = options.publishUsageLog || ((data) => {
-    const enrich = (payload) => broadcastLog({
-      ...payload,
-      originalProvider: data.originalProvider,
-      providerApi: data.providerApi,
-      routingGroup: data.routingGroup,
-      actualChannelId: data.channelId,
-      upstreamModel: data.model,
-      switchReason: data.switchReason || undefined,
-      attemptedChannels: data.attemptedChannels
-    });
-    return publishSharedUsageLog({
-      source: 'omp',
-      metadata: {
-        id: data.requestId,
-        channel: data.channel,
-        channelId: data.channelId,
-        originalModel: data.originalModel,
-        startTime: data.startTime
-      },
-      model: data.model || data.originalModel,
-      tokens: data.tokens,
-      broadcastLog: enrich,
-      recordRequest: recordOmpRequest,
-      recordSuccess: null
-    });
-  });
-  const publishFailure = options.publishFailureLog || ((data) => {
-    const enrich = (payload) => broadcastLog({
-      ...payload,
-      originalProvider: data.originalProvider,
-      providerApi: data.providerApi,
-      routingGroup: data.routingGroup,
-      actualChannelId: data.channelId,
-      switchReason: data.switchReason || undefined,
-      attemptedChannels: data.attemptedChannels
-    });
-    return publishSharedFailureLog({
-      source: 'omp',
-      metadata: {
-        id: data.requestId,
-        channel: data.channel,
-        model: data.model
-      },
-      channel: data.channel,
-      model: data.model,
-      message: data.message,
-      error: data.error,
-      statusCode: data.statusCode,
-      stage: data.stage,
-      broadcastLog: enrich
-    });
-  });
   const websocketProxy = httpProxy.createProxyServer({
     ws: true,
     changeOrigin: true,
@@ -512,11 +355,7 @@ function createOmpGateway(options = {}) {
     if (signal?.aborted) throw createAbortError();
     const modelId = extractModelId(body, req.headers['content-type']);
     const attemptedIds = [];
-    const attemptedChannels = [];
-    const requestId = `omp-${crypto.randomUUID()}`;
-    const startTime = Date.now();
     let lastError = null;
-    let switchReason = '';
 
     for (let attempt = 0; attempt < 2; attempt++) {
       let channel;
@@ -532,7 +371,6 @@ function createOmpGateway(options = {}) {
         break;
       }
       attemptedIds.push(channel.id);
-      attemptedChannels.push(channel.name || channel.id);
 
       try {
         const result = await forwardAttempt(req, route, channel, body, signal);
@@ -541,22 +379,6 @@ function createOmpGateway(options = {}) {
           result.response.resume();
           result.release();
           onFailure(channel.id, 'omp');
-          switchReason = `http-${result.statusCode}`;
-          publishFailure({
-            source: 'omp',
-            requestId,
-            channel: channel.name || channel.id,
-            channelId: channel.id,
-            originalProvider: route.providerKey,
-            providerApi: route.providerApi,
-            routingGroup: route.routingGroup,
-            model: modelId,
-            statusCode: result.statusCode,
-            stage: 'dynamic-switch',
-            switchReason,
-            attemptedChannels: [...attemptedChannels],
-            message: `OMP upstream returned HTTP ${result.statusCode}`
-          });
           lastError = Object.assign(new Error(`OMP upstream returned HTTP ${result.statusCode}`), {
             statusCode: result.statusCode
           });
@@ -564,7 +386,6 @@ function createOmpGateway(options = {}) {
         }
 
         res.writeHead(result.statusCode, result.response.headers);
-        const usageMonitor = createResponseUsageMonitor(result.response.headers['content-type']);
         await new Promise((resolve) => {
           let completed = false;
           const finish = (error) => {
@@ -573,45 +394,12 @@ function createOmpGateway(options = {}) {
             activeUpstreams.delete(result.response);
             result.release();
             if (result.statusCode < 400 && !error) {
-              const usage = usageMonitor.finish();
               onSuccess(channel.id, 'omp');
-              publishUsage({
-                source: 'omp',
-                requestId,
-                startTime,
-                channel: channel.name || channel.id,
-                channelId: channel.id,
-                originalProvider: route.providerKey,
-                providerApi: route.providerApi,
-                routingGroup: route.routingGroup,
-                originalModel: modelId,
-                model: usage.model || modelId,
-                tokens: usage.tokens,
-                switchReason,
-                attemptedChannels: [...attemptedChannels]
-              });
             } else {
               onFailure(channel.id, 'omp');
-              publishFailure({
-                source: 'omp',
-                requestId,
-                channel: channel.name || channel.id,
-                channelId: channel.id,
-                originalProvider: route.providerKey,
-                providerApi: route.providerApi,
-                routingGroup: route.routingGroup,
-                model: modelId,
-                error,
-                statusCode: result.statusCode,
-                stage: error ? 'response-stream' : 'upstream-response',
-                switchReason,
-                attemptedChannels: [...attemptedChannels],
-                message: error?.message || `OMP upstream returned HTTP ${result.statusCode}`
-              });
             }
             resolve();
           };
-          result.response.on('data', chunk => usageMonitor.observe(chunk));
           result.response.once('end', () => finish());
           result.response.once('close', () => finish(new Error('OMP upstream response closed early')));
           result.response.once('error', (error) => {
@@ -632,22 +420,6 @@ function createOmpGateway(options = {}) {
           break;
         }
         onFailure(channel.id, 'omp');
-        switchReason = error.code || error.message || 'connection-error';
-        publishFailure({
-          source: 'omp',
-          requestId,
-          channel: channel.name || channel.id,
-          channelId: channel.id,
-          originalProvider: route.providerKey,
-          providerApi: route.providerApi,
-          routingGroup: route.routingGroup,
-          model: modelId,
-          error,
-          statusCode: error.statusCode,
-          stage: attempt === 0 ? 'dynamic-switch' : 'upstream-connect',
-          switchReason,
-          attemptedChannels: [...attemptedChannels]
-        });
       }
     }
 
@@ -770,9 +542,6 @@ function createOmpGateway(options = {}) {
     }
 
     inflightRequests++;
-    const requestId = `omp-${crypto.randomUUID()}`;
-    const startTime = Date.now();
-    const websocketModel = normalizeModelId(channel.model || '');
     let released = false;
     let failed = false;
     let failureRecorded = false;
@@ -781,19 +550,6 @@ function createOmpGateway(options = {}) {
       if (failureRecorded) return;
       failureRecorded = true;
       onFailure(channel.id, 'omp');
-      publishFailure({
-        source: 'omp',
-        requestId,
-        channel: channel.name || channel.id,
-        channelId: channel.id,
-        originalProvider: route.providerKey,
-        providerApi: route.providerApi,
-        routingGroup: route.routingGroup,
-        model: websocketModel,
-        error,
-        stage: 'websocket',
-        attemptedChannels: [channel.name || channel.id]
-      });
     };
     const releaseOnce = () => {
       if (released) return;
@@ -801,20 +557,6 @@ function createOmpGateway(options = {}) {
       inflightRequests = Math.max(0, inflightRequests - 1);
       if (!failed) {
         onSuccess(channel.id, 'omp');
-        publishUsage({
-          source: 'omp',
-          requestId,
-          startTime,
-          channel: channel.name || channel.id,
-          channelId: channel.id,
-          originalProvider: route.providerKey,
-          providerApi: route.providerApi,
-          routingGroup: route.routingGroup,
-          originalModel: websocketModel,
-          model: websocketModel,
-          tokens: {},
-          attemptedChannels: [channel.name || channel.id]
-        });
       }
       release(channel.id, 'omp');
     };

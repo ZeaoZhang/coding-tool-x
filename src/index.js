@@ -204,9 +204,9 @@ function shutdownProcess(code = 0, error = null) {
   if (processShutdownPromise) return processShutdownPromise;
   processShutdownPromise = (async () => {
     try {
-      require('./platforms/drivers/omp/session-log-observer').shutdownOmpSessionLogObserver();
+      require('./server/services/native-log-observer').shutdownNativeCliLogObserver();
     } catch (observerError) {
-      console.error(chalk.yellow(`[WARN] OMP 原生会话日志退出清理失败: ${observerError.message}`));
+      console.error(chalk.yellow(`[WARN] CLI 原生会话日志退出清理失败: ${observerError.message}`));
     }
     await stopOwnedOmpGatewayBeforeExit();
     eventBus.emitSync('cli:shutdown', {});

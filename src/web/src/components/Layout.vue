@@ -488,6 +488,8 @@ const moreMenuOptions = [
 const currentRoute = computed(() => route.name)
 const currentChannel = computed(() => getRoutePlatform(route) || null)
 const { enabledPlatforms } = useEnabledCliPlatforms()
+const currentPlatform = computed(() => enabledPlatforms.value.find(platform => platform.key === currentChannel.value) || null)
+const supportsNativeLogs = computed(() => currentPlatform.value?.capabilities?.nativeLogs === true)
 const platformNavigation = computed(() => buildPlatformNavigation(enabledPlatforms.value))
 const routeViewKey = computed(() => route.path)
 const showChannels = ref(true)
@@ -496,7 +498,7 @@ const showLogs = ref(true)
 
 // 是否显示右侧面板（首页不显示）
 const shouldShowRightPanel = computed(() => {
-  return currentChannel.value && (showChannels.value || (showLogs.value && effectiveProxyRunning.value))
+  return currentChannel.value && (showChannels.value || (showLogs.value && supportsNativeLogs.value))
 })
 
 const showRecentDrawer = ref(false)

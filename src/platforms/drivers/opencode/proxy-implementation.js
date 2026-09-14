@@ -8,19 +8,15 @@ const path = require('path');
 const crypto = require('crypto');
 const zlib = require('zlib');
 const chalk = require('chalk');
-const { broadcastLog, broadcastSchedulerState } = require('../../../server/websocket-server');
+const { broadcastSchedulerState } = require('../../../server/websocket-server');
 const { allocateChannel, releaseChannel, getSchedulerState } = require('../../../server/services/channel-scheduler');
 const { recordSuccess, recordFailure } = require('../../../server/services/channel-health');
 const { loadConfig } = require('../../../config/loader');
-const DEFAULT_CONFIG = require('../../../config/default');
 const { PATHS, ensureStorageDirMigrated } = require('../../../config/paths');
-const { resolveModelPricing, calculateTokenCost } = require('../../../server/utils/pricing');
-const { recordRequest: recordOpenCodeRequest } = require('./statistics-implementation');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('../../../server/services/proxy-runtime');
 const { getEnabledChannels, getEffectiveApiKey } = require('./channels-implementation');
 const { persistProxyRequestSnapshot, loadClaudeRequestTemplate } = require('../../../server/services/request-logger');
 const { probeModelAvailability, fetchModelsFromProvider } = require('../../../server/services/model-detector');
-const { publishUsageLog, publishFailureLog } = require('../../../server/services/proxy-log-helper');
 const {
   redirectModel,
   resolveTargetUrl,
@@ -28,12 +24,6 @@ const {
 } = require('../../../shared/proxy-utils');
 const { attachServerShutdownHandling, expediteServerShutdown } = require('../../../server/services/server-shutdown');
 const { buildCodexTargetUrl, createCodexRequest } = require('../codex/wire');
-const {
-  parseSSEUsage,
-  parseNonStreamingUsage,
-  mergeUsageIntoTokenData,
-  createTokenData
-} = require('../../../shared/response-usage-parser');
 const { createClaudeRequest, buildClaudeTargetUrl, buildClaudeCountTokensTargetUrl, buildClaudeCountTokensHeaders } = require('../claude/wire');
 const { createGeminiRequest, buildGeminiTargetUrl, shouldUseGeminiCliFormat } = require('../gemini/wire');
 
@@ -48,9 +38,6 @@ const requestMetadata = new Map();
 // 格式: { channelId: { "originalModel": "redirectedModel", ... } }
 const printedRedirectCache = new Map();
 
-// OpenCode pricing is sourced from config/model-metadata.js.
-
-const OPENCODE_BASE_PRICING = DEFAULT_CONFIG.pricing.opencode || DEFAULT_CONFIG.pricing.codex;
 const CLAUDE_SESSION_USER_ID_TTL_MS = 60 * 60 * 1000;
 const CLAUDE_SESSION_USER_ID_CACHE_MAX = 2000;
 const claudeSessionUserIdCache = new Map();
@@ -61,14 +48,6 @@ let cachedClaudeUserId = '';
 
 // detectModelTier, redirectModel, resolveTargetUrl imported from shared/proxy-utils
 const resolveOpenCodeTarget = resolveTargetUrl;
-
-/**
- * 计算请求成本
- */
-function calculateCost(model, tokens) {
-  const pricing = resolveModelPricing('opencode', model, {}, OPENCODE_BASE_PRICING);
-  return calculateTokenCost(pricing, tokens, OPENCODE_BASE_PRICING);
-}
 
 const jsonBodyParser = express.json({
   limit: '100mb',
@@ -891,57 +870,10 @@ function reportOpenCodeGatewayFailure({
     recordFailure(channel.id, 'opencode', error);
   }
 
-  publishFailureLog({
-    source: 'opencode',
-    metadata: (req && requestMetadata.get(req)) || {
-      channel: channel?.name,
-      channelId: channel?.id,
-      model: model || req?.body?.model
-    },
-    channel: channel?.name,
-    model: model || req?.body?.model || '',
-    message,
-    error,
-    statusCode,
-    stage,
-    broadcastLog
-  });
-
   if (!res.headersSent) {
     sendOpenAiStyleError(res, statusCode, message, type);
   }
   return true;
-}
-
-function publishOpenCodeUsageLog({ requestId, channel, model, usage, startTime }) {
-  const parsedUsage = parseNonStreamingUsage({
-    model: model || '',
-    usage: usage && typeof usage === 'object' ? usage : {}
-  });
-  const parsedTokens = parsedUsage.tokens || {};
-
-  return publishUsageLog({
-    source: 'opencode',
-    metadata: {
-      id: requestId,
-      channel: channel?.name,
-      channelId: channel?.id,
-      startTime
-    },
-    model: parsedUsage.model || model || '',
-    tokens: {
-      input: Number(parsedTokens.input || 0),
-      output: Number(parsedTokens.output || 0),
-      cacheCreation: Number(parsedTokens.cacheCreation || 0),
-      cacheRead: Number(parsedTokens.cacheRead || 0),
-      cached: Number(parsedTokens.cached || 0),
-      reasoning: Number(parsedTokens.reasoning || 0),
-      total: Number(parsedTokens.total || 0)
-    },
-    calculateCost,
-    broadcastLog,
-    recordRequest: recordOpenCodeRequest
-  });
 }
 
 function setSseHeaders(res) {
@@ -1901,8 +1833,6 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
     });
   }
 
-  const requestId = `opencode-${Date.now()}-${Math.random()}`;
-  const startTime = Date.now();
   const originalPayload = (req.body && typeof req.body === 'object') ? req.body : {};
   const wantsStream = !!originalPayload.stream;
   const streamResponses = wantsStream && isResponsesPath(pathname);
@@ -1978,13 +1908,6 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
 
     try {
       const streamedResponseObject = await relayClaudeResponsesStream(streamUpstream.response, res, originalPayload.model || '');
-      publishOpenCodeUsageLog({
-        requestId,
-        channel,
-        model: streamedResponseObject?.model || originalPayload.model || '',
-        usage: streamedResponseObject?.usage || {},
-        startTime
-      });
       recordSuccess(channel.id, 'opencode');
     } catch (error) {
       reportOpenCodeGatewayFailure({
@@ -2059,31 +1982,16 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
     } else {
       res.json(responseObject);
     }
-    publishOpenCodeUsageLog({
-      requestId,
-      channel,
-      model: responseObject.model,
-      usage: responseObject.usage,
-      startTime
-    });
     recordSuccess(channel.id, 'opencode');
     return true;
   }
 
   const chatResponseObject = buildOpenAiChatCompletionsObject(parsedBody, originalPayload.model);
-  const loggingUsage = buildOpenAiResponsesObject(parsedBody, originalPayload.model).usage;
   if (wantsStream) {
     sendChatCompletionsSse(res, chatResponseObject);
   } else {
     res.json(chatResponseObject);
   }
-  publishOpenCodeUsageLog({
-    requestId,
-    channel,
-    model: chatResponseObject.model,
-    usage: loggingUsage,
-    startTime
-  });
   recordSuccess(channel.id, 'opencode');
   return true;
 }
@@ -2105,8 +2013,6 @@ async function handleCodexGatewayRequest(req, res, channel, effectiveKey) {
     });
   }
 
-  const requestId = `opencode-${Date.now()}-${Math.random()}`;
-  const startTime = Date.now();
   const originalPayload = (req.body && typeof req.body === 'object') ? req.body : {};
   const wantsStream = !!originalPayload.stream;
   const sessionId = extractSessionIdFromRequest(req, originalPayload);
@@ -2189,13 +2095,6 @@ async function handleCodexGatewayRequest(req, res, channel, effectiveKey) {
   try {
     if (wantsStream) {
       const completedResponse = await relayCodexResponsesStream(streamUpstream.response, res, originalPayload);
-      publishOpenCodeUsageLog({
-        requestId,
-        channel,
-        model: completedResponse?.model || targetModel,
-        usage: completedResponse?.usage || {},
-        startTime
-      });
       recordSuccess(channel.id, 'opencode');
       return true;
     }
@@ -2214,13 +2113,6 @@ async function handleCodexGatewayRequest(req, res, channel, effectiveKey) {
       });
     }
     res.json(responseObject);
-    publishOpenCodeUsageLog({
-      requestId,
-      channel,
-      model: responseObject.model || targetModel,
-      usage: responseObject.usage || {},
-      startTime
-    });
     recordSuccess(channel.id, 'opencode');
     return true;
   } catch (error) {
@@ -2909,8 +2801,6 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
     });
   }
 
-  const requestId = `opencode-${Date.now()}-${Math.random()}`;
-  const startTime = Date.now();
   const originalPayload = (req.body && typeof req.body === 'object') ? req.body : {};
   const wantsStream = !!originalPayload.stream;
   const streamResponses = wantsStream && isResponsesPath(pathname);
@@ -3008,13 +2898,6 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
 
     try {
       const streamedResponseObject = await relayGeminiResponsesStream(streamUpstream.response, res, originalPayload.model || targetModel);
-      publishOpenCodeUsageLog({
-        requestId,
-        channel,
-        model: streamedResponseObject?.model || originalPayload.model || targetModel || '',
-        usage: streamedResponseObject?.usage || {},
-        startTime
-      });
       recordSuccess(channel.id, 'opencode');
     } catch (error) {
       reportOpenCodeGatewayFailure({
@@ -3085,31 +2968,16 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
   if (isResponsesPath(pathname)) {
     const responseObject = buildOpenAiResponsesObjectFromGemini(parsedBody, targetModel);
     res.json(responseObject);
-    publishOpenCodeUsageLog({
-      requestId,
-      channel,
-      model: responseObject.model,
-      usage: responseObject.usage,
-      startTime
-    });
     recordSuccess(channel.id, 'opencode');
     return true;
   }
 
   const chatResponseObject = buildOpenAiChatCompletionsObjectFromGemini(parsedBody, targetModel);
-  const loggingUsage = buildOpenAiResponsesObjectFromGemini(parsedBody, targetModel).usage;
   if (wantsStream) {
     sendChatCompletionsSse(res, chatResponseObject);
   } else {
     res.json(chatResponseObject);
   }
-  publishOpenCodeUsageLog({
-    requestId,
-    channel,
-    model: chatResponseObject.model,
-    usage: loggingUsage,
-    startTime
-  });
   recordSuccess(channel.id, 'opencode');
   return true;
 }
@@ -3265,14 +3133,6 @@ async function startOpenCodeProxyServer(options = {}) {
         if (!effectiveKey) {
           releaseChannel(channel.id, 'opencode');
           broadcastSchedulerState('opencode', getSchedulerState('opencode'));
-          publishFailureLog({
-            source: 'opencode',
-            channel: channel.name,
-            message: 'API key not configured or expired. Please update your channel key.',
-            statusCode: 401,
-            stage: 'preflight',
-            broadcastLog
-          });
           return res.status(401).json({
             error: {
               message: 'API key not configured or expired. Please update your channel key.',
@@ -3381,20 +3241,6 @@ async function startOpenCodeProxyServer(options = {}) {
           release();
           if (err) {
             recordFailure(channel.id, 'opencode', err);
-            const metadata = requestMetadata.get(req) || {
-              channel: channel.name,
-              channelId: channel.id,
-              startTime: Date.now()
-            };
-            publishFailureLog({
-              source: 'opencode',
-              metadata,
-              message: err.message,
-              error: err,
-              statusCode: 502,
-              stage: 'proxy_web',
-              broadcastLog
-            });
             console.error('OpenCode proxy error:', err);
             if (res && !res.headersSent) {
               res.status(502).json({
@@ -3408,13 +3254,6 @@ async function startOpenCodeProxyServer(options = {}) {
         });
       } catch (error) {
         console.error('OpenCode channel allocation error:', error);
-        publishFailureLog({
-          source: 'opencode',
-          message: error.message || 'No OpenCode channel available',
-          statusCode: 503,
-          stage: 'allocate_channel',
-          broadcastLog
-        });
         if (!res.headersSent) {
           res.status(503).json({
             error: {
@@ -3426,154 +3265,35 @@ async function startOpenCodeProxyServer(options = {}) {
       }
     });
 
-    // 监听代理响应 (OpenAI 格式)
+    // 代理响应只负责维护传输健康状态；实时日志和 usage 来自 CLI 原生日志。
     proxy.on('proxyRes', (proxyRes, req, res) => {
       const metadata = requestMetadata.get(req);
-      if (!metadata) {
-        return;
-      }
+      if (!metadata) return;
 
-      // 检查响应是否已关闭
       if (res.writableEnded || res.destroyed) {
         requestMetadata.delete(req);
         return;
       }
 
-      // 标记响应是否已关闭
-      let isResponseClosed = false;
-
-      // 监听响应关闭事件
-      res.on('close', () => {
-        isResponseClosed = true;
-        requestMetadata.delete(req);
-      });
-
-      // 监听响应错误事件
+      res.on('close', () => requestMetadata.delete(req));
       res.on('error', (err) => {
-        isResponseClosed = true;
-        // 忽略客户端断开连接的常见错误
-        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
-          console.error('Response error:', err);
-        }
+        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Response error:', err);
+        recordFailure(metadata.channelId, 'opencode', err);
         requestMetadata.delete(req);
       });
 
-      let buffer = '';
-      let tokenData = createTokenData();
-      let usageRecorded = false;
-
-      function recordUsageIfReady() {
-        if (usageRecorded) {
-          return false;
-        }
-
-        const result = publishUsageLog({
-          source: 'opencode',
-          metadata,
-          model: tokenData.model,
-          tokens: {
-            input: tokenData.inputTokens,
-            output: tokenData.outputTokens,
-            cacheCreation: tokenData.cacheCreation,
-            cacheRead: tokenData.cacheRead,
-            cached: tokenData.cachedTokens,
-            reasoning: tokenData.reasoningTokens,
-            total: tokenData.totalTokens
-          },
-          calculateCost,
-          broadcastLog,
-          recordRequest: recordOpenCodeRequest,
-          recordSuccess,
-          allowBroadcast: true
-        });
-
-        if (!result) {
-          return false;
-        }
-
-        usageRecorded = true;
-        return true;
-      }
-
-      proxyRes.on('data', (chunk) => {
-        if (isResponseClosed) {
-          return;
-        }
-
-        buffer += chunk.toString();
-
-        // 检查是否是 SSE 流
-        if (proxyRes.headers['content-type']?.includes('text/event-stream')) {
-          const events = buffer.split('\n\n');
-          buffer = events.pop() || '';
-
-          events.forEach((eventText) => {
-            if (!eventText.trim()) return;
-
-            try {
-              const lines = eventText.split('\n');
-              let eventType = '';
-              let data = '';
-
-              lines.forEach(line => {
-                if (line.startsWith('event:')) {
-                  eventType = line.substring(6).trim();
-                } else if (line.startsWith('data:')) {
-                  data = line.substring(5).trim();
-                }
-              });
-
-              if (!data || data === '[DONE]') return;
-
-              const parsed = JSON.parse(data);
-              const usage = parseSSEUsage(parsed, eventType);
-              mergeUsageIntoTokenData(tokenData, usage);
-
-              if (usage.isDone) {
-                recordUsageIfReady();
-              }
-            } catch (err) {
-              // 忽略解析错误
-            }
-          });
-        }
-      });
-
+      const statusCode = Number(proxyRes.statusCode) || 200;
       proxyRes.on('end', () => {
-        // 如果不是流式响应，尝试从完整响应中解析
-        if (!proxyRes.headers['content-type']?.includes('text/event-stream')) {
-          try {
-            const parsed = JSON.parse(buffer);
-            const usage = parseNonStreamingUsage(parsed);
-            mergeUsageIntoTokenData(tokenData, usage);
-          } catch (err) {
-            // 忽略解析错误
-          }
+        if (statusCode >= 400) {
+          recordFailure(metadata.channelId, 'opencode', new Error(`OpenCode upstream HTTP ${statusCode}`));
+        } else {
+          recordSuccess(metadata.channelId, 'opencode');
         }
-
-        recordUsageIfReady();
-
-        if (!isResponseClosed) {
-          requestMetadata.delete(req);
-        }
+        requestMetadata.delete(req);
       });
-
       proxyRes.on('error', (err) => {
-        // 忽略代理响应错误（可能是网络问题）
-        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
-          console.error('Proxy response error:', err);
-        }
-        isResponseClosed = true;
+        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Proxy response error:', err);
         recordFailure(metadata.channelId, 'opencode', err);
-        publishFailureLog({
-          source: 'opencode',
-          metadata,
-          message: err.message,
-          error: err,
-          statusCode: proxyRes.statusCode,
-          stage: 'response_stream',
-          broadcastLog
-        });
         requestMetadata.delete(req);
       });
     });
@@ -3586,19 +3306,6 @@ async function startOpenCodeProxyServer(options = {}) {
         releaseChannel(req.selectedChannel.id, 'opencode');
         broadcastSchedulerState('opencode', getSchedulerState('opencode'));
       }
-      publishFailureLog({
-        source: 'opencode',
-        metadata: (req && requestMetadata.get(req)) || {
-          channel: req?.selectedChannel?.name,
-          channelId: req?.selectedChannel?.id,
-          model: req?.body?.model
-        },
-        message: err.message,
-        error: err,
-        statusCode: 502,
-        stage: 'proxy',
-        broadcastLog
-      });
       if (res && !res.headersSent) {
         res.status(502).json({
           error: {
@@ -3712,5 +3419,4 @@ module.exports = {
   getOpenCodeProxyStatus,
   clearOpenCodeRedirectCache,
   collectProxyModelList,
-  calculateCost
 };
