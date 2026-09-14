@@ -22,7 +22,9 @@ function createDriver({ requireImpl, ...context } = {}) {
     ...context,
     ...settings,
     ...snapshotMethods,
-    clearNativeOAuth: () => require('../../native-oauth-adapters').clearNativeOAuth('gemini')
+    clearNativeOAuth: () => require('../../native-oauth-adapters').clearNativeOAuth('gemini'),
+    preserveNativeOAuthOnProxyStart: true,
+    restoreNativeSettingsOnProxyStop: true
   };
 }
 

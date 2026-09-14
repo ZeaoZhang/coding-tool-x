@@ -3,6 +3,8 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const toml = require('toml');
+const CLAUDE_CHANNELS_MODULE = require.resolve('../../../src/platforms/drivers/claude/channels-implementation');
+const GEMINI_CHANNELS_MODULE = require.resolve('../../../src/platforms/drivers/gemini/channels-implementation');
 const tomlStringify = require('@iarna/toml').stringify;
 
 let testDir;
@@ -54,7 +56,9 @@ beforeEach(() => {
   pathsStub = {
     PATHS: {
       channels: {
-        codex: path.join(testDir, '.cc-tool', 'channels', 'codex.json')
+        claude: path.join(testDir, '.cc-tool', 'channels', 'claude.json'),
+        codex: path.join(testDir, '.cc-tool', 'channels', 'codex.json'),
+        gemini: path.join(testDir, '.cc-tool', 'channels', 'gemini.json')
       }
     },
     NATIVE_PATHS: {
@@ -69,6 +73,8 @@ beforeEach(() => {
         dir: path.join(testDir, '.codex')
       },
       gemini: {
+        env: path.join(testDir, '.gemini', '.env'),
+        settings: path.join(testDir, '.gemini', 'settings.json'),
         oauthCredentialsEncrypted: path.join(testDir, '.gemini', 'oauth-credentials.enc'),
         oauthCredentialsLegacy: path.join(testDir, '.gemini', 'oauth-credentials.json'),
         googleAccounts: path.join(testDir, '.gemini', 'google-accounts.json')
@@ -112,7 +118,8 @@ beforeEach(() => {
     exports: {
       settingsExists: vi.fn(() => true),
       readSettings: vi.fn(() => JSON.parse(JSON.stringify(claudeSettings))),
-      writeSettings: vi.fn((value) => { claudeSettings = JSON.parse(JSON.stringify(value)); })
+      writeSettings: vi.fn((value) => { claudeSettings = JSON.parse(JSON.stringify(value)); }),
+      isProxyConfig: vi.fn(() => false)
     }
   };
 
@@ -282,6 +289,28 @@ describe('native-oauth-adapters high level flows', () => {
     expect(fs.existsSync(pathsStub.NATIVE_PATHS.claude.credentials)).toBe(false);
     expect(nativeAdapters.readNativeOAuth('claude')).toBeNull();
   });
+  test('clears Claude managed channel settings without deleting native OAuth', () => {
+    claudeSettings = {
+      env: {
+        ANTHROPIC_API_KEY: 'channel-key',
+        ANTHROPIC_BASE_URL: 'https://channel.example',
+        ANTHROPIC_AUTH_TOKEN: 'old-token',
+        CLAUDE_CODE_OAUTH_TOKEN: 'oauth-env-token',
+        ANTHROPIC_MODEL: 'model',
+        HTTPS_PROXY: 'http://proxy.internal:8080'
+      },
+      apiKeyHelper: 'echo channel-key'
+    };
+
+    nativeAdapters.clearClaudeChannelConfig();
+
+    expect(claudeSettings).toEqual({
+      env: {
+        HTTPS_PROXY: 'http://proxy.internal:8080'
+      }
+    });
+  });
+
 
   test('reports mixed mode for Claude when API key config and native OAuth both exist', () => {
     require.cache[require.resolve('../../../src/server/services/native-keychain')].exports.isSupported.mockReturnValue(false);
@@ -357,6 +386,7 @@ describe('native-oauth-adapters high level flows', () => {
       scope: 'profile email',
       accountEmail: 'user@example.com'
     });
+
     const credential = nativeAdapters.readNativeOAuth('gemini');
     const state = nativeAdapters.inspectTool('gemini');
 
@@ -378,6 +408,11 @@ describe('native-oauth-adapters high level flows', () => {
     expect(readJson(pathsStub.NATIVE_PATHS.gemini.googleAccounts).active).toBeNull();
     expect(nativeAdapters.readNativeOAuth('gemini')).toBeNull();
   });
+  test('clears Gemini managed channel environment without deleting native OAuth', () => {
+    nativeAdapters.clearGeminiChannelConfig();
+
+    expect(geminiEnv).toEqual({});
+  });
 
   test('reports mixed mode for Gemini when API key config and native OAuth both exist', () => {
     require.cache[require.resolve('../../../src/server/services/native-keychain')].exports.isSupported.mockReturnValue(false);
@@ -396,6 +431,95 @@ describe('native-oauth-adapters high level flows', () => {
     }));
   });
 
+  test('preserves real native credentials when Claude and Gemini channels activate OAuth', () => {
+    require.cache[require.resolve('../../../src/server/services/native-keychain')].exports.isSupported.mockReturnValue(false);
+
+    const claudeCredential = { claudeAiOauth: { accessToken: 'claude-native-token' } };
+    claudeSettings = {
+      env: {
+        ANTHROPIC_BASE_URL: 'https://managed.claude.example',
+        ANTHROPIC_API_KEY: 'managed-claude-key',
+        HTTPS_PROXY: 'http://proxy.internal:8080'
+      },
+      apiKeyHelper: 'echo managed-claude-key'
+    };
+    writeJson(pathsStub.NATIVE_PATHS.claude.credentials, claudeCredential);
+    writeJson(pathsStub.PATHS.channels.claude, {
+      channels: [{
+        id: 'claude-oauth',
+        name: 'Claude OAuth',
+        baseUrl: '',
+        apiKey: '',
+        authMode: 'oauth',
+        authRef: { credentialId: 'claude-credential', providerId: 'claude' },
+        authSource: 'synced-local',
+        enabled: false
+      }]
+    });
+
+    const geminiCredential = {
+      access_token: 'gemini-native-token',
+      refresh_token: 'gemini-native-refresh'
+    };
+    geminiEnv = {
+      GOOGLE_GEMINI_BASE_URL: 'https://managed.gemini.example',
+      GEMINI_API_KEY: 'managed-gemini-key',
+      GEMINI_MODEL: 'managed-model',
+      CUSTOM_TOKEN: 'keep-me'
+    };
+    writeJson(pathsStub.NATIVE_PATHS.gemini.oauthCredentialsLegacy, geminiCredential);
+    writeJson(pathsStub.PATHS.channels.gemini, {
+      channels: [{
+        id: 'gemini-oauth',
+        name: 'Gemini OAuth',
+        baseUrl: '',
+        apiKey: '',
+        model: 'gemini-2.5-pro',
+        authMode: 'oauth',
+        authRef: { credentialId: 'gemini-credential', providerId: 'gemini' },
+        authSource: 'synced-local',
+        enabled: false
+      }]
+    });
+    writeJson(path.join(testDir, '.gemini', 'settings.json'), {
+      security: { auth: { selectedType: 'gemini-api-key' } }
+    });
+
+    try {
+      delete require.cache[CLAUDE_CHANNELS_MODULE];
+      delete require.cache[GEMINI_CHANNELS_MODULE];
+      const claudeChannels = require(CLAUDE_CHANNELS_MODULE);
+      const geminiChannels = require(GEMINI_CHANNELS_MODULE);
+
+      claudeChannels.applyChannelToSettings('claude-oauth');
+      geminiChannels.applyChannelToSettings('gemini-oauth');
+
+      expect(nativeAdapters.readNativeOAuth('claude')).toEqual(expect.objectContaining({
+        accessToken: 'claude-native-token'
+      }));
+      expect(claudeSettings).toEqual({
+        env: { HTTPS_PROXY: 'http://proxy.internal:8080' }
+      });
+      expect(nativeAdapters.readNativeOAuth('gemini')).toEqual(expect.objectContaining({
+        accessToken: 'gemini-native-token',
+        refreshToken: 'gemini-native-refresh'
+      }));
+      expect(geminiEnv).toEqual({ CUSTOM_TOKEN: 'keep-me' });
+      expect(readJson(path.join(testDir, '.gemini', 'settings.json')).security.auth.selectedType)
+        .toBe('oauth-personal');
+    } finally {
+      fs.unwatchFile(pathsStub.PATHS.channels.claude);
+      delete require.cache[CLAUDE_CHANNELS_MODULE];
+      delete require.cache[GEMINI_CHANNELS_MODULE];
+    }
+  });
+
+
+  test('disables an OMP OAuth credential without falling through as unsupported', () => {
+    expect(() => nativeAdapters.disableNativeOAuthCredential('omp', {
+      providerId: 'openai-codex'
+    })).not.toThrow();
+  });
 
   test('reads OMP OAuth accounts from auth-broker provider snapshot', () => {
     getOmpAuthProviderSnapshotMock.mockReturnValue({

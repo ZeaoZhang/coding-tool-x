@@ -22,12 +22,15 @@ const CHANNEL_BALANCE_MODULE = require.resolve('../../../src/server/services/cha
 
 let testDir, channelsFile, geminiDir;
 let clearNativeOAuth;
+let clearGeminiChannelConfig;
+let readNativeOAuth;
 let clearChannelBalanceCache;
 let getGeminiProxyStatus;
 let service;
-
 function injectStubs() {
   clearNativeOAuth     = vi.fn();
+  clearGeminiChannelConfig = vi.fn();
+  readNativeOAuth = vi.fn(() => null);
   clearChannelBalanceCache = vi.fn();
   getGeminiProxyStatus = vi.fn(() => ({ running: false }));
 
@@ -48,7 +51,11 @@ function injectStubs() {
 
   require.cache[NATIVE_OAUTH_MODULE] = {
     id: NATIVE_OAUTH_MODULE, filename: NATIVE_OAUTH_MODULE, loaded: true,
-    exports: { clearNativeOAuth }
+    exports: {
+      clearNativeOAuth,
+      clearGeminiChannelConfig,
+      readNativeOAuth
+    }
   };
 
   require.cache[PROXY_UTILS_MODULE] = {
@@ -165,6 +172,53 @@ describe('createChannel', () => {
     expect(ch.enabled).toBe(false);
     expect(ch.apiFormat).toBe('vertex_ai_v1');
   });
+
+  it('resolves the Google website when a channel uses the official base URL', () => {
+    const channel = service.createChannel(
+      'Google URL',
+      'https://generativelanguage.googleapis.com/v1beta',
+      'key-google'
+    );
+
+    expect(channel.websiteUrl).toBe('https://ai.google.dev');
+  });
+
+  it('creates an enabled OAuth channel using the native credential and local settings', () => {
+    readNativeOAuth.mockReturnValue({ accessToken: 'native-access-token' });
+
+    const channel = service.createChannel('Gemini OAuth', '', '', 'gemini-2.5-pro', {
+      enabled: true,
+      authMode: 'oauth',
+      authSource: 'synced-local',
+      authRef: { credentialId: 'credential-1', providerId: 'gemini' }
+    });
+
+    expect(channel).toEqual(expect.objectContaining({
+      authMode: 'oauth',
+      enabled: true,
+      baseUrl: '',
+      apiKey: ''
+    }));
+    expect(clearGeminiChannelConfig).toHaveBeenCalledWith();
+    expect(clearNativeOAuth).not.toHaveBeenCalled();
+    expect(JSON.parse(fs.readFileSync(path.join(geminiDir, 'settings.json'), 'utf8')))
+      .toEqual(expect.objectContaining({
+        security: { auth: { selectedType: 'oauth-personal' } }
+      }));
+  });
+
+  it('does not persist an enabled OAuth channel when the native credential is unavailable', () => {
+    readNativeOAuth.mockReturnValue(null);
+
+    expect(() => service.createChannel('Unavailable OAuth', '', '', 'gemini-2.5-pro', {
+      enabled: true,
+      authMode: 'oauth',
+      authSource: 'synced-local',
+      authRef: { credentialId: 'credential-1', providerId: 'gemini' }
+    })).toThrow('Gemini native OAuth credential is unavailable');
+
+    expect(JSON.parse(fs.readFileSync(channelsFile, 'utf8')).channels).toEqual([]);
+  });
 });
 
 // ─── updateChannel ────────────────────────────────────────────────────────────
@@ -272,6 +326,70 @@ describe('applyChannelToSettings', () => {
     const settings = JSON.parse(fs.readFileSync(path.join(geminiDir, 'settings.json'), 'utf8'));
     expect(settings.security.auth.selectedType).toBe('gemini-api-key');
   });
+  it('applies Gemini OAuth through native settings without clearing its credential', () => {
+    const channel = {
+      id: 'oauth-channel',
+      name: 'Gemini OAuth',
+      baseUrl: '',
+      apiKey: '',
+      model: 'gemini-2.5-pro',
+      authMode: 'oauth',
+      authRef: { credentialId: 'credential-1', providerId: 'gemini' },
+      authSource: 'synced-local',
+      enabled: false
+    };
+    fs.writeFileSync(channelsFile, JSON.stringify({ channels: [channel] }), 'utf8');
+    readNativeOAuth.mockReturnValue({ accessToken: 'native-access-token' });
+
+    service.applyChannelToSettings(channel.id);
+
+    expect(readNativeOAuth).toHaveBeenCalledWith('gemini');
+    expect(clearGeminiChannelConfig).toHaveBeenCalledWith();
+    expect(clearNativeOAuth).not.toHaveBeenCalled();
+    const settings = JSON.parse(fs.readFileSync(path.join(geminiDir, 'settings.json'), 'utf8'));
+    expect(settings.security.auth.selectedType).toBe('oauth-personal');
+  });
+
+  it('rejects enabling Gemini OAuth without a native credential', () => {
+    const channel = {
+      id: 'oauth-channel',
+      name: 'Gemini OAuth',
+      baseUrl: '',
+      apiKey: '',
+      model: 'gemini-2.5-pro',
+      authMode: 'oauth',
+      authRef: { credentialId: 'credential-1', providerId: 'gemini' },
+      authSource: 'synced-local',
+      enabled: false
+    };
+    fs.writeFileSync(channelsFile, JSON.stringify({ channels: [channel] }), 'utf8');
+    readNativeOAuth.mockReturnValue(null);
+
+    expect(() => service.updateChannel(channel.id, { enabled: true }))
+      .toThrow('Gemini native OAuth credential is unavailable');
+    expect(JSON.parse(fs.readFileSync(channelsFile, 'utf8')).channels[0].enabled).toBe(false);
+  });
+
+  it('rejects enabling Gemini OAuth while the proxy is active', () => {
+    const channel = {
+      id: 'oauth-channel',
+      name: 'Gemini OAuth',
+      baseUrl: '',
+      apiKey: '',
+      model: 'gemini-2.5-pro',
+      authMode: 'oauth',
+      authRef: { credentialId: 'credential-1', providerId: 'gemini' },
+      authSource: 'synced-local',
+      enabled: false
+    };
+    fs.writeFileSync(channelsFile, JSON.stringify({ channels: [channel] }), 'utf8');
+    getGeminiProxyStatus.mockReturnValue({ running: true });
+    readNativeOAuth.mockReturnValue({ accessToken: 'native-access-token' });
+
+    expect(() => service.updateChannel(channel.id, { enabled: true }))
+      .toThrow('Gemini OAuth channels are native-only');
+    expect(JSON.parse(fs.readFileSync(channelsFile, 'utf8')).channels[0].enabled).toBe(false);
+  });
 
   it('preserves unrelated env vars when rewriting managed fields', () => {
     fs.writeFileSync(path.join(geminiDir, '.env'), 'CUSTOM_TOKEN=keep-me\nGEMINI_MODEL=old-model\n', 'utf8');
@@ -373,5 +491,12 @@ describe('syncCurrentGeminiChannel', () => {
     expect(result.skipped).toBe(1);
     expect(result.warnings[0]).toContain('OAuth');
     expect(fs.existsSync(channelsFile)).toBe(false);
+  });
+  it('returns only enabled OAuth channels for proxy exclusion', () => {
+    expect(service.getGeminiProxyExcludedChannelIds([
+      { id: 'api-channel', authMode: 'api_key', enabled: true },
+      { id: 'oauth-disabled', authMode: 'oauth', enabled: false },
+      { id: 'oauth-enabled', authMode: 'oauth', enabled: true }
+    ])).toEqual(['oauth-enabled']);
   });
 });

@@ -286,4 +286,57 @@ describe('SettingsDrawer platform catalog', () => {
     expect(wrapper.vm.modelMetaOverrides).toEqual(modelData.overrides)
     expect(wrapper.vm.defaultSpeedTestModels).toEqual(modelData.defaultSpeedTestModels)
   })
+
+  it('hydrates and saves native OMP log settings from both advanced save paths', async () => {
+    const advancedConfig = {
+      ports: {},
+      maxLogs: 120,
+      statsInterval: 15,
+      enableSessionBinding: true,
+      nativeCliLogs: {
+        omp: { enabled: false, intervalSeconds: 12 }
+      }
+    }
+    fetchMock.mockImplementation(async (url) => {
+      if (url === '/api/config/advanced') {
+        return { ok: true, json: async () => advancedConfig }
+      }
+      return { ok: true, json: async () => ({}) }
+    })
+
+    const wrapper = shallowMount(SettingsDrawer, {
+      props: { visible: false },
+      global: {
+        stubs: {
+          drawer: { template: '<div><slot /></div>' },
+          'drawer-content': { template: '<div><slot name="header" /><slot /><slot name="footer" /></div>' },
+          checkbox: { template: '<label><slot /></label>' }
+        }
+      }
+    })
+    await wrapper.setProps({ visible: true })
+    await flushPromises()
+
+    expect(wrapper.vm.advancedSettings.nativeCliLogs).toEqual(advancedConfig.nativeCliLogs)
+    expect(wrapper.vm.originalAdvancedSettings.nativeCliLogs).toEqual(advancedConfig.nativeCliLogs)
+    expect(wrapper.vm.portsChanged).toBe(false)
+
+    wrapper.vm.advancedSettings.nativeCliLogs.omp.intervalSeconds = 13
+    expect(wrapper.vm.portsChanged).toBe(true)
+
+    await wrapper.vm.handleSavePorts()
+    const advancedPosts = () => fetchMock.mock.calls
+      .filter(([, options]) => options?.method === 'POST' && options?.body)
+      .map(([, options]) => JSON.parse(options.body))
+    expect(advancedPosts().at(-1).nativeCliLogs).toEqual({
+      omp: { enabled: false, intervalSeconds: 13 }
+    })
+    expect(wrapper.vm.portsChanged).toBe(false)
+
+    await wrapper.vm.handleSessionBindingChange(false)
+    expect(advancedPosts().at(-1)).toEqual(expect.objectContaining({
+      enableSessionBinding: false,
+      nativeCliLogs: { omp: { enabled: false, intervalSeconds: 13 } }
+    }))
+  })
 })

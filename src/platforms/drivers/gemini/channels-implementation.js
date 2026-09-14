@@ -3,7 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { PATHS, NATIVE_PATHS } = require('../../../config/paths');
 const { resolveChannelWebsiteUrl } = require('../../../config/channel-preset-websites');
-const { clearNativeOAuth } = require('../../native-oauth-adapters');
+const { clearNativeOAuth, readNativeOAuth, clearGeminiChannelConfig } = require('../../native-oauth-adapters');
 const { normalizeGatewaySourceType } = require('../../../shared/proxy-utils');
 const {
   createSkippedResult,
@@ -22,6 +22,76 @@ function clearChannelBalanceCache(channel) {
     // Balance cache invalidation is best-effort and should not block channel updates.
   }
 }
+
+function createGeminiOAuthError(message, code, statusCode) {
+  const error = new Error(message);
+  error.code = code;
+  error.statusCode = statusCode;
+  return error;
+}
+
+function getGeminiProxyState() {
+  return require('./proxy-implementation').getGeminiProxyStatus();
+}
+
+function assertGeminiOAuthIsNativeOnly() {
+  if (getGeminiProxyState().running) {
+    throw createGeminiOAuthError(
+      'Gemini OAuth channels are native-only',
+      'gemini_oauth_proxy_unsupported',
+      409
+    );
+  }
+}
+
+function assertNativeGeminiOAuthAvailable() {
+  if (!readNativeOAuth('gemini')) {
+    throw createGeminiOAuthError(
+      'Gemini native OAuth credential is unavailable',
+      'gemini_oauth_credential_unavailable',
+      422
+    );
+  }
+}
+
+function validateGeminiOAuthMutation(channel, operation) {
+  if (channel?.authMode !== 'oauth') {
+    return;
+  }
+  if (operation !== 'apply' && channel.enabled === false) {
+    return;
+  }
+  assertGeminiOAuthIsNativeOnly();
+  assertNativeGeminiOAuthAvailable();
+}
+
+function applyNativeGeminiOAuth(channel) {
+  validateGeminiOAuthMutation(channel, 'apply');
+  clearGeminiChannelConfig();
+
+  const settingsPath = NATIVE_PATHS.gemini.settings;
+  const settings = readGeminiSettings();
+  settings.security = settings.security || {};
+  settings.security.auth = settings.security.auth || {};
+  settings.security.auth.selectedType = 'oauth-personal';
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+  console.log(`[Gemini Channels] Applied native OAuth channel ${channel.name}`);
+  return channel;
+}
+
+function assertGeminiEnabledChannelsAreValid(channels = []) {
+  const enabledChannels = channels.filter(channel => channel?.enabled !== false);
+  const oauthChannels = enabledChannels.filter(channel => channel?.authMode === 'oauth');
+  if (oauthChannels.length && enabledChannels.some(channel => channel?.authMode !== 'oauth')) {
+    throw createGeminiOAuthError(
+      'Gemini OAuth channels cannot be mixed with API-key channels',
+      'gemini_oauth_mixed_channels',
+      409
+    );
+  }
+}
+
 
 function normalizeGeminiApiFormat(value) {
   const normalized = String(value || '').trim().toLowerCase();
@@ -291,7 +361,7 @@ function createChannel(name, baseUrl, apiKey, model = 'gemini-2.5-pro', extraCon
     model,
     ...auth,
     websiteUrl: extraConfig.websiteUrl || '',
-    enabled: auth.authMode === 'oauth' ? false : extraConfig.enabled !== false,
+    enabled: extraConfig.enabled !== false,
     weight: extraConfig.weight || 1,
     maxConcurrency: extraConfig.maxConcurrency || null,
     balanceToken: extraConfig.balanceToken || '',
@@ -304,6 +374,8 @@ function createChannel(name, baseUrl, apiKey, model = 'gemini-2.5-pro', extraCon
     updatedAt: Date.now()
   };
   newChannel.websiteUrl = resolveChannelWebsiteUrl('gemini', newChannel);
+  validateGeminiOAuthMutation(newChannel, 'create');
+  assertGeminiEnabledChannelsAreValid([...data.channels, newChannel]);
   data.channels.push(newChannel);
   saveChannels(data);
   const { getGeminiProxyStatus } = require('./proxy-implementation');
@@ -357,6 +429,11 @@ function updateChannel(channelId, updates) {
     gatewaySourceType: normalizeGatewaySourceType(merged.gatewaySourceType, 'gemini'),
     updatedAt: Date.now()
   };
+  validateGeminiOAuthMutation(nextChannel, 'update');
+  const nextChannels = data.channels.map((channel, currentIndex) => (
+    currentIndex === index ? nextChannel : channel
+  ));
+  assertGeminiEnabledChannelsAreValid(nextChannels);
   data.channels[index] = nextChannel;
   const { getGeminiProxyStatus } = require('./proxy-implementation');
   const proxyStatus = getGeminiProxyStatus();
@@ -405,6 +482,7 @@ function applyChannelToSettings(channelId, channels = null) {
   if (!channel) {
     throw new Error('Channel not found');
   }
+  validateGeminiOAuthMutation(channel, 'apply');
 
   const wasEnabled = channel.enabled !== false;
   // In single-channel mode, only this channel should be enabled
@@ -417,6 +495,10 @@ function applyChannelToSettings(channelId, channels = null) {
   }
   if (!wasEnabled) {
     clearChannelBalanceCache(channel);
+  }
+
+  if (channel.authMode === 'oauth') {
+    return applyNativeGeminiOAuth(channel);
   }
 
   clearNativeOAuth('gemini');
@@ -488,8 +570,14 @@ function writeGeminiConfigForMultiChannel(allChannels) {
   }
 
   // 获取第一个启用的渠道作为默认配置
-  const enabledChannels = allChannels.filter(c => c.enabled !== false);
-  const defaultChannel = enabledChannels[0] || allChannels[0];
+  const channels = Array.isArray(allChannels) ? allChannels : [];
+  const enabledChannels = channels.filter(c => c.enabled !== false);
+  assertGeminiEnabledChannelsAreValid(channels);
+  const oauthChannels = enabledChannels.filter(channel => channel.authMode === 'oauth');
+  if (oauthChannels.length) {
+    return applyNativeGeminiOAuth(oauthChannels[0]);
+  }
+  const defaultChannel = enabledChannels[0];
 
   const env = readExistingGeminiEnv();
 
@@ -533,6 +621,16 @@ function getEnabledChannels() {
   return data.channels.filter(c => c.enabled !== false);
 }
 
+function getGeminiProxyExcludedChannelIds(channels = null) {
+  const candidates = Array.isArray(channels) ? channels : getEnabledChannels();
+  return [...new Set(
+    candidates
+      .filter(channel => channel?.enabled !== false && channel?.authMode === 'oauth')
+      .map(channel => channel.id)
+      .filter(Boolean)
+  )];
+}
+
 function markChannelAsRecentlyUsed(channelId) {
   return updateChannel(channelId, {});
 }
@@ -569,6 +667,9 @@ function disableAllChannels() {
   const data = loadChannels();
   data.channels.forEach(ch => { ch.enabled = false; });
   saveChannels(data);
+  if (!getGeminiProxyState().running) {
+    clearGeminiChannelConfig();
+  }
 }
 
 function readGeminiSettings() {
@@ -694,6 +795,7 @@ module.exports = {
   deleteChannel,
   getEnabledChannels,
   getEffectiveApiKey,
+  getGeminiProxyExcludedChannelIds,
   saveChannelOrder,
   isProxyConfig,
   getGeminiDir,

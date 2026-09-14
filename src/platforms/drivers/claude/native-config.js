@@ -20,6 +20,8 @@ function createDriver({ requireImpl, ...context } = {}) {
     ...settings,
     ...snapshotMethods,
     clearNativeOAuth: () => require('../../native-oauth-adapters').clearNativeOAuth('claude'),
+    preserveNativeOAuthOnProxyStart: true,
+    restoreNativeSettingsOnProxyStop: true,
     clearActiveChannelMarker() {
       try {
         fs.unlinkSync(PATHS.activeChannel.claude);

@@ -25,6 +25,12 @@ const DEFAULT_CONFIG = {
   },
   maxLogs: 100,
   statsInterval: 30,
+  nativeCliLogs: {
+    omp: {
+      enabled: true,
+      intervalSeconds: 5
+    }
+  },
   modelDiscovery: {
     useV1ModelsEndpoint: false
   },

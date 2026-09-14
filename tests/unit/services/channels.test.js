@@ -4,18 +4,21 @@ const path = require('path');
 
 let testDir;
 let clearNativeOAuthMock;
+let clearClaudeChannelConfigMock;
 let readNativeOAuthMock;
+let isProxyConfigMock;
 let channelsService;
 let isWindowsLikePlatformMock;
 
 function readJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
-
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'channels-service-'));
   clearNativeOAuthMock = vi.fn();
+  clearClaudeChannelConfigMock = vi.fn();
   readNativeOAuthMock = vi.fn(() => null);
+  isProxyConfigMock = vi.fn(() => false);
   isWindowsLikePlatformMock = vi.fn(() => false);
 
   require.cache[require.resolve('../../../src/config/paths')] = {
@@ -44,7 +47,7 @@ beforeEach(() => {
     filename: require.resolve('../../../src/platforms/drivers/claude/native-config-implementation'),
     loaded: true,
     exports: {
-      isProxyConfig: vi.fn(() => false)
+      isProxyConfig: isProxyConfigMock
     }
   };
 
@@ -54,6 +57,7 @@ beforeEach(() => {
     loaded: true,
     exports: {
       clearNativeOAuth: clearNativeOAuthMock,
+      clearClaudeChannelConfig: clearClaudeChannelConfigMock,
       readNativeOAuth: readNativeOAuthMock
     }
   };
@@ -127,6 +131,72 @@ describe('channels service Claude settings integration', () => {
       },
       apiKeyHelper: 'echo \'managed-key\''
     });
+  });
+  test('applies Claude OAuth through native settings without clearing its credential', () => {
+    readNativeOAuthMock.mockReturnValue({ accessToken: 'native-access-token' });
+    const channel = channelsService.createChannel(
+      'Claude OAuth',
+      '',
+      '',
+      undefined,
+      {
+        enabled: false,
+        authMode: 'oauth',
+        authSource: 'synced-local',
+        authRef: { credentialId: 'credential-1', providerId: 'claude' }
+      }
+    );
+
+    clearNativeOAuthMock.mockClear();
+    clearClaudeChannelConfigMock.mockClear();
+    readNativeOAuthMock.mockClear();
+
+    channelsService.applyChannelToSettings(channel.id);
+
+    expect(readNativeOAuthMock).toHaveBeenCalledWith('claude');
+    expect(clearClaudeChannelConfigMock).toHaveBeenCalledWith();
+    expect(clearNativeOAuthMock).not.toHaveBeenCalled();
+  });
+
+  test('rejects enabling Claude OAuth without a native credential', () => {
+    readNativeOAuthMock.mockReturnValue(null);
+    const channel = channelsService.createChannel(
+      'Claude OAuth',
+      '',
+      '',
+      undefined,
+      {
+        enabled: false,
+        authMode: 'oauth',
+        authSource: 'synced-local',
+        authRef: { credentialId: 'credential-1', providerId: 'claude' }
+      }
+    );
+
+    expect(() => channelsService.updateChannel(channel.id, { enabled: true }))
+      .toThrow('Claude native OAuth credential is unavailable');
+    expect(channelsService.getAllChannels().find(item => item.id === channel.id).enabled).toBe(false);
+  });
+
+  test('rejects enabling Claude OAuth while the proxy is active', () => {
+    isProxyConfigMock.mockReturnValue(true);
+    readNativeOAuthMock.mockReturnValue({ accessToken: 'native-access-token' });
+    const channel = channelsService.createChannel(
+      'Claude OAuth',
+      '',
+      '',
+      undefined,
+      {
+        enabled: false,
+        authMode: 'oauth',
+        authSource: 'synced-local',
+        authRef: { credentialId: 'credential-1', providerId: 'claude' }
+      }
+    );
+
+    expect(() => channelsService.updateChannel(channel.id, { enabled: true }))
+      .toThrow('Claude OAuth channels are native-only');
+    expect(channelsService.getAllChannels().find(item => item.id === channel.id).enabled).toBe(false);
   });
 
   test('updateClaudeSettings preserves the existing auth mode when writing credentials', () => {
@@ -384,5 +454,12 @@ describe('channels service Claude settings integration', () => {
     expect(result.skipped).toBe(1);
     expect(result.warnings[0]).toContain('ctx 代理');
     expect(channelsService.getAllChannels()).toHaveLength(0);
+  });
+  test('returns only enabled OAuth channels for proxy exclusion', () => {
+    expect(channelsService.getClaudeProxyExcludedChannelIds([
+      { id: 'api-channel', authMode: 'api_key', enabled: true },
+      { id: 'oauth-disabled', authMode: 'oauth', enabled: false },
+      { id: 'oauth-enabled', authMode: 'oauth', enabled: true }
+    ])).toEqual(['oauth-enabled']);
   });
 });

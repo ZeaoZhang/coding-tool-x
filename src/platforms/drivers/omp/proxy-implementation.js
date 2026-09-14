@@ -12,11 +12,6 @@ const {
   loadManagedOmpModeState,
   getOrCreateOmpGatewaySecret
 } = require('./channels-implementation');
-const {
-  startOmpSessionLogObserver,
-  stopOmpSessionLogObserver,
-  getOmpSessionLogObserverStatus
-} = require('./session-log-observer');
 const { createOmpGateway } = require('./gateway');
 const { prepareManagedOmpChannels } = require('./gateway-routing');
 const { probeOmpAuthGateways } = require('./auth-gateway-client');
@@ -91,7 +86,6 @@ async function startOmpProxyServerUnlocked(options = {}) {
     currentPort = null;
     throw error;
   }
-  startOmpSessionLogObserver();
   saveProxyStartTime('omp', preserveStartTime);
   return {
     success: true,
@@ -125,7 +119,6 @@ async function stopOmpProxyServerUnlocked(options = {}) {
     || enabledChannels[0]
     || null;
   gateway.beginDraining();
-  stopOmpSessionLogObserver();
   try {
     if (!preserveManagedMode) {
       if (activeChannel) {
@@ -137,7 +130,6 @@ async function stopOmpProxyServerUnlocked(options = {}) {
       disableManagedOmpMode();
     }
   } catch (error) {
-    startOmpSessionLogObserver();
     gateway.cancelDraining();
     throw error;
   }
@@ -189,7 +181,6 @@ function getOmpProxyStatus() {
     modelsPath: lastSyncResult?.modelsPath || lastSyncResult?.path || null,
     backupPath: lastSyncResult?.backupPath || null,
     modelsValidation: validation,
-    sessionLogObserver: getOmpSessionLogObserverStatus(),
     warnings: lastSyncResult?.warnings || []
   };
 }

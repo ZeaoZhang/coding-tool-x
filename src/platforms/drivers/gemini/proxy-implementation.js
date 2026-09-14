@@ -11,7 +11,10 @@ const { resolveModelPricing, calculateTokenCost } = require('../../../server/uti
 const { recordRequest: recordGeminiRequest } = require('./statistics-implementation');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('../../../server/services/proxy-runtime');
 const { createDecodedStream } = require('../../../server/services/response-decoder');
-const { getEffectiveApiKey } = require('./channels-implementation');
+const {
+  getEffectiveApiKey,
+  getGeminiProxyExcludedChannelIds = () => []
+} = require('./channels-implementation');
 const { persistProxyRequestSnapshot } = require('../../../server/services/request-logger');
 const { publishUsageLog, publishFailureLog } = require('../../../server/services/proxy-log-helper');
 const { redirectModel: redirectModelBase, resolveTargetUrl } = require('../../../shared/proxy-utils');
@@ -193,6 +196,13 @@ async function startGeminiProxyServer(options = {}) {
     console.log('Gemini proxy server already running on port', currentPort);
     return { success: true, port: currentPort };
   }
+  const excludedChannelIds = getGeminiProxyExcludedChannelIds();
+  if (excludedChannelIds.length > 0) {
+    const error = new Error('Gemini dynamic proxy supports API-key channels only; disable OAuth channels first');
+    error.code = 'gemini_oauth_proxy_unsupported';
+    error.statusCode = 409;
+    throw error;
+  }
 
   try {
     const config = loadConfig();
@@ -250,7 +260,11 @@ async function startGeminiProxyServer(options = {}) {
 
     proxyApp.use(async (req, res) => {
       try {
-        const channel = await allocateChannel({ source: 'gemini', enableSessionBinding: false });
+        const channel = await allocateChannel({
+          source: 'gemini',
+          enableSessionBinding: false,
+          excludeChannelIds: getGeminiProxyExcludedChannelIds()
+        });
         req.selectedChannel = channel;
 
         const release = (() => {

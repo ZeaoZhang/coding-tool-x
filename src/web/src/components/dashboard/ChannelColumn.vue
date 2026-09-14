@@ -338,7 +338,7 @@
               </n-icon>
               <n-text depth="3" style="font-size: 12px; font-weight: 500;">暂无实时日志</n-text>
               <n-text depth="3" style="font-size: 11px; margin-top: 4px;">
-                {{ channelType === 'omp' ? '开启动态切换后将观察新增 OMP 会话用量' : '开启代理后将显示请求记录' }}
+                {{ channelType === 'omp' ? 'ctx 将持续读取 OMP 原生会话日志' : '开启代理后将显示请求记录' }}
               </n-text>
             </div>
 
@@ -912,7 +912,7 @@ async function handleProxyToggle(value) {
 
     if (result.success !== false) {
       if (props.channelType === 'omp') {
-        message.success(value ? 'OMP 动态切换与会话日志观察已启用' : 'OMP 已切换为单渠道直连模式')
+        message.success(value ? 'OMP 动态切换已启用' : 'OMP 已切换为单渠道直连模式')
       } else {
         message.success(value ? `${channelTitle.value} 代理已启动` : `${channelTitle.value} 代理已停止`)
       }

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { loadConfig, saveConfig } = require('../../config/loader');
+const { loadConfig, saveConfig, normalizeNativeCliLogs } = require('../../config/loader');
 const DEFAULT_CONFIG = require('../../config/default');
 const { getPlatformCatalog } = require('../services/platform-catalog');
 const { probeModelAvailability } = require('../services/model-detector');
@@ -69,6 +69,26 @@ function normalizeModelDiscovery(modelDiscovery, currentValue = DEFAULT_CONFIG.m
       : current.useV1ModelsEndpoint === true
   };
 }
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function validateNativeCliLogs(value) {
+  if (!isPlainObject(value) || !isPlainObject(value.omp)) {
+    return 'nativeCliLogs.omp must be an object';
+  }
+  const omp = value.omp;
+  if (Object.prototype.hasOwnProperty.call(omp, 'enabled') && typeof omp.enabled !== 'boolean') {
+    return 'nativeCliLogs.omp.enabled must be a boolean';
+  }
+  if (Object.prototype.hasOwnProperty.call(omp, 'intervalSeconds')
+    && (!Number.isInteger(omp.intervalSeconds) || omp.intervalSeconds < 1 || omp.intervalSeconds > 60)) {
+    return 'nativeCliLogs.omp.intervalSeconds must be an integer between 1-60';
+  }
+  return null;
+}
+
 
 function uniqueModels(models = []) {
   const seen = new Set();
@@ -435,6 +455,7 @@ router.get('/advanced', (req, res) => {
       statsInterval: config.statsInterval || 30,
       enableSessionBinding: config.enableSessionBinding !== false, // 默认开启
       modelDiscovery,
+      nativeCliLogs: normalizeNativeCliLogs(config.nativeCliLogs),
       pricing: config.pricing || DEFAULT_CONFIG.pricing
     });
   } catch (error) {
@@ -449,14 +470,17 @@ router.get('/advanced', (req, res) => {
  */
 router.post('/advanced', (req, res) => {
   try {
+    const body = req.body || {};
     const {
       ports,
       maxLogs,
       statsInterval,
       pricing,
       enableSessionBinding,
-      modelDiscovery
-    } = req.body;
+      modelDiscovery,
+      nativeCliLogs
+    } = body;
+    const hasNativeCliLogs = Object.prototype.hasOwnProperty.call(body, 'nativeCliLogs');
 
     // 验证端口
     if (ports) {
@@ -490,7 +514,19 @@ router.post('/advanced', (req, res) => {
       }
     }
 
+    if (hasNativeCliLogs) {
+      const nativeCliLogsError = validateNativeCliLogs(nativeCliLogs);
+      if (nativeCliLogsError) {
+        return res.status(400).json({ error: nativeCliLogsError });
+      }
+    }
+
     const config = loadConfig();
+    const currentNativeCliLogs = normalizeNativeCliLogs(config.nativeCliLogs);
+    const normalizedNativeCliLogs = hasNativeCliLogs
+      ? normalizeNativeCliLogs(nativeCliLogs, currentNativeCliLogs)
+      : currentNativeCliLogs;
+
     const channelPlatforms = getPlatformCatalog().keys({ capability: 'channels' });
     for (const pricingPlatform of Object.keys(pricing || {})) {
       if (!channelPlatforms.includes(pricingPlatform)
@@ -521,6 +557,7 @@ router.post('/advanced', (req, res) => {
       statsInterval: statsInterval !== undefined ? parseInt(statsInterval) : config.statsInterval,
       enableSessionBinding: enableSessionBinding !== undefined ? enableSessionBinding : (config.enableSessionBinding !== false),
       modelDiscovery: normalizedModelDiscovery,
+      nativeCliLogs: normalizedNativeCliLogs,
       pricing: sanitizedPricing
     };
 
@@ -535,6 +572,7 @@ router.post('/advanced', (req, res) => {
         statsInterval: newConfig.statsInterval,
         enableSessionBinding: newConfig.enableSessionBinding,
         modelDiscovery: newConfig.modelDiscovery,
+        nativeCliLogs: newConfig.nativeCliLogs,
         pricing: newConfig.pricing
       }
     });

@@ -780,7 +780,7 @@ async function handleProxyToggle(newValue) {
     // 处理结果
     if (result.success !== false) {
       if (channelType === 'omp') {
-        message.success(newValue ? 'OMP 动态切换与会话日志观察已启用' : 'OMP 已切换为单渠道直连模式')
+        message.success(newValue ? 'OMP 动态切换已启用' : 'OMP 已切换为单渠道直连模式')
       } else {
         message.success(newValue ? '代理已启动' : '代理已停止')
       }

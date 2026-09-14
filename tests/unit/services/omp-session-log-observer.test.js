@@ -2,6 +2,8 @@ const OMP_OBSERVER_MODULE = require.resolve('../../../src/platforms/drivers/omp/
 const OMP_SESSIONS_MODULE = require.resolve('../../../src/platforms/drivers/omp/sessions-implementation');
 const OMP_CHANNELS_MODULE = require.resolve('../../../src/platforms/drivers/omp/channels-implementation');
 const OMP_SETTINGS_MODULE = require.resolve('../../../src/platforms/drivers/omp/native-config-implementation');
+const CONFIG_LOADER_MODULE = require.resolve('../../../src/config/loader');
+const EVENT_BUS_MODULE = require.resolve('../../../src/plugins/event-bus');
 const PROXY_LOG_HELPER_MODULE = require.resolve('../../../src/server/services/proxy-log-helper');
 const WEBSOCKET_MODULE = require.resolve('../../../src/server/websocket-server');
 
@@ -9,6 +11,10 @@ let usageEvents;
 let createOmpUsageEventCursor;
 let getEnabledChannels;
 let broadcastLog;
+let normalizeNativeCliLogs;
+let eventBusOn;
+let eventBusOff;
+let configSavedListener;
 
 function injectStub(modulePath, exports) {
   require.cache[modulePath] = {
@@ -23,6 +29,10 @@ function loadObserver() {
   return require('../../../src/platforms/drivers/omp/session-log-observer');
 }
 
+function emitConfigSaved(config) {
+  configSavedListener?.({ config });
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   usageEvents = [{
@@ -33,10 +43,29 @@ beforeEach(() => {
     timestamp: '2026-07-27T01:00:00.000Z',
     usage: { input: 1, output: 2, total: 3, cost: 0.001 }
   }];
-  createOmpUsageEventCursor = vi.fn(() => ({
-    read: vi.fn(() => usageEvents),
-    reset: vi.fn()
-  }));
+  createOmpUsageEventCursor = vi.fn(() => {
+    let baseline = true;
+    let seenKeys = new Set();
+    const read = vi.fn(() => {
+      const pending = usageEvents.filter((event) => {
+        const key = event.key || event.id;
+        return !seenKeys.has(key);
+      });
+      pending.forEach(event => seenKeys.add(event.key || event.id));
+      if (baseline) {
+        baseline = false;
+        return [];
+      }
+      return pending;
+    });
+    return {
+      read,
+      reset: vi.fn(() => {
+        baseline = true;
+        seenKeys = new Set();
+      })
+    };
+  });
   getEnabledChannels = vi.fn(() => [{
     id: 'channel-demo',
     name: 'Demo Channel',
@@ -44,6 +73,29 @@ beforeEach(() => {
     enabled: true
   }]);
   broadcastLog = vi.fn();
+  normalizeNativeCliLogs = vi.fn((value, fallback = { omp: { enabled: true, intervalSeconds: 5 } }) => {
+    const input = value?.omp || {};
+    const base = fallback?.omp || { enabled: true, intervalSeconds: 5 };
+    return {
+      omp: {
+        enabled: typeof input.enabled === 'boolean' ? input.enabled : base.enabled,
+        intervalSeconds: Number.isInteger(input.intervalSeconds)
+          && input.intervalSeconds >= 1
+          && input.intervalSeconds <= 60
+          ? input.intervalSeconds
+          : base.intervalSeconds
+      }
+    };
+  });
+  configSavedListener = null;
+  eventBusOn = vi.fn((event, listener) => {
+    if (event === 'config:saved') configSavedListener = listener;
+  });
+  eventBusOff = vi.fn((event, listener) => {
+    if (event === 'config:saved' && configSavedListener === listener) {
+      configSavedListener = null;
+    }
+  });
 
   delete require.cache[OMP_OBSERVER_MODULE];
   injectStub(OMP_SESSIONS_MODULE, { createOmpUsageEventCursor });
@@ -53,6 +105,8 @@ beforeEach(() => {
     isManagedProviderId: value => String(value || '').startsWith('ctx-'),
     normalizeProviderId: value => String(value || '').trim().toLowerCase()
   });
+  injectStub(CONFIG_LOADER_MODULE, { normalizeNativeCliLogs });
+  injectStub(EVENT_BUS_MODULE, { on: eventBusOn, off: eventBusOff });
   injectStub(PROXY_LOG_HELPER_MODULE, {
     buildSuccessLogPayload: vi.fn(data => ({ type: 'log', status: 'success', ...data })),
     hasMeaningfulUsage: vi.fn((_source, tokens) => Number(tokens?.total) > 0)
@@ -62,24 +116,38 @@ beforeEach(() => {
 
 afterEach(() => {
   const cached = require.cache[OMP_OBSERVER_MODULE];
-  cached?.exports?.stopOmpSessionLogObserver?.();
+  cached?.exports?.shutdownOmpSessionLogObserver?.();
   [
     OMP_OBSERVER_MODULE,
     OMP_SESSIONS_MODULE,
     OMP_CHANNELS_MODULE,
     OMP_SETTINGS_MODULE,
+    CONFIG_LOADER_MODULE,
+    EVENT_BUS_MODULE,
     PROXY_LOG_HELPER_MODULE,
     WEBSOCKET_MODULE
   ].forEach(modulePath => delete require.cache[modulePath]);
   vi.useRealTimers();
 });
 
-it('seeds existing OMP usage without replaying it, then logs each native event once', () => {
+it('does not create a cursor or publish events while disabled', () => {
   const observer = loadObserver();
-  observer.startOmpSessionLogObserver();
+  observer.configureOmpSessionLogObserver({ enabled: false });
 
+  expect(createOmpUsageEventCursor).not.toHaveBeenCalled();
+  expect(observer._test.getOmpSessionLogObserverStatus()).toEqual({
+    running: false,
+    enabled: false,
+    intervalMs: 5000,
+    cursor: false
+  });
+  observer.pollOmpSessionLogs();
   expect(broadcastLog).not.toHaveBeenCalled();
+});
 
+it('publishes native events when no dynamic OMP proxy is running', () => {
+  const observer = loadObserver();
+  observer.configureOmpSessionLogObserver({ intervalMs: 1000 });
   usageEvents = [
     ...usageEvents,
     {
@@ -100,7 +168,6 @@ it('seeds existing OMP usage without replaying it, then logs each native event o
   ];
 
   observer.pollOmpSessionLogs();
-  observer.pollOmpSessionLogs();
 
   expect(broadcastLog).toHaveBeenCalledTimes(1);
   expect(broadcastLog).toHaveBeenCalledWith(expect.objectContaining({
@@ -120,9 +187,98 @@ it('seeds existing OMP usage without replaying it, then logs each native event o
   }));
 });
 
-it('does not duplicate managed ctx usage already published by the HTTP gateway', () => {
+it('keeps one timer and cursor across idempotent and interval-only configuration', () => {
   const observer = loadObserver();
-  observer.startOmpSessionLogObserver();
+  observer.configureOmpSessionLogObserver({ intervalMs: 1000 });
+  observer.configureOmpSessionLogObserver({ intervalMs: 1000 });
+  expect(createOmpUsageEventCursor).toHaveBeenCalledTimes(1);
+  expect(vi.getTimerCount()).toBe(1);
+
+  observer.configureOmpSessionLogObserver({ intervalMs: 2000 });
+
+  expect(createOmpUsageEventCursor).toHaveBeenCalledTimes(1);
+  expect(vi.getTimerCount()).toBe(1);
+  expect(observer._test.getOmpSessionLogObserverStatus()).toEqual({
+    running: true,
+    enabled: true,
+    intervalMs: 2000,
+    cursor: true
+  });
+});
+
+it('applies config:saved changes and establishes a new baseline after re-enabling', () => {
+  const observer = loadObserver();
+  observer.configureOmpSessionLogObserver({ intervalMs: 1000 });
+  expect(eventBusOn).toHaveBeenCalledTimes(1);
+
+  emitConfigSaved({
+    nativeCliLogs: { omp: { enabled: false, intervalSeconds: 12 } }
+  });
+  expect(observer._test.getOmpSessionLogObserverStatus()).toEqual({
+    running: false,
+    enabled: false,
+    intervalMs: 12000,
+    cursor: false
+  });
+
+  usageEvents = [
+    ...usageEvents,
+    {
+      key: '/sessions/a.jsonl:while-disabled',
+      id: 'omp-session-a:while-disabled',
+      provider: 'native-provider',
+      model: 'gpt-disabled',
+      usage: { total: 4 }
+    }
+  ];
+  observer.pollOmpSessionLogs();
+  expect(broadcastLog).not.toHaveBeenCalled();
+
+  emitConfigSaved({
+    nativeCliLogs: { omp: { enabled: true, intervalSeconds: 3 } }
+  });
+  expect(createOmpUsageEventCursor).toHaveBeenCalledTimes(2);
+  expect(observer._test.getOmpSessionLogObserverStatus()).toEqual({
+    running: true,
+    enabled: true,
+    intervalMs: 3000,
+    cursor: true
+  });
+
+  usageEvents = [
+    ...usageEvents,
+    {
+      key: '/sessions/a.jsonl:after-enable',
+      id: 'omp-session-a:after-enable',
+      provider: 'native-provider',
+      model: 'gpt-enabled',
+      usage: { total: 5 }
+    }
+  ];
+  observer.pollOmpSessionLogs();
+
+  expect(broadcastLog).toHaveBeenCalledTimes(1);
+  expect(broadcastLog).toHaveBeenCalledWith(expect.objectContaining({
+    requestId: 'omp-session-a:after-enable',
+    model: 'gpt-enabled'
+  }));
+});
+
+it('changes only the timer when config:saved changes the interval', () => {
+  const observer = loadObserver();
+  observer.configureOmpSessionLogObserver({ intervalMs: 1000 });
+  emitConfigSaved({
+    nativeCliLogs: { omp: { enabled: true, intervalSeconds: 7 } }
+  });
+
+  expect(createOmpUsageEventCursor).toHaveBeenCalledTimes(1);
+  expect(vi.getTimerCount()).toBe(1);
+  expect(observer._test.getOmpSessionLogObserverStatus().intervalMs).toBe(7000);
+});
+
+it('filters managed ctx providers but publishes other native providers', () => {
+  const observer = loadObserver();
+  observer.configureOmpSessionLogObserver();
   usageEvents = [
     ...usageEvents,
     {
@@ -130,77 +286,42 @@ it('does not duplicate managed ctx usage already published by the HTTP gateway',
       id: 'omp-session-a:a-managed',
       provider: 'ctx-demo',
       model: 'gpt-5',
-      usage: { input: 3, output: 4, total: 7 }
+      usage: { total: 7 }
+    },
+    {
+      key: '/sessions/a.jsonl:a-native',
+      id: 'omp-session-a:a-native',
+      provider: 'native-provider',
+      model: 'native-model',
+      usage: { total: 8 }
     }
   ];
 
   observer.pollOmpSessionLogs();
 
-  expect(broadcastLog).not.toHaveBeenCalled();
-});
-
-it('uses the actual OMP provider when no managed channel matches', () => {
-  getEnabledChannels.mockReturnValue([]);
-  const observer = loadObserver();
-  observer.startOmpSessionLogObserver();
-  usageEvents = [{
-    key: '/sessions/b.jsonl:a1',
-    id: 'omp-session-b:a1',
-    provider: 'native-provider',
-    model: 'native-model',
-    timestamp: '2026-07-27T02:00:00.000Z',
-    usage: { input: 3, output: 4, total: 7 }
-  }];
-
-  observer.pollOmpSessionLogs();
-
+  expect(broadcastLog).toHaveBeenCalledTimes(1);
   expect(broadcastLog).toHaveBeenCalledWith(expect.objectContaining({
+    requestId: 'omp-session-a:a-native',
     channel: 'native-provider',
     model: 'native-model'
   }));
 });
 
-it('stops polling after managed OMP mode is disabled', () => {
+it('shutdown clears cursor, timer, and config listener idempotently', () => {
   const observer = loadObserver();
-  observer.startOmpSessionLogObserver({ intervalMs: 1000 });
-  observer.stopOmpSessionLogObserver();
-  usageEvents = [
-    ...usageEvents,
-    {
-      key: '/sessions/a.jsonl:a-after-stop',
-      id: 'omp-session-a:a-after-stop',
-      provider: 'ctx-demo',
-      model: 'gpt-new',
-      usage: { input: 1, output: 1, total: 2 }
-    }
-  ];
+  observer.configureOmpSessionLogObserver();
+  const listener = configSavedListener;
+  const cursor = createOmpUsageEventCursor.mock.results[0].value;
 
-  vi.advanceTimersByTime(5000);
-
-  expect(createOmpUsageEventCursor).toHaveBeenCalledTimes(1);
-  expect(broadcastLog).not.toHaveBeenCalled();
-  expect(observer.getOmpSessionLogObserverStatus()).toEqual({
+  expect(() => observer.shutdownOmpSessionLogObserver()).not.toThrow();
+  expect(cursor.reset).toHaveBeenCalledTimes(1);
+  expect(eventBusOff).toHaveBeenCalledWith('config:saved', listener);
+  expect(observer._test.getOmpSessionLogObserverStatus()).toEqual({
     running: false,
-    seenEvents: 0
+    enabled: false,
+    intervalMs: 5000,
+    cursor: false
   });
-});
-
-it('bounds remembered event identifiers during long-running observation', () => {
-  usageEvents = [];
-  const observer = loadObserver();
-  observer.startOmpSessionLogObserver({ maxSeenEvents: 2 });
-
-  usageEvents = [1, 2, 3].map(index => ({
-    key: `/sessions/a.jsonl:event-${index}`,
-    id: `event-${index}`,
-    provider: 'native-provider',
-    model: 'gpt-5',
-    usage: { total: index }
-  }));
-  observer.pollOmpSessionLogs();
-
-  expect(observer.getOmpSessionLogObserverStatus()).toEqual({
-    running: true,
-    seenEvents: 2
-  });
+  expect(() => observer.shutdownOmpSessionLogObserver()).not.toThrow();
+  expect(eventBusOff).toHaveBeenCalledTimes(1);
 });

@@ -3,7 +3,7 @@ const path = require('path');
 const BaseChannelService = require('../../../shared/base-channel-service');
 const { isProxyConfig } = require('./native-config-implementation');
 const { PATHS, NATIVE_PATHS } = require('../../../config/paths');
-const { clearNativeOAuth } = require('../../native-oauth-adapters');
+const { clearNativeOAuth, readNativeOAuth, clearClaudeChannelConfig } = require('../../native-oauth-adapters');
 const { isWindowsLikePlatform } = require('../../../utils/home-dir');
 const { normalizeGatewaySourceType } = require('../../../shared/proxy-utils');
 const {
@@ -129,6 +129,63 @@ function updateClaudeSettingsWithModelConfig(channel) {
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
 }
 
+function createClaudeOAuthError(message, code, statusCode) {
+  const error = new Error(message);
+  error.code = code;
+  error.statusCode = statusCode;
+  return error;
+}
+
+function isClaudeProxyRunning() {
+  if (isProxyConfig()) {
+    return true;
+  }
+  try {
+    return require('./proxy-implementation').getProxyStatus().running === true;
+  } catch {
+    return false;
+  }
+}
+
+
+function assertClaudeOAuthIsNativeOnly() {
+  if (isClaudeProxyRunning()) {
+    throw createClaudeOAuthError(
+      'Claude OAuth channels are native-only',
+      'claude_oauth_proxy_unsupported',
+      409
+    );
+  }
+}
+
+function assertNativeClaudeOAuthAvailable() {
+  if (!readNativeOAuth('claude')) {
+    throw createClaudeOAuthError(
+      'Claude native OAuth credential is unavailable',
+      'claude_oauth_credential_unavailable',
+      422
+    );
+  }
+}
+
+function applyNativeClaudeOAuth() {
+  assertClaudeOAuthIsNativeOnly();
+  assertNativeClaudeOAuthAvailable();
+  clearClaudeChannelConfig();
+}
+
+function validateClaudeOAuthMutation(channel, operation) {
+  if (channel?.authMode !== 'oauth') {
+    return;
+  }
+  if (operation !== 'apply' && channel.enabled === false) {
+    return;
+  }
+  assertClaudeOAuthIsNativeOnly();
+  assertNativeClaudeOAuthAvailable();
+}
+
+
 function updateClaudeSettings(baseUrl, apiKey) {
   const settingsPath = getClaudeSettingsPath();
   fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
@@ -196,7 +253,7 @@ class ClaudeChannelService extends BaseChannelService {
       platform: 'claude',
       channelsFilePath: PATHS.channels.claude,
       defaultGatewaySource: 'claude',
-      isProxyRunning: () => isProxyConfig(),
+      isProxyRunning: () => isClaudeProxyRunning(),
       oauthChannelPolicy: 'single-enabled',
     });
     // Claude 特有：文件监听缓存
@@ -204,6 +261,10 @@ class ClaudeChannelService extends BaseChannelService {
     this._cacheInitialized = false;
     this._watchRegistered = false;
   }
+  _validateBeforeChannelMutation(channel, _allChannels, context = {}) {
+    validateClaudeOAuthMutation(channel, context.operation);
+  }
+
 
   _generateId() {
     return `channel-${Date.now()}`;
@@ -249,13 +310,13 @@ class ClaudeChannelService extends BaseChannelService {
   }
 
   _onAfterCreate(channel, _allChannels) {
-    if (!isProxyConfig() && channel.enabled !== false && !isOpenAiCompatibleGateway(channel)) {
+    if (!isClaudeProxyRunning() && channel.enabled !== false && !isOpenAiCompatibleGateway(channel)) {
       this._applyToNativeSettings(channel);
     }
   }
 
   _onAfterUpdate(oldChannel, nextChannel, allChannels) {
-    if (isProxyConfig()) {
+    if (isClaudeProxyRunning()) {
       return;
     }
 
@@ -277,7 +338,7 @@ class ClaudeChannelService extends BaseChannelService {
   }
 
   _onAfterDelete(_channel, allChannels) {
-    if (isProxyConfig()) {
+    if (isClaudeProxyRunning()) {
       return;
     }
 
@@ -299,11 +360,14 @@ class ClaudeChannelService extends BaseChannelService {
       error.statusCode = 400;
       throw error;
     }
-
     return super.applyChannelToSettings(channelId);
   }
 
   _applyToNativeSettings(channel) {
+    if (channel.authMode === 'oauth') {
+      applyNativeClaudeOAuth(channel);
+      return;
+    }
     updateClaudeSettingsWithModelConfig(channel);
   }
 
@@ -316,6 +380,16 @@ class ClaudeChannelService extends BaseChannelService {
 
 const service = new ClaudeChannelService();
 
+
+function getClaudeProxyExcludedChannelIds(channels = null) {
+  const candidates = Array.isArray(channels) ? channels : service.getEnabledChannels();
+  return [...new Set(
+    candidates
+      .filter(channel => channel?.enabled !== false && channel?.authMode === 'oauth')
+      .map(channel => channel.id)
+      .filter(Boolean)
+  )];
+}
 function getAllChannels() {
   const data = service.loadChannels();
   return data.channels;
@@ -500,6 +574,7 @@ module.exports = {
   getCurrentSettings,
   createChannel,
   updateChannel,
+  getClaudeProxyExcludedChannelIds,
   markChannelAsRecentlyUsed,
   deleteChannel,
   applyChannelToSettings,

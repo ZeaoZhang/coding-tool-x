@@ -231,40 +231,117 @@ function parseSessionFile(filePath) {
   };
 }
 
+function createSessionUsageParserState(filePath, entries = [], previousState = {}) {
+  const header = entries.find(entry => entry?.type === 'session') || {};
+  return {
+    sessionId: previousState.sessionId || header.id || parseOmpSessionId(filePath),
+    sessionTimestamp: previousState.sessionTimestamp ?? header.timestamp ?? null,
+    activeProvider: previousState.activeProvider || '',
+    activeModel: previousState.activeModel || '',
+    entryIndex: Number.isInteger(previousState.entryIndex) ? previousState.entryIndex : 0
+  };
+}
+
+function parseSessionUsageEntry(filePath, entry, index, state) {
+  if (entry?.type === 'session') {
+    state.sessionId = entry.id || state.sessionId;
+    state.sessionTimestamp = entry.timestamp || state.sessionTimestamp;
+    return null;
+  }
+  if (entry?.type === 'model_change') {
+    state.activeProvider = entry.provider || state.activeProvider;
+    state.activeModel = entry.modelId || entry.model || state.activeModel;
+    return null;
+  }
+  if (entry?.type !== 'message') return null;
+
+  const message = entry.message || {};
+  const role = message.role || entry.role;
+  if (role !== 'assistant') return null;
+
+  const eventId = entry.id || message.id || `assistant-${index}`;
+  return {
+    key: `${filePath}:${eventId}`,
+    id: `${state.sessionId}:${eventId}`,
+    sessionId: state.sessionId,
+    filePath,
+    provider: entry.provider || message.provider || state.activeProvider || '',
+    model: entry.model || message.model || state.activeModel || '',
+    timestamp: entry.timestamp || message.timestamp || state.sessionTimestamp || null,
+    usage: parseUsage(entry.usage || message.usage || {})
+  };
+}
+
+function parseSessionUsageEntries(filePath, entries, previousState = {}) {
+  const state = createSessionUsageParserState(filePath, entries, previousState);
+  const events = [];
+  entries.forEach((entry, index) => {
+    const event = parseSessionUsageEntry(filePath, entry, index, state);
+    if (event) events.push(event);
+  });
+  return { events, state };
+}
+
+function parseJsonLine(line) {
+  try {
+    return JSON.parse(line);
+  } catch {
+    return null;
+  }
+}
+
+function getUtf8SafeLength(buffer) {
+  let continuationBytes = 0;
+  for (let index = buffer.length - 1; index >= 0; index -= 1) {
+    if ((buffer[index] & 0xc0) !== 0x80) break;
+    continuationBytes += 1;
+  }
+  if (continuationBytes === 0) return buffer.length;
+
+  const leadIndex = buffer.length - continuationBytes - 1;
+  if (leadIndex < 0) return 0;
+  const lead = buffer[leadIndex];
+  const expectedLength = lead >= 0xc2 && lead <= 0xdf
+    ? 2
+    : lead >= 0xe0 && lead <= 0xef
+      ? 3
+      : lead >= 0xf0 && lead <= 0xf4
+        ? 4
+        : 0;
+  return expectedLength && continuationBytes < expectedLength - 1
+    ? leadIndex
+    : buffer.length;
+}
+
+function consumeSessionUsageBytes(filePath, buffer, state, events = null) {
+  const pendingBytes = state.utf8Remainder || Buffer.alloc(0);
+  const nextBytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || '');
+  const combinedBytes = pendingBytes.length > 0
+    ? Buffer.concat([pendingBytes, nextBytes])
+    : nextBytes;
+  const safeLength = getUtf8SafeLength(combinedBytes);
+  const text = combinedBytes.subarray(0, safeLength).toString('utf8');
+  state.utf8Remainder = combinedBytes.subarray(safeLength);
+  const combined = `${state.remainder || ''}${text}`;
+  if (!combined) return;
+
+  const lines = combined.split(/\r?\n/);
+  state.remainder = lines.pop() || '';
+  lines.forEach((line) => {
+    if (!line.trim()) return;
+    const entry = parseJsonLine(line);
+    if (entry) {
+      const event = parseSessionUsageEntry(filePath, entry, state.entryIndex, state);
+      if (event && events) events.push(event);
+    }
+    state.entryIndex += 1;
+  });
+}
+
+
 function parseSessionUsageEvents(filePath) {
   const entries = readJsonLines(filePath);
-  const header = entries.find(entry => entry?.type === 'session') || {};
-  const sessionId = header.id || parseOmpSessionId(filePath);
-  let activeProvider = '';
-  let activeModel = '';
-  const events = [];
-
-  entries.forEach((entry, index) => {
-    if (entry?.type === 'model_change') {
-      activeProvider = entry.provider || activeProvider;
-      activeModel = entry.modelId || entry.model || activeModel;
-      return;
-    }
-    if (entry?.type !== 'message') return;
-
-    const message = entry.message || {};
-    const role = message.role || entry.role;
-    if (role !== 'assistant') return;
-
-    const eventId = entry.id || message.id || `assistant-${index}`;
-    events.push({
-      key: `${filePath}:${eventId}`,
-      id: `${sessionId}:${eventId}`,
-      sessionId,
-      filePath,
-      provider: entry.provider || message.provider || activeProvider || '',
-      model: entry.model || message.model || activeModel || '',
-      timestamp: entry.timestamp || message.timestamp || header.timestamp || null,
-      usage: parseUsage(entry.usage || message.usage || {})
-    });
-  });
-
-  return events;
+  return parseSessionUsageEntries(filePath, entries).events;
 }
 
 function getOmpSessionPaths() {
@@ -328,32 +405,142 @@ function getOmpUsageEvents(rootDir = getOmpSessionPaths().sessions) {
   });
 }
 
+const CURSOR_ANCHOR_BYTES = 256;
+
+function readFileRange(filePath, offset, length) {
+  if (length <= 0) {
+    return { bytesRead: 0, buffer: Buffer.alloc(0) };
+  }
+
+  const fd = fs.openSync(filePath, 'r');
+  const buffer = Buffer.alloc(length);
+  let bytesRead = 0;
+  try {
+    while (bytesRead < length) {
+      const count = fs.readSync(fd, buffer, bytesRead, length - bytesRead, offset + bytesRead);
+      if (!count) break;
+      bytesRead += count;
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return { bytesRead, buffer: buffer.subarray(0, bytesRead) };
+}
+
+function createCursorFileState(filePath, stat) {
+  return {
+    ...createSessionUsageParserState(filePath),
+    offset: 0,
+    remainder: '',
+    utf8Remainder: Buffer.alloc(0),
+    prefixBytes: Buffer.alloc(0),
+    tailBytes: Buffer.alloc(0),
+    device: stat.dev,
+    inode: stat.ino,
+    size: 0,
+    mtimeMs: stat.mtimeMs,
+    ctimeMs: stat.ctimeMs
+  };
+}
+
+function updateCursorAnchors(state, buffer) {
+  if (!buffer || buffer.length === 0) return;
+  if (state.prefixBytes.length < CURSOR_ANCHOR_BYTES) {
+    const prefixBytesNeeded = CURSOR_ANCHOR_BYTES - state.prefixBytes.length;
+    state.prefixBytes = Buffer.concat([
+      state.prefixBytes,
+      buffer.subarray(0, prefixBytesNeeded)
+    ]).subarray(0, CURSOR_ANCHOR_BYTES);
+  }
+  state.tailBytes = Buffer.concat([state.tailBytes, buffer]);
+  if (state.tailBytes.length > CURSOR_ANCHOR_BYTES) {
+    state.tailBytes = state.tailBytes.subarray(-CURSOR_ANCHOR_BYTES);
+  }
+}
+
+function readCursorAnchor(filePath, offset, length) {
+  return readFileRange(filePath, offset, length).buffer;
+}
+
+function isCursorFileReplaced(filePath, state, stat) {
+  const identityChanged = state.device !== stat.dev || state.inode !== stat.ino;
+  const truncated = stat.size < state.offset;
+  const metadataChanged = state.mtimeMs !== stat.mtimeMs || state.ctimeMs !== stat.ctimeMs;
+  const sameSizeRewritten = stat.size === state.size && metadataChanged;
+  if (identityChanged || truncated || sameSizeRewritten) return true;
+  if (!metadataChanged || stat.size <= state.offset) return false;
+
+  try {
+    if (state.prefixBytes.length > 0
+      && stat.size >= state.prefixBytes.length
+      && !readCursorAnchor(filePath, 0, state.prefixBytes.length).equals(state.prefixBytes)) {
+      return true;
+    }
+    if (state.tailBytes.length > 0
+      && state.offset >= state.tailBytes.length
+      && !readCursorAnchor(
+        filePath,
+        state.offset - state.tailBytes.length,
+        state.tailBytes.length
+      ).equals(state.tailBytes)) {
+      return true;
+    }
+  } catch {
+    return true;
+  }
+  return false;
+}
+
 function createOmpUsageEventCursor(rootDir = null) {
-  let signatures = new Map();
+  let fileStates = new Map();
+  let initialized = false;
 
   return {
     read() {
       const files = scanSessionFiles(rootDir || getOmpSessionPaths().sessions);
-      const nextSignatures = new Map();
-      const events = [];
+      const currentFiles = new Set(files);
+      fileStates.forEach((_state, filePath) => {
+        if (!currentFiles.has(filePath)) fileStates.delete(filePath);
+      });
 
+      const events = [];
       files.forEach((filePath) => {
         try {
           const stat = fs.statSync(filePath);
-          const signature = `${stat.size}:${stat.mtimeMs}`;
-          nextSignatures.set(filePath, signature);
-          if (signatures.get(filePath) === signature) return;
-          events.push(...parseSessionUsageEvents(filePath));
+          let state = fileStates.get(filePath);
+          if (!state || isCursorFileReplaced(filePath, state, stat)) {
+            state = createCursorFileState(filePath, stat);
+            fileStates.set(filePath, state);
+          }
+
+          const bytesToRead = Math.max(0, stat.size - state.offset);
+          if (bytesToRead > 0) {
+            const { bytesRead, buffer } = readFileRange(filePath, state.offset, bytesToRead);
+            consumeSessionUsageBytes(
+              filePath,
+              buffer,
+              state,
+              initialized ? events : null
+            );
+            state.offset += bytesRead;
+            updateCursorAnchors(state, buffer);
+          }
+          state.device = stat.dev;
+          state.inode = stat.ino;
+          state.size = stat.size;
+          state.mtimeMs = stat.mtimeMs;
+          state.ctimeMs = stat.ctimeMs;
         } catch (error) {
           console.warn('[OMP Sessions] Failed to read changed usage events:', filePath, error.message);
         }
       });
 
-      signatures = nextSignatures;
+      initialized = true;
       return events;
     },
     reset() {
-      signatures = new Map();
+      fileStates = new Map();
+      initialized = false;
     }
   };
 }

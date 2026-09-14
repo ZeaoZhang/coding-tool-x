@@ -36,4 +36,13 @@ describe('web log components source routing', () => {
     expect(channelColumn).toContain('supportsKnownRuntime()');
     expect(channelColumn).not.toContain('logStreams.claude');
   });
+
+  test('explains that OMP logs are read continuously from native sessions', () => {
+    const channelColumn = readProjectFile('src/web/src/components/dashboard/ChannelColumn.vue');
+    const manifest = readProjectFile('src/platforms/manifests/omp.json');
+
+    expect(channelColumn).toContain('ctx 将持续读取 OMP 原生会话日志');
+    expect(channelColumn).not.toContain('开启动态切换后');
+    expect(manifest).toContain('ctx 会持续读取 OMP 原生会话日志');
+  });
 });
