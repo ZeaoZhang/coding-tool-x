@@ -143,6 +143,7 @@ function normalizeMarketplacePlugin(entry, inheritedMarketplace = '') {
 class OmpNativePluginAdapter {
   constructor(options = {}) {
     this.commandRunner = options.commandRunner || execFileSync;
+    this.pathContext = options.pathContext || null;
     this.cacheTtlMs = Math.max(0, Number(options.cacheTtlMs) || 1000);
     this._operationCache = new Map();
     this._operationInflight = new Map();
@@ -256,7 +257,10 @@ class OmpNativePluginAdapter {
   }
 
   listLooseExtensions() {
-    const extensionsDir = getOmpPaths().extensions;
+    const extensionsDir = this.pathContext?.customized
+      ? (this.pathContext.native?.extensions
+        || path.join(this.pathContext.native?.dir || this.pathContext.home || process.cwd(), 'extensions'))
+      : getOmpPaths().extensions;
     if (!fs.existsSync(extensionsDir)) return [];
     const plugins = [];
 

@@ -1,6 +1,14 @@
 const fs = require('fs');
 const { NATIVE_PATHS } = require('../../../config/paths');
 const { isWindowsLikePlatform } = require('../../../utils/home-dir');
+const DEFAULT_NATIVE_PATHS = NATIVE_PATHS.claude;
+let nativePaths = DEFAULT_NATIVE_PATHS;
+
+function configure({ pathContext } = {}) {
+  nativePaths = pathContext?.customized && pathContext.native?.settings
+    ? { ...DEFAULT_NATIVE_PATHS, ...pathContext.native }
+    : DEFAULT_NATIVE_PATHS;
+}
 
 function buildEchoCommand(value) {
   if (isWindowsLikePlatform(process.platform, process.env)) {
@@ -11,12 +19,12 @@ function buildEchoCommand(value) {
 
 // Claude Code 配置文件路径
 function getSettingsPath() {
-  return NATIVE_PATHS.claude.settings;
+  return nativePaths.settings;
 }
 
 // 备份文件路径
 function getBackupPath() {
-  return NATIVE_PATHS.claude.settingsBackup;
+  return nativePaths.settingsBackup;
 }
 
 // 检查配置文件是否存在
@@ -168,6 +176,7 @@ function getCurrentProxyPort() {
 }
 
 module.exports = {
+  configure,
   getSettingsPath,
   getBackupPath,
   settingsExists,

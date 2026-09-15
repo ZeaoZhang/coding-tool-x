@@ -49,6 +49,17 @@
         ".agents/skills"
       ]
     },
+    "agents": {
+      "canonicalRoot": ".opencode/agents"
+    },
+    "commands": {
+      "canonicalRoot": ".opencode/commands",
+      "format": "claude"
+    },
+    "plugins": {
+      "path": ".opencode/opencode.json",
+      "format": "opencode-json"
+    },
     "mcp": {
       "path": ".opencode/opencode.json",
       "format": "opencode-json"

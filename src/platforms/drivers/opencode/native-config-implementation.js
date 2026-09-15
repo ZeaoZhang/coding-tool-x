@@ -21,12 +21,21 @@ function resolveModelCost(modelId) {
   return meta ? meta.pricing : null;
 }
 
-const CONFIG_DIR = NATIVE_PATHS.opencode.config;
+let CONFIG_DIR = NATIVE_PATHS.opencode.config;
 const CONFIG_PATHS = {
   config: path.join(CONFIG_DIR, 'config.json'),
   opencode: path.join(CONFIG_DIR, 'opencode.json'),
   opencodec: path.join(CONFIG_DIR, 'opencode.jsonc')
 };
+
+function configure({ pathContext } = {}) {
+  const configuredDir = pathContext?.customized ? pathContext.native?.config : null;
+  if (!configuredDir) return;
+  CONFIG_DIR = configuredDir;
+  CONFIG_PATHS.config = path.join(CONFIG_DIR, 'config.json');
+  CONFIG_PATHS.opencode = path.join(CONFIG_DIR, 'opencode.json');
+  CONFIG_PATHS.opencodec = path.join(CONFIG_DIR, 'opencode.jsonc');
+}
 const BACKUP_SUFFIX = '.cc-tool-backup';
 const EMPTY_SENTINEL = '__CC_TOOL_NO_FILE__';
 const PROXY_PROVIDER_ID = 'ctx-proxy';
@@ -631,6 +640,7 @@ function getCurrentProxyPort() {
 }
 
 module.exports = {
+  configure,
   configExists,
   hasBackup,
   readConfig,

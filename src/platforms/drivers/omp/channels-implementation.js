@@ -25,6 +25,22 @@ const {
 
 const OMP_THINKING_SUFFIX_RE = /:(minimal|low|medium|high|xhigh|off)$/;
 
+let configuredState = {
+  channels: PATHS.channels?.omp,
+  activeChannel: PATHS.activeChannel?.omp
+};
+
+function configure({ pathContext } = {}) {
+  const custom = pathContext?.customized === true;
+  ompConfig.configure?.({ pathContext });
+  configuredState = {
+    channels: custom ? (pathContext.state?.channels || PATHS.channels?.omp) : PATHS.channels?.omp,
+    activeChannel: custom ? (pathContext.state?.activeChannel || PATHS.activeChannel?.omp) : PATHS.activeChannel?.omp,
+    gatewaySecret: custom ? (pathContext.state?.gatewaySecret || PATHS.ompGatewaySecret) : PATHS.ompGatewaySecret
+  };
+  if (service) service.channelsFilePath = configuredState.channels;
+}
+
 function clearOmpChannelBalanceCache(channel) {
   try {
     require('../../../server/services/channel-balance').clearChannelBalanceCache('omp', channel);
@@ -46,8 +62,8 @@ function selectLatestEnabledChannel(channels = []) {
 function loadManagedOmpModeState() {
   ensureStorageDirMigrated();
   try {
-    if (!fs.existsSync(PATHS.activeChannel.omp)) return null;
-    const data = JSON.parse(fs.readFileSync(PATHS.activeChannel.omp, 'utf8'));
+    if (!fs.existsSync(configuredState.activeChannel)) return null;
+    const data = JSON.parse(fs.readFileSync(configuredState.activeChannel, 'utf8'));
     return data && typeof data === 'object' && !Array.isArray(data) ? data : null;
   } catch {
     return null;
@@ -60,7 +76,7 @@ function loadManagedOmpActiveChannelId() {
 
 function isManagedOmpModeEnabled() {
   ensureStorageDirMigrated();
-  return fs.existsSync(PATHS.activeChannel.omp);
+  return fs.existsSync(configuredState.activeChannel);
 }
 
 function writeManagedOmpModeState(filePath, state) {
@@ -78,7 +94,7 @@ function writeManagedOmpModeState(filePath, state) {
 }
 
 function getOmpGatewaySecretPath() {
-  return PATHS.ompGatewaySecret
+  return configuredState.gatewaySecret || PATHS.ompGatewaySecret
     || path.join(path.dirname(PATHS.activeChannel.omp), 'omp-gateway-secret');
 }
 
@@ -127,7 +143,7 @@ function getOrCreateOmpGatewaySecret() {
 
 function enableManagedOmpMode(activeChannelId = null, gateway = null) {
   ensureStorageDirMigrated();
-  const filePath = PATHS.activeChannel.omp;
+  const filePath = configuredState.activeChannel;
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -155,8 +171,8 @@ function enableManagedOmpMode(activeChannelId = null, gateway = null) {
 
 function disableManagedOmpMode() {
   ensureStorageDirMigrated();
-  if (fs.existsSync(PATHS.activeChannel.omp)) {
-    fs.unlinkSync(PATHS.activeChannel.omp);
+  if (fs.existsSync(configuredState.activeChannel)) {
+    fs.unlinkSync(configuredState.activeChannel);
   }
 }
 
@@ -164,7 +180,7 @@ class OmpChannelService extends BaseChannelService {
   constructor() {
     super({
       platform: 'omp',
-      channelsFilePath: PATHS.channels.omp,
+      channelsFilePath: configuredState.channels,
       defaultGatewaySource: 'openai_compatible',
       oauthChannelPolicy: 'mixed',
       isProxyRunning: () => isManagedOmpModeEnabled()
@@ -787,6 +803,7 @@ function syncCurrentOmpChannel(options = {}) {
 }
 
 module.exports = {
+  configure,
   getChannels: () => service.getChannels(),
   createChannel: (name, baseUrl, apiKey, extra = {}) => service.createChannel({
     name,

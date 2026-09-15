@@ -5,7 +5,11 @@ const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
-const { NATIVE_PATHS, PATHS } = require('../config/paths');
+const pathsModule = require('../config/paths');
+const DEFAULT_NATIVE_PATHS = pathsModule.NATIVE_PATHS;
+const DEFAULT_PATHS = pathsModule.PATHS;
+let NATIVE_PATHS = DEFAULT_NATIVE_PATHS;
+let PATHS = DEFAULT_PATHS;
 const claudeSettingsManager = require('./drivers/claude/native-config-implementation');
 const codexSettingsManager = require('./drivers/codex/native-config-implementation');
 const geminiSettingsManager = require('./drivers/gemini/native-config-implementation');
@@ -17,6 +21,33 @@ const SUPPORTED_TOOLS = ['claude', 'codex', 'gemini', 'omp'];
 const GEMINI_MAIN_ACCOUNT_KEY = 'main-account';
 const GEMINI_KEYCHAIN_SERVICE = 'gemini-cli-oauth';
 const CODEX_KEYCHAIN_SERVICE = 'Codex Auth';
+
+function configure({ pathContext } = {}) {
+  if (!pathContext?.customized) {
+    NATIVE_PATHS = DEFAULT_NATIVE_PATHS;
+    PATHS = DEFAULT_PATHS;
+    return;
+  }
+
+  const platform = String(pathContext.platform || '').trim().toLowerCase();
+  const native = pathContext.native && typeof pathContext.native === 'object'
+    ? pathContext.native
+    : {};
+  const state = pathContext.state && typeof pathContext.state === 'object'
+    ? pathContext.state
+    : {};
+  NATIVE_PATHS = {
+    ...DEFAULT_NATIVE_PATHS,
+    ...(platform ? { [platform]: { ...(DEFAULT_NATIVE_PATHS[platform] || {}), ...native } } : {})
+  };
+  PATHS = {
+    ...DEFAULT_PATHS,
+    channels: {
+      ...(DEFAULT_PATHS.channels || {}),
+      ...(platform && state.channels ? { [platform]: state.channels } : {})
+    }
+  };
+}
 
 function ensureDir(dirPath) {
   if (!dirPath) return;
@@ -959,6 +990,7 @@ function applyOAuthCredential(tool, credential) {
 
 module.exports = {
   SUPPORTED_TOOLS,
+  configure,
   fingerprintFor,
   inspectTool,
   readNativeOAuth,

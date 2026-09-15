@@ -5,6 +5,10 @@ const path = require('path');
 const { getCodexDir } = require('./config');
 const { parseSession } = require('./parser');
 
+function configure({ pathContext } = {}) {
+  require('./config').configure?.({ pathContext });
+}
+
 function extractSessionIdFromRolloutFilename(filePath) {
   const basename = path.basename(filePath, '.jsonl');
   const match = basename.match(/([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i);
@@ -165,4 +169,4 @@ async function parse(descriptor) {
   return { session, messages: normalizedMessages };
 }
 
-module.exports = { inventory, parse, extractCodexProjectName };
+module.exports = { configure, inventory, parse, extractCodexProjectName };

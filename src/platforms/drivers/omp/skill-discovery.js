@@ -378,8 +378,15 @@ function _discoverOmpSkills(service, options = {}, settings = readEffectiveSetti
   const cwd = options.cwd ? canonicalCwd(options.cwd) : null;
   if (settings.enabled === false) return [];
 
-  const ompPaths = getOmpPaths();
-  const userHome = HOME_DIR;
+  const customNative = options.pathContext?.customized ? (options.pathContext.native || {}) : null;
+  const ompPaths = customNative
+    ? {
+      ...getOmpPaths(),
+      ...customNative,
+      agentDir: customNative.dir || options.pathContext.home
+    }
+    : getOmpPaths();
+  const userHome = options.pathContext?.customized ? options.pathContext.home : HOME_DIR;
   const descriptors = [
     { provider: 'native', scope: 'user', root: ompPaths.skills, requireDescription: true },
     ...(cwd ? [{ provider: 'native', scope: 'project', root: path.join(cwd, '.omp', 'skills'), requireDescription: true }] : []),
@@ -454,7 +461,8 @@ function discoverOmpSkills(service, options = {}) {
   const fingerprint = JSON.stringify({
     settings,
     pluginPaths,
-    claudePluginRoots
+    claudePluginRoots,
+    pathContext: options.pathContext?.customized ? options.pathContext : null
   });
   const key = cacheKey(cwd, scope);
   const now = Date.now();

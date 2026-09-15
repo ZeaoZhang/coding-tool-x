@@ -76,9 +76,33 @@ function copyDirRecursive(src, dest) {
  * 配置同步服务类
  */
 class ConfigSyncService {
-    constructor() {
+    constructor({ registry = null } = {}) {
+        this.registry = registry;
         this.globalConfigDir = GLOBAL_CONFIG_DIR;
+        this.globalConfigDirs = {
+            skills: path.join(this.globalConfigDir, CONFIG_TYPES.skills.globalDir),
+            agents: path.join(this.globalConfigDir, CONFIG_TYPES.agents.globalDir),
+            commands: path.join(this.globalConfigDir, CONFIG_TYPES.commands.globalDir)
+        };
+
+        try {
+            const pathContext = this.registry?.resolvePathContext?.('claude');
+            if (pathContext?.customized) {
+                this.globalConfigDir = pathContext.native?.dir || this.globalConfigDir;
+                this.globalConfigDirs = {
+                    skills: pathContext.native?.skills || path.join(this.globalConfigDir, CONFIG_TYPES.skills.globalDir),
+                    agents: pathContext.native?.agents || path.join(this.globalConfigDir, CONFIG_TYPES.agents.globalDir),
+                    commands: pathContext.native?.commands || path.join(this.globalConfigDir, CONFIG_TYPES.commands.globalDir)
+                };
+            }
+        } catch (_) {
+            // Keep legacy defaults when an injected registry cannot resolve paths.
+        }
         ensureDir(this.globalConfigDir);
+    }
+
+    _getGlobalConfigDir(type) {
+        return this.globalConfigDirs[type] || path.join(this.globalConfigDir, CONFIG_TYPES[type]?.globalDir || type);
     }
 
     /**
@@ -98,7 +122,7 @@ class ConfigSyncService {
             let dir;
 
             if (source === 'global') {
-                dir = path.join(this.globalConfigDir, config.globalDir);
+                dir = this._getGlobalConfigDir(type);
             } else if (source === 'workspace' && projectPath) {
                 if (!config.projectDir) {
                     // skills 不支持项目级
@@ -363,7 +387,7 @@ class ConfigSyncService {
         let baseDir;
 
         if (target === 'global') {
-            baseDir = path.join(this.globalConfigDir, config.globalDir);
+            baseDir = this._getGlobalConfigDir(type);
         } else {
             baseDir = path.join(projectPath, '.claude', config.projectDir);
         }
@@ -463,7 +487,7 @@ class ConfigSyncService {
         let baseDir;
 
         if (source === 'global') {
-            baseDir = path.join(this.globalConfigDir, config.globalDir);
+            baseDir = this._getGlobalConfigDir(type);
         } else {
             baseDir = path.join(projectPath, '.claude', config.projectDir);
         }

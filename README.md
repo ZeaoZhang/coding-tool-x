@@ -404,6 +404,27 @@ npm test
 
 现有 `ctx claude ...`、`ctx codex ...` 等 CLI/API 路径继续保留。`GET /api/platforms` 只返回安全的公共元数据；旧 facade、`require.resolve()` + `require.cache` 测试 seam 以及 OMP managed mode 都是有意保留的兼容契约。
 
+### 原生路径覆盖
+
+原生路径可以单独写入 `~/.cc-tool/config/platform-paths.json`，不需要修改平台 Manifest。路径配置只覆盖 `paths`，不会改变平台能力、Driver 或命令定义：
+
+```json
+{
+  "platforms": {
+    "demo-cli": {
+      "paths": {
+        "home": "/opt/demo-cli",
+        "sessions": "/opt/demo-cli/history",
+        "settings": "/opt/demo-cli/settings.json",
+        "channels": "/opt/demo-cli/cc-tool/channels.json"
+      }
+    }
+  }
+}
+```
+
+路径值支持 `{home}` 和 `$ENV_VAR`；内置平台未配置覆盖时继续使用原有默认目录。配置变化不会自动搬迁已有数据；无效覆盖文件会被忽略并记录诊断信息。
+
 ## 相关文档
 
 - [CHANGELOG.md](CHANGELOG.md)

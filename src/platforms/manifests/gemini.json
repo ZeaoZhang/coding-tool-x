@@ -51,6 +51,17 @@
         ".gemini/skills"
       ]
     },
+    "agents": {
+      "canonicalRoot": ".gemini/agents"
+    },
+    "commands": {
+      "canonicalRoot": ".gemini/commands",
+      "format": "gemini"
+    },
+    "plugins": {
+      "path": null,
+      "format": "gemini"
+    },
     "mcp": {
       "path": ".gemini/settings.json",
       "format": "gemini-json"

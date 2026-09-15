@@ -1,23 +1,31 @@
 const fs = require('fs');
 const path = require('path');
 const { NATIVE_PATHS } = require('../../../config/paths');
+const DEFAULT_NATIVE_PATHS = NATIVE_PATHS.gemini;
+let nativePaths = DEFAULT_NATIVE_PATHS;
+
+function configure({ pathContext } = {}) {
+  nativePaths = pathContext?.customized && pathContext.native?.env
+    ? { ...DEFAULT_NATIVE_PATHS, ...pathContext.native }
+    : DEFAULT_NATIVE_PATHS;
+}
 
 // Gemini 配置文件路径
 function getEnvPath() {
-  return NATIVE_PATHS.gemini.env;
+  return nativePaths.env;
 }
 
 function getSettingsPath() {
-  return path.join(path.dirname(NATIVE_PATHS.gemini.env), 'settings.json');
+  return nativePaths.settings || path.join(path.dirname(nativePaths.env), 'settings.json');
 }
 
 // 备份文件路径
 function getEnvBackupPath() {
-  return NATIVE_PATHS.gemini.envBackup;
+  return nativePaths.envBackup;
 }
 
 function getSettingsBackupPath() {
-  return path.join(path.dirname(NATIVE_PATHS.gemini.env), 'settings.json.cc-tool-backup');
+  return nativePaths.settingsBackup || path.join(path.dirname(nativePaths.env), 'settings.json.cc-tool-backup');
 }
 
 // 检查配置文件是否存在
@@ -257,6 +265,7 @@ function getCurrentProxyPort() {
 }
 
 module.exports = {
+  configure,
   getEnvPath,
   getSettingsPath,
   getEnvBackupPath,

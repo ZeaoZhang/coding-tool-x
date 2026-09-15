@@ -20,6 +20,18 @@ const {
   upsertSyncedChannels
 } = require('../../../server/services/channel-sync-utils');
 
+let configuredState = { channels: PATHS.channels.codex };
+
+function configure({ pathContext } = {}) {
+  configuredState = {
+    channels: pathContext?.customized
+      ? (pathContext.state?.channels || PATHS.channels?.codex)
+      : PATHS.channels?.codex
+  };
+  require('../../native-oauth-adapters').configure?.({ pathContext });
+  if (service) service.channelsFilePath = configuredState.channels;
+}
+
 const CODEX_MANAGED_ENV_KEY = 'CC_PROXY_KEY';
 const CODEX_PROXY_ENV_VALUE = 'PROXY_KEY';
 
@@ -245,7 +257,7 @@ class CodexChannelService extends BaseChannelService {
   constructor() {
     super({
       platform: 'codex',
-      channelsFilePath: PATHS.channels.codex,
+      channelsFilePath: configuredState.channels,
       defaultGatewaySource: 'codex',
       oauthChannelPolicy: 'single-enabled',
       isProxyRunning: () => isProxyConfig(),
@@ -524,6 +536,7 @@ try {
 }
 
 module.exports = {
+  configure,
   getChannels,
   createChannel,
   updateChannel,

@@ -463,6 +463,48 @@ describe('config-templates-service manifest mappings', () => {
       'no-project-file': { fileName: null, name: 'No Project File command templates' }
     });
   });
+
+  test('uses custom project resource paths from a platform registry', async () => {
+    const manifest = {
+      key: 'demo-cli',
+      label: 'Demo',
+      promptFile: 'DEMO.md',
+      resourceTypes: { skills: true, commands: true, agents: true, plugins: false },
+      projectResources: {
+        instruction: { path: 'DEMO.md' },
+        skills: { canonicalRoot: '.demo/skills', readRoots: ['.demo/skills'] },
+        agents: { canonicalRoot: '.demo/agents' },
+        commands: { canonicalRoot: '.demo/commands', format: 'claude' },
+        plugins: { path: null, format: 'demo' },
+        mcp: { path: '.demo/mcp.json', format: 'claude-json' }
+      }
+    };
+    const registry = {
+      list: () => [manifest],
+      resolve: key => key === manifest.key ? manifest : null
+    };
+    const template = templatesService.createCustomTemplate({
+      name: 'Demo resources',
+      cliType: 'demo-cli',
+      aiConfigs: { 'demo-cli': { enabled: false, content: '' } },
+      commands: [{ name: 'inspect', body: 'echo inspect' }]
+    });
+    const targetDir = path.join(testDir, 'demo-workspace');
+    fs.mkdirSync(targetDir, { recursive: true });
+
+    const result = await templatesService.applyTemplateToProject(targetDir, template.id, {
+      registry,
+      aiConfigTypes: ['demo-cli']
+    });
+
+    expect(result.results.commands.files).toEqual(['.demo/commands/inspect.md']);
+    expect(fs.readFileSync(path.join(targetDir, '.demo', 'commands', 'inspect.md'), 'utf8')).toContain('echo inspect');
+    const preview = templatesService.previewTemplateApplication(targetDir, template.id, {
+      registry,
+      aiConfigTypes: ['demo-cli']
+    });
+    expect(preview.willOverwrite).toContain('.demo/commands/inspect.md');
+  });
 });
 
 describe('config-templates-service apply and preview', () => {

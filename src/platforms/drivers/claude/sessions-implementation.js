@@ -7,10 +7,6 @@ const { loadAliases, setAlias } = require('../../../server/services/alias');
 const { globalCache, CacheKeys } = require('../../../server/services/enhanced-cache');
 let sessionHistoryIndex = null;
 
-function configure({ sessionHistoryIndex: index } = {}) {
-  sessionHistoryIndex = index || null;
-}
-
 function getSessionHistoryIndex(config = {}) {
   if (!sessionHistoryIndex) {
     const { getDefaultDependencies } = require('../../../platforms/runtime');
@@ -26,12 +22,20 @@ function getSessionHistoryIndex(config = {}) {
 }
 const { PATHS, NATIVE_PATHS } = require('../../../config/paths');
 
-const CLAUDE_PROJECTS_DIR = NATIVE_PATHS.claude.projects;
+const DEFAULT_CLAUDE_PROJECTS_DIR = NATIVE_PATHS.claude.projects;
 const CODEX_PROJECTS_DIR = path.join(path.dirname(NATIVE_PATHS.codex.config), 'projects');
 const GEMINI_PROJECTS_DIR = path.join(path.dirname(NATIVE_PATHS.gemini.env), 'projects');
+let claudeProjectsDir = DEFAULT_CLAUDE_PROJECTS_DIR;
+
+function configure({ sessionHistoryIndex: index, pathContext } = {}) {
+  sessionHistoryIndex = index || null;
+  claudeProjectsDir = pathContext?.customized
+    ? (pathContext.native?.projects || DEFAULT_CLAUDE_PROJECTS_DIR)
+    : DEFAULT_CLAUDE_PROJECTS_DIR;
+}
 
 function resolveProjectsDir(config = {}) {
-  return config.projectsDir || CLAUDE_PROJECTS_DIR;
+  return config.projectsDir || claudeProjectsDir;
 }
 
 function withResolvedProjectsDir(config = {}) {

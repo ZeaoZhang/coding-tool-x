@@ -15,6 +15,7 @@ const { LocalResourceIndex } = require('../server/services/local-resource-index'
 const { NATIVE_PATHS } = require('../config/paths');
 const { resolvePreferredHomeDir } = require('../utils/home-dir');
 const { createPlatformAccessError } = require('./access');
+const { getPlatformContext } = require('../server/platform-context');
 const {
   normalizeSafeFileStem,
   normalizeSafeRelativePath,
@@ -170,31 +171,31 @@ function writeFileAtomic(filePath, content) {
   fs.renameSync(tempPath, filePath);
 }
 
-function readCodexTomlConfig() {
-  if (!fs.existsSync(CODEX_CONFIG_PATH)) {
+function readCodexTomlConfig(configPath = CODEX_CONFIG_PATH) {
+  if (!fs.existsSync(configPath)) {
     return {};
   }
 
   try {
-    const content = fs.readFileSync(CODEX_CONFIG_PATH, 'utf-8');
+    const content = fs.readFileSync(configPath, 'utf-8');
     return toml.parse(content);
   } catch (err) {
     throw new Error(`读取 Codex config.toml 失败: ${err.message}`);
   }
 }
 
-function writeCodexTomlConfig(config) {
-  ensureDir(path.dirname(CODEX_CONFIG_PATH));
-  writeFileAtomic(CODEX_CONFIG_PATH, tomlStringify(config));
+function writeCodexTomlConfig(config, configPath = CODEX_CONFIG_PATH) {
+  ensureDir(path.dirname(configPath));
+  writeFileAtomic(configPath, tomlStringify(config));
 }
 
 function isPlainObject(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
-function getCodexManagedAgentConfigPath(fileName) {
+function getCodexManagedAgentConfigPath(fileName, agentsDir = CODEX_AGENTS_DIR) {
   const safeFileName = assertSafeAgentFileName(fileName);
-  return resolveInsideRoot(CODEX_AGENTS_DIR, `${safeFileName}.toml`, 'Codex agent config path');
+  return resolveInsideRoot(agentsDir, `${safeFileName}.toml`, 'Codex agent config path');
 }
 
 function normalizeCodexConfigPath(configPath) {
@@ -240,34 +241,34 @@ function assertSafeCodexConfigPath(configPath) {
   return relative;
 }
 
-function resolveCodexConfigPath(configPath) {
+function resolveCodexConfigPath(configPath, configBasePath = CODEX_CONFIG_PATH, homeDir = HOME_DIR) {
   const normalized = normalizeCodexConfigPath(configPath);
   if (!normalized) return '';
 
   if (normalized.startsWith('~/')) {
-    return path.join(HOME_DIR, normalized.slice(2));
+    return path.join(homeDir, normalized.slice(2));
   }
 
   if (path.isAbsolute(normalized)) {
     return normalized;
   }
 
-  return path.resolve(path.dirname(CODEX_CONFIG_PATH), normalized);
+  return path.resolve(path.dirname(configBasePath), normalized);
 }
 
-function isManagedCodexConfigPath(configPath) {
-  const resolved = resolveCodexConfigPath(configPath);
+function isManagedCodexConfigPath(configPath, configBasePath = CODEX_CONFIG_PATH, agentsDir = CODEX_AGENTS_DIR, homeDir = HOME_DIR) {
+  const resolved = resolveCodexConfigPath(configPath, configBasePath, homeDir);
   if (!resolved) return false;
-  const managedRoot = path.resolve(CODEX_AGENTS_DIR) + path.sep;
-  return resolved.startsWith(managedRoot) || resolved === path.resolve(CODEX_AGENTS_DIR);
+  const managedRoot = path.resolve(agentsDir) + path.sep;
+  return resolved.startsWith(managedRoot) || resolved === path.resolve(agentsDir);
 }
 
-function getManagedCodexConfigResolvedPath(configPath) {
+function getManagedCodexConfigResolvedPath(configPath, configBasePath = CODEX_CONFIG_PATH, agentsDir = CODEX_AGENTS_DIR, homeDir = HOME_DIR) {
   const normalized = normalizeCodexConfigPath(configPath);
-  if (!normalized || !isManagedCodexConfigPath(normalized)) {
+  if (!normalized || !isManagedCodexConfigPath(normalized, configBasePath, agentsDir, homeDir)) {
     return '';
   }
-  return resolveCodexConfigPath(normalized);
+  return resolveCodexConfigPath(normalized, configBasePath, homeDir);
 }
 
 function normalizeCodexConfigMode(mode) {
@@ -596,19 +597,75 @@ class AgentsRepoScanner extends RepoScannerBase {
  * Agents 服务类
  */
 class AgentsService {
-  constructor(platform = 'claude') {
+  constructor(platform = 'claude', { registry } = {}) {
     this.platform = normalizePlatform(platform);
     const config = PLATFORM_CONFIG[this.platform];
-    this.userAgentsDir = config.userAgentsDir;
+    this.registry = registry || (() => {
+      try {
+        return getPlatformContext().registry;
+      } catch {
+        return null;
+      }
+    })();
+    this.pathContext = null;
+    try {
+      if (typeof this.registry?.resolvePathContext === 'function') {
+        this.pathContext = this.registry.resolvePathContext(this.platform);
+      }
+    } catch {
+      this.pathContext = null;
+    }
+    const native = this.pathContext?.customized
+      ? (this.pathContext.native || {})
+      : (NATIVE_PATHS[this.platform] || {});
+    this.homeDir = this.pathContext?.customized ? this.pathContext.home : HOME_DIR;
+    this.codexConfigPath = this.platform === 'codex'
+      ? (native.config || CODEX_CONFIG_PATH)
+      : CODEX_CONFIG_PATH;
+    this.codexAgentsDir = this.platform === 'codex'
+      ? (native.agents || path.join(native.dir || path.dirname(this.codexConfigPath), 'agents'))
+      : CODEX_AGENTS_DIR;
+    const configuredUserAgentsDir = this.pathContext?.customized
+      ? (native.agents
+        || (this.platform === 'opencode' ? path.join(native.config || OPENCODE_CONFIG_DIR, 'agents') : null)
+        || (native.dir ? path.join(native.dir, 'agents') : null))
+      : null;
+    this.userAgentsDir = configuredUserAgentsDir || config.userAgentsDir;
     if (this.platform === 'opencode') {
       const legacyUserDir = config.legacyUserAgentsDir;
-      if (legacyUserDir && fs.existsSync(legacyUserDir) && !fs.existsSync(this.userAgentsDir)) this.userAgentsDir = legacyUserDir;
+      const configuredLegacyUserDir = this.pathContext?.customized && native.config
+        ? path.join(native.config, 'agent')
+        : legacyUserDir;
+      if (configuredLegacyUserDir && fs.existsSync(configuredLegacyUserDir) && !fs.existsSync(this.userAgentsDir)) this.userAgentsDir = configuredLegacyUserDir;
     }
     this.projectAgentsDir = config.projectAgentsDir;
     this.repoScanner = new AgentsRepoScanner(this.platform, this.userAgentsDir);
     ensureDir(this.userAgentsDir);
     this._localIndexes = new Map();
     this._localIndexLimit = 32;
+  }
+  _readCodexTomlConfig() {
+    return readCodexTomlConfig(this.codexConfigPath);
+  }
+  _writeCodexTomlConfig(config) {
+    return writeCodexTomlConfig(config, this.codexConfigPath);
+  }
+  _resolveCodexConfigPath(configPath) {
+    return resolveCodexConfigPath(configPath, this.codexConfigPath, this.homeDir);
+  }
+  _isManagedCodexConfigPath(configPath) {
+    return isManagedCodexConfigPath(configPath, this.codexConfigPath, this.codexAgentsDir, this.homeDir);
+  }
+  _getCodexManagedAgentConfigPath(fileName) {
+    return getCodexManagedAgentConfigPath(fileName, this.codexAgentsDir);
+  }
+  _inferCodexConfigMode(configFile) {
+    const normalized = normalizeCodexConfigPath(configFile);
+    if (!normalized) return 'none';
+    return this._isManagedCodexConfigPath(normalized) ? 'managed' : 'custom';
+  }
+  _configUpdatedAt() {
+    return fs.existsSync(this.codexConfigPath) ? fs.statSync(this.codexConfigPath).mtime.getTime() : 0;
   }
   getCapabilities() {
     return { ...(PLATFORM_CONFIG[this.platform]?.capabilities || { projectScope: true, repoOperations: true }) };
@@ -928,7 +985,7 @@ class AgentsService {
   }
 
   _readCodexAgents(includeDetails = true) {
-    const config = readCodexTomlConfig();
+    const config = this._readCodexTomlConfig();
     const agentsTable = isPlainObject(config.agents) ? config.agents : {};
     const agentsByName = new Map();
 
@@ -938,13 +995,13 @@ class AgentsService {
       }
 
       const configFile = normalizeCodexConfigPath(value.config_file);
-      const resolvedConfigFile = resolveCodexConfigPath(configFile);
-      const configMode = inferCodexConfigMode(configFile);
+      const resolvedConfigFile = this._resolveCodexConfigPath(configFile);
+      const configMode = this._inferCodexConfigMode(configFile);
       const fullPath = configFile || `${key}.toml`;
       let model = '';
       let fullContent = '';
       let configReadError = '';
-      let updatedAt = fs.existsSync(CODEX_CONFIG_PATH) ? fs.statSync(CODEX_CONFIG_PATH).mtime.getTime() : Date.now();
+      let updatedAt = this.codexConfigPath && fs.existsSync(this.codexConfigPath) ? fs.statSync(this.codexConfigPath).mtime.getTime() : Date.now();
       if (includeDetails && configFile) {
         const parsedConfigFile = readCodexAgentConfigFile(resolvedConfigFile);
         fullContent = parsedConfigFile.content;
@@ -975,9 +1032,9 @@ class AgentsService {
       });
     }
 
-    if (fs.existsSync(CODEX_AGENTS_DIR)) {
+    if (fs.existsSync(this.codexAgentsDir)) {
       try {
-        const entries = fs.readdirSync(CODEX_AGENTS_DIR, { withFileTypes: true });
+        const entries = fs.readdirSync(this.codexAgentsDir, { withFileTypes: true });
         for (const entry of entries) {
           if (!entry.isFile() || !entry.name.endsWith('.toml')) {
             continue;
@@ -990,7 +1047,7 @@ class AgentsService {
             continue;
           }
 
-          const configFilePath = path.join(CODEX_AGENTS_DIR, entry.name);
+          const configFilePath = path.join(this.codexAgentsDir, entry.name);
           const parsedConfigFile = includeDetails ? readCodexAgentConfigFile(configFilePath) : { content: '', data: null, updatedAt: fs.statSync(configFilePath).mtime.getTime(), error: null };
           const existing = agentsByName.get(fileName);
           const model = isPlainObject(parsedConfigFile.data) && typeof parsedConfigFile.data.model === 'string' ? parsedConfigFile.data.model : '';
@@ -999,7 +1056,7 @@ class AgentsService {
           if (existing) {
             if (!existing.configFile) {
               existing.configFile = configFilePath;
-              existing.configMode = inferCodexConfigMode(configFilePath);
+              existing.configMode = this._inferCodexConfigMode(configFilePath);
               existing.path = configFilePath;
               existing.fullPath = configFilePath;
               existing.resolvedConfigFile = configFilePath;
@@ -1026,7 +1083,7 @@ class AgentsService {
             systemPrompt: '',
             fullContent: parsedConfigFile.content,
             configFile: configFilePath,
-            configMode: inferCodexConfigMode(configFilePath),
+            configMode: this._inferCodexConfigMode(configFilePath),
             configReadError: parsedConfigFile.error || '',
             resolvedConfigFile: configFilePath,
             updatedAt,
@@ -1046,7 +1103,7 @@ class AgentsService {
   _getCodexIndex() {
     if (!this._codexIndex) {
       this._codexIndex = new LocalResourceIndex({
-        key: `${this.platform}:codex`, roots: [CODEX_AGENTS_DIR], ttlMs: 1000,
+        key: `${this.platform}:codex`, roots: [this.codexAgentsDir], ttlMs: 1000,
         scanFile: ({ fullPath, relativePath, stat }) => {
           if (!fullPath.endsWith('.toml') || relativePath.includes(path.sep)) return null;
           const fileName = path.basename(fullPath, '.toml');
@@ -1061,7 +1118,7 @@ class AgentsService {
   }
 
   _hydrateCodexAgent(summary) {
-    const configPath = summary.resolvedConfigFile || resolveCodexConfigPath(summary.configFile) || (summary.source === 'native-file' ? summary.fullPath : '');
+    const configPath = summary.resolvedConfigFile || this._resolveCodexConfigPath(summary.configFile) || (summary.source === 'native-file' ? summary.fullPath : '');
     if (!configPath) return { ...summary, fullContent: '', systemPrompt: '', configReadError: '' };
     const parsed = readCodexAgentConfigFile(configPath);
     const data = parsed.data || {};
@@ -1077,29 +1134,29 @@ class AgentsService {
 
   listCodexAgents(includeDetails = true) {
     const indexed = this._getCodexIndex().listSync();
-    const config = readCodexTomlConfig();
+    const config = this._readCodexTomlConfig();
     const table = isPlainObject(config.agents) ? config.agents : {};
     const merged = new Map(indexed.map((agent) => [agent.fileName, { ...agent }]));
     for (const [fileName, entry] of Object.entries(table)) {
       if (!isPlainObject(entry)) continue;
       const configFile = normalizeCodexConfigPath(entry.config_file);
-      const resolvedConfigFile = resolveCodexConfigPath(configFile);
+      const resolvedConfigFile = this._resolveCodexConfigPath(configFile);
       const existing = merged.get(fileName);
-      const externalMetadata = configFile && !isManagedCodexConfigPath(configFile) && fs.existsSync(resolvedConfigFile)
+      const externalMetadata = configFile && !this._isManagedCodexConfigPath(configFile) && fs.existsSync(resolvedConfigFile)
         ? readCodexTomlMetadata(resolvedConfigFile)
         : { data: {}, error: null };
       const summary = {
         ...(existing || {
           name: fileName, fileName, scope: 'user', path: configFile || `${fileName}.toml`,
           fullPath: resolvedConfigFile || `${fileName}.toml`, tools: '', model: '',
-          permissionMode: '', skills: '', updatedAt: fs.existsSync(CODEX_CONFIG_PATH) ? fs.statSync(CODEX_CONFIG_PATH).mtime.getTime() : 0, source: 'codex-config'
+          permissionMode: '', skills: '', updatedAt: this._configUpdatedAt(), source: 'codex-config'
         }),
         description: entry.description || existing?.description || '',
         model: existing?.model || (typeof externalMetadata.data?.model === 'string' ? externalMetadata.data.model : ''),
         configReadError: externalMetadata.error?.message || existing?.configReadError || '',
-        updatedAt: externalMetadata.updatedAt || existing?.updatedAt || (fs.existsSync(CODEX_CONFIG_PATH) ? fs.statSync(CODEX_CONFIG_PATH).mtime.getTime() : 0),
+        updatedAt: externalMetadata.updatedAt || existing?.updatedAt || this._configUpdatedAt(),
         configFile: configFile || existing?.configFile || '',
-        configMode: inferCodexConfigMode(configFile || existing?.configFile || ''),
+        configMode: this._inferCodexConfigMode(configFile || existing?.configFile || ''),
         resolvedConfigFile: resolvedConfigFile || existing?.resolvedConfigFile || existing?.fullPath || '',
         source: existing ? 'codex-config+native-file' : 'codex-config'
       };
@@ -1113,11 +1170,11 @@ class AgentsService {
   getCodexAgent(fileName, scope) {
     const safeFileName = assertSafeAgentFileName(fileName);
     if (scope !== 'user') return null;
-    const config = readCodexTomlConfig();
+    const config = this._readCodexTomlConfig();
     const entry = isPlainObject(config.agents) && isPlainObject(config.agents[safeFileName]) ? config.agents[safeFileName] : null;
-    const managedPath = path.join(CODEX_AGENTS_DIR, `${safeFileName}.toml`);
+    const managedPath = path.join(this.codexAgentsDir, `${safeFileName}.toml`);
     const configFile = normalizeCodexConfigPath(entry?.config_file);
-    const resolvedConfigFile = resolveCodexConfigPath(configFile);
+    const resolvedConfigFile = this._resolveCodexConfigPath(configFile);
     const nativePath = !configFile && fs.existsSync(managedPath) ? managedPath : '';
     const exists = Boolean(entry || nativePath || (resolvedConfigFile && fs.existsSync(resolvedConfigFile)));
     if (!exists) return null;
@@ -1127,9 +1184,9 @@ class AgentsService {
       path: targetPath || `${safeFileName}.toml`, fullPath: targetPath || `${safeFileName}.toml`,
       description: entry?.description || '', tools: '', model: '', permissionMode: '', skills: '',
       configFile: configFile || nativePath,
-      configMode: inferCodexConfigMode(configFile || nativePath),
+      configMode: this._inferCodexConfigMode(configFile || nativePath),
       resolvedConfigFile: targetPath,
-      updatedAt: fs.existsSync(CODEX_CONFIG_PATH) ? fs.statSync(CODEX_CONFIG_PATH).mtime.getTime() : 0,
+      updatedAt: this._configUpdatedAt(),
       source: entry ? 'codex-config' : 'native-file'
     };
     return this._hydrateCodexAgent(summary);
@@ -1146,7 +1203,7 @@ class AgentsService {
       throw new Error('代理描述不能为空');
     }
 
-    const config = readCodexTomlConfig();
+    const config = this._readCodexTomlConfig();
     config.features = isPlainObject(config.features) ? config.features : {};
     config.features.multi_agent = true;
     config.agents = isPlainObject(config.agents) ? config.agents : {};
@@ -1164,20 +1221,20 @@ class AgentsService {
     if (!normalizedMode) {
       const trimmedModel = (model || '').trim();
       if (trimmedModel) {
-        ensureDir(CODEX_AGENTS_DIR);
-        const configFilePath = getCodexManagedAgentConfigPath(fileName);
+        ensureDir(this.codexAgentsDir);
+        const configFilePath = this._getCodexManagedAgentConfigPath(fileName);
         writeFileAtomic(configFilePath, tomlStringify({ model: trimmedModel }));
         agentConfig.config_file = configFilePath;
       }
     } else if (normalizedMode === 'managed') {
-      ensureDir(CODEX_AGENTS_DIR);
-      const configFilePath = getCodexManagedAgentConfigPath(fileName);
+      ensureDir(this.codexAgentsDir);
+      const configFilePath = this._getCodexManagedAgentConfigPath(fileName);
       const content = resolveCodexConfigContent({ configContent, model });
       writeFileAtomic(configFilePath, content);
       agentConfig.config_file = configFilePath;
     } else if (normalizedMode === 'custom') {
       const safeConfigFile = assertSafeCodexConfigPath(configFile);
-      const resolvedPath = resolveCodexConfigPath(safeConfigFile);
+      const resolvedPath = this._resolveCodexConfigPath(safeConfigFile);
       ensureDir(path.dirname(resolvedPath));
       const content = resolveCodexConfigContent({ configContent, model });
       writeFileAtomic(resolvedPath, content);
@@ -1185,7 +1242,7 @@ class AgentsService {
     }
 
     config.agents[fileName] = agentConfig;
-    writeCodexTomlConfig(config);
+    this._writeCodexTomlConfig(config);
     this._codexIndex?.invalidate();
     return this.getCodexAgent(fileName, scope);
   }
@@ -1197,7 +1254,7 @@ class AgentsService {
       throw new Error('Codex 仅支持用户级代理');
     }
 
-    const config = readCodexTomlConfig();
+    const config = this._readCodexTomlConfig();
     config.features = isPlainObject(config.features) ? config.features : {};
     config.features.multi_agent = true;
     config.agents = isPlainObject(config.agents) ? config.agents : {};
@@ -1211,16 +1268,16 @@ class AgentsService {
     agentConfig.description = (description || '').trim();
 
     const existingConfigFile = normalizeCodexConfigPath(agentConfig.config_file);
-    const isExistingManagedConfig = isManagedCodexConfigPath(existingConfigFile);
-    const resolvedExistingConfigFile = isExistingManagedConfig ? resolveCodexConfigPath(existingConfigFile) : '';
+    const isExistingManagedConfig = this._isManagedCodexConfigPath(existingConfigFile);
+    const resolvedExistingConfigFile = isExistingManagedConfig ? this._resolveCodexConfigPath(existingConfigFile) : '';
     const normalizedMode = normalizeCodexConfigMode(configMode);
 
     if (!normalizedMode) {
       const trimmedModel = (model || '').trim();
       if (trimmedModel) {
-        ensureDir(CODEX_AGENTS_DIR);
-        const configFilePath = isExistingManagedConfig ? existingConfigFile : getCodexManagedAgentConfigPath(fileName);
-        const resolvedConfigFilePath = resolveCodexConfigPath(configFilePath);
+        ensureDir(this.codexAgentsDir);
+        const configFilePath = isExistingManagedConfig ? existingConfigFile : this._getCodexManagedAgentConfigPath(fileName);
+        const resolvedConfigFilePath = this._resolveCodexConfigPath(configFilePath);
         const parsedConfigFile = readCodexAgentConfigFile(resolvedConfigFilePath);
         const configFileData = isPlainObject(parsedConfigFile?.data) ? parsedConfigFile.data : {};
         configFileData.model = trimmedModel;
@@ -1239,9 +1296,9 @@ class AgentsService {
         fs.unlinkSync(resolvedExistingConfigFile);
       }
     } else if (normalizedMode === 'managed') {
-      ensureDir(CODEX_AGENTS_DIR);
-      const configFilePath = getCodexManagedAgentConfigPath(fileName);
-      const resolvedConfigFilePath = resolveCodexConfigPath(configFilePath);
+      ensureDir(this.codexAgentsDir);
+      const configFilePath = this._getCodexManagedAgentConfigPath(fileName);
+      const resolvedConfigFilePath = this._resolveCodexConfigPath(configFilePath);
       const existingManagedContent = fs.existsSync(resolvedConfigFilePath)
         ? fs.readFileSync(resolvedConfigFilePath, 'utf-8')
         : '';
@@ -1270,7 +1327,7 @@ class AgentsService {
         targetConfigPath = assertSafeCodexConfigPath(targetConfigPath);
       }
 
-      const resolvedTargetConfigPath = resolveCodexConfigPath(targetConfigPath);
+      const resolvedTargetConfigPath = this._resolveCodexConfigPath(targetConfigPath);
       const existingContent = fs.existsSync(resolvedTargetConfigPath)
         ? fs.readFileSync(resolvedTargetConfigPath, 'utf-8')
         : '';
@@ -1290,7 +1347,7 @@ class AgentsService {
     }
 
     config.agents[fileName] = agentConfig;
-    writeCodexTomlConfig(config);
+    this._writeCodexTomlConfig(config);
     this._codexIndex?.invalidate();
     return this.getCodexAgent(fileName, scope);
   }
@@ -1302,7 +1359,7 @@ class AgentsService {
       throw new Error('Codex 仅支持用户级代理');
     }
 
-    const config = readCodexTomlConfig();
+    const config = this._readCodexTomlConfig();
     config.agents = isPlainObject(config.agents) ? config.agents : {};
 
     const existingAgent = config.agents[fileName];
@@ -1311,16 +1368,16 @@ class AgentsService {
     }
 
     const existingConfigFile = normalizeCodexConfigPath(existingAgent.config_file);
-    const resolvedExistingConfigFile = resolveCodexConfigPath(existingConfigFile);
+    const resolvedExistingConfigFile = this._resolveCodexConfigPath(existingConfigFile);
     if (existingConfigFile &&
-        isManagedCodexConfigPath(existingConfigFile) &&
+        this._isManagedCodexConfigPath(existingConfigFile) &&
         resolvedExistingConfigFile &&
         fs.existsSync(resolvedExistingConfigFile)) {
       fs.unlinkSync(resolvedExistingConfigFile);
     }
 
     delete config.agents[fileName];
-    writeCodexTomlConfig(config);
+    this._writeCodexTomlConfig(config);
     this._codexIndex?.invalidate();
     return { success: true, message: '代理已删除' };
   }

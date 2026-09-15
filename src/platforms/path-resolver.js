@@ -18,6 +18,24 @@ function loadNativePathResolvers() {
   return require('../config/paths');
 }
 
+function resolveDefaultHomeDir() {
+  try {
+    const configured = loadNativePathResolvers().HOME_DIR;
+    if (typeof configured === 'string' && configured.trim()) return configured;
+  } catch {
+    // Fall through to the shared home-directory resolver.
+  }
+  try {
+    const { resolvePreferredHomeDir } = require('../utils/home-dir');
+    if (typeof resolvePreferredHomeDir === 'function') {
+      return resolvePreferredHomeDir(process.platform, process.env, os.homedir());
+    }
+  } catch {
+    // Fall through to the operating-system home directory.
+  }
+  return os.homedir();
+}
+
 function resolveExistingEnvPath(envValue) {
   if (typeof envValue !== 'string') return '';
   return envValue.trim() || '';
@@ -77,14 +95,32 @@ function resolveNativeHome(pathResolverId, env, commandRunner, homeDir, hasInjec
       default: return undefined;
     }
   }
-  const {
-    getClaudeConfigDir,
-    getCodexDir,
-    getGeminiDir,
-    getOpenCodeConfigDir,
-    getOpenCodeDataDir,
-    getOmpAgentDir
-  } = loadNativePathResolvers();
+  const resolvers = loadNativePathResolvers();
+  const configuredNativePaths = resolvers.NATIVE_PATHS || {};
+  const getClaudeConfigDir = typeof resolvers.getClaudeConfigDir === 'function'
+    ? resolvers.getClaudeConfigDir
+    : () => configuredNativePaths.claude?.dir
+      || path.join(homeDir, '.claude');
+  const getCodexDir = typeof resolvers.getCodexDir === 'function'
+    ? resolvers.getCodexDir
+    : () => configuredNativePaths.codex?.dir
+      || path.join(homeDir, '.codex');
+  const getGeminiDir = typeof resolvers.getGeminiDir === 'function'
+    ? resolvers.getGeminiDir
+    : () => configuredNativePaths.gemini?.dir
+      || path.join(homeDir, '.gemini');
+  const getOpenCodeConfigDir = typeof resolvers.getOpenCodeConfigDir === 'function'
+    ? resolvers.getOpenCodeConfigDir
+    : () => configuredNativePaths.opencode?.config
+      || path.join(homeDir, '.config', 'opencode');
+  const getOpenCodeDataDir = typeof resolvers.getOpenCodeDataDir === 'function'
+    ? resolvers.getOpenCodeDataDir
+    : () => configuredNativePaths.opencode?.data
+      || path.join(homeDir, '.local', 'share', 'opencode');
+  const getOmpAgentDir = typeof resolvers.getOmpAgentDir === 'function'
+    ? resolvers.getOmpAgentDir
+    : () => configuredNativePaths.omp?.dir
+      || path.join(homeDir, '.omp', 'agent');
   switch (pathResolverId) {
     case 'claude': return env.CLAUDE_CONFIG_DIR || getClaudeConfigDir();
     case 'codex': return env.CODEX_HOME || getCodexDir();
@@ -105,7 +141,7 @@ function assertInsideHome(root, candidate, manifestKey, pathName) {
 function resolveManifestPaths(manifest, options = {}) {
   const env = { ...process.env, ...(options.env || {}) };
   const hasInjectedHomeDir = Object.prototype.hasOwnProperty.call(options, 'homeDir');
-  const homeDir = options.homeDir || os.homedir();
+  const homeDir = options.homeDir || resolveDefaultHomeDir();
   const commandRunner = options.commandRunner || execFileSync;
   const nativeHome = resolveNativeHome(manifest.pathResolverId || 'declarative', env, commandRunner, homeDir, hasInjectedHomeDir, Object.prototype.hasOwnProperty.call(options, 'commandRunner'));
   const declared = manifest.paths || {};

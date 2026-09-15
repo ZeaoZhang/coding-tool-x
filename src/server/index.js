@@ -4,7 +4,7 @@ const express = require('express');
 const path = require('path');
 const chalk = require('chalk');
 const { loadConfig } = require('../config/loader');
-const { PATHS, ensureStorageDirMigrated } = require('../config/paths');
+const { PATHS, ensureStorageDirMigrated, getPlatformStatePath } = require('../config/paths');
 const { startWebSocketServer: attachWebSocketServer } = require('./websocket-server');
 const {
   isPortInUse,
@@ -329,7 +329,7 @@ function autoRestoreProxies({ registry, runtime, config, fsImpl = require('fs') 
 
   for (const platform of platforms) {
     const key = platform && platform.key;
-    const markerPath = key && PATHS.activeChannel?.[key];
+    const markerPath = key && getPlatformStatePath('activeChannel', key);
     if (!key || !markerPath || !fsImpl.existsSync(markerPath)) continue;
 
     let driver;

@@ -16,9 +16,85 @@ const { SkillService } = require('./skill-service');
 const { PluginsService } = require('./plugins-service');
 const { PATHS, NATIVE_PATHS } = require('../../config/paths');
 const { getPlatformCatalog } = require('./platform-catalog');
+const { getPlatformContext } = require('../platform-context');
 
 function getChannelDriver(platform) {
   return getPlatformCatalog().driver(platform, 'channels');
+}
+
+function getExportRegistry() {
+  try {
+    return getPlatformContext().registry;
+  } catch {
+    return null;
+  }
+}
+
+function getPlatformPathContext(platform, registry = getExportRegistry()) {
+  try {
+    return registry?.resolvePathContext?.(platform) || null;
+  } catch {
+    return null;
+  }
+}
+
+function getConfiguredNativePaths(platform, registry = getExportRegistry()) {
+  const pathContext = getPlatformPathContext(platform, registry);
+  return pathContext?.customized ? (pathContext.native || {}) : (NATIVE_PATHS[platform] || {});
+}
+
+function getConfiguredStatePath(category, platform, registry = getExportRegistry()) {
+  const pathContext = getPlatformPathContext(platform, registry);
+  if (pathContext?.customized && pathContext.state?.[category]) {
+    return pathContext.state[category];
+  }
+  try {
+    const pathsModule = require('../../config/paths');
+    if (typeof pathsModule.getPlatformStatePath === 'function') {
+      return pathsModule.getPlatformStatePath(category, platform);
+    }
+  } catch {
+    // Fall back to the built-in maps for isolated tests.
+  }
+  return PATHS[category]?.[platform];
+}
+
+function getPlatformPluginPaths(platform, registry = getExportRegistry()) {
+  const native = getConfiguredNativePaths(platform, registry);
+  if (platform === 'claude') {
+    const pluginsDir = native.plugins
+      || path.join(native.dir || path.dirname(native.settings || CLAUDE_SETTINGS_PATH), 'plugins');
+    return {
+      pluginsDir,
+      installedRegistry: path.join(pluginsDir, 'installed_plugins.json'),
+      marketplacesRegistry: path.join(pluginsDir, 'known_marketplaces.json'),
+      cacheDir: path.join(pluginsDir, 'cache')
+    };
+  }
+  if (platform === 'codex') {
+    const pluginsDir = path.join(native.dir || path.dirname(native.config || NATIVE_PATHS.codex.config), 'plugins');
+    return {
+      pluginsDir,
+      cacheDir: path.join(pluginsDir, 'cache'),
+      configPath: native.config || NATIVE_PATHS.codex.config
+    };
+  }
+  if (platform === 'opencode') {
+    const pluginsDir = path.join(native.config || NATIVE_PATHS.opencode.config, 'plugins');
+    return {
+      pluginsDir,
+      legacyPluginsDir: path.join(native.config || NATIVE_PATHS.opencode.config, 'plugin'),
+      configDir: native.config || NATIVE_PATHS.opencode.config
+    };
+  }
+  if (platform === 'omp') {
+    const root = native.dir || NATIVE_PATHS.omp.dir;
+    return {
+      extensionsDir: native.extensions || path.join(root, 'extensions'),
+      settingsPath: native.settings || native.config || path.join(root, 'config.yml')
+    };
+  }
+  return {};
 }
 
 
@@ -65,19 +141,24 @@ function getPlatformKeysForType(type, registry) {
   return getPlatformCatalog().keys({ resourceType: type });
 }
 
-function getAgentPlatforms() {
-  return getPlatformKeysForType('agents');
+function getAgentPlatforms(registry = getExportRegistry()) {
+  return getPlatformKeysForType('agents', registry);
 }
 
-function getCommandPlatforms() {
-  return getPlatformKeysForType('commands');
+function getCommandPlatforms(registry = getExportRegistry()) {
+  return getPlatformKeysForType('commands', registry);
 }
 
-function getSkillPlatforms() {
-  return getPlatformKeysForType('skills');
+function getSkillPlatforms(registry = getExportRegistry()) {
+  return getPlatformKeysForType('skills', registry);
 }
 
-function getPluginPlatforms() {
+function getPluginPlatforms(registry = getExportRegistry()) {
+  if (registry && typeof registry.list === 'function') {
+    return registry.list({ enabledOnly: true })
+      .filter(platform => platform && platform.key && platform.capabilities?.resourceSync !== 'unsupported')
+      .map(platform => platform.key);
+  }
   return getPlatformCatalog().keys({ capability: 'resourceSync' });
 }
 
@@ -526,11 +607,11 @@ function buildCommandExportItem(command, platform) {
   };
 }
 
-function exportAgentsSnapshotByPlatform() {
-  return getAgentPlatforms().reduce((result, platform) => {
+function exportAgentsSnapshotByPlatform(registry = getExportRegistry()) {
+  return getAgentPlatforms(registry).reduce((result, platform) => {
     let agentsService;
     try {
-      agentsService = new AgentsService(platform);
+      agentsService = new AgentsService(platform, { registry });
       const { agents: rawAgents = [] } = agentsService.listAgents();
       result[platform] = rawAgents.map(agent => {
         const detail = typeof agentsService.getAgent === 'function' ? (agentsService.getAgent(agent.fileName, agent.scope || 'user') || agent) : agent;
@@ -546,11 +627,11 @@ function exportAgentsSnapshotByPlatform() {
   }, {});
 }
 
-function exportCommandsSnapshotByPlatform() {
-  return getCommandPlatforms().reduce((result, platform) => {
+function exportCommandsSnapshotByPlatform(registry = getExportRegistry()) {
+  return getCommandPlatforms(registry).reduce((result, platform) => {
     let commandsService;
     try {
-      commandsService = new CommandsService(platform);
+      commandsService = new CommandsService(platform, { registry });
       const { commands: rawCommands = [] } = commandsService.listCommands();
       result[platform] = rawCommands.map(command => {
         const detail = typeof commandsService.getCommand === 'function' ? (commandsService.getCommand(command.name, command.scope || 'user', null, command.namespace) || command) : command;
@@ -937,8 +1018,8 @@ function readJsonConfigSnapshot(filePath) {
 
 function exportPluginControlSnapshot(platform, service) {
   const snapshot = {};
-  const reposPath = PATHS.pluginRepos?.[platform];
-  const marketCachePath = PATHS.pluginMarketCache?.[platform];
+  const reposPath = service?.getReposConfigPath?.() || getConfiguredStatePath('pluginRepos', platform, service?.registry);
+  const marketCachePath = service?.marketCachePath || getConfiguredStatePath('pluginMarketCache', platform, service?.registry);
   const repos = readJsonConfigSnapshot(reposPath);
   const marketCache = readJsonConfigSnapshot(marketCachePath);
 
@@ -962,12 +1043,15 @@ function exportPluginControlSnapshot(platform, service) {
 }
 
 function exportClaudePluginsByPlatform(service) {
+  const pluginsDir = service.claudePluginsDir || CLAUDE_PLUGINS_DIR;
+  const installedRegistryPath = service.claudeInstalledFile || NATIVE_PLUGINS_REGISTRY;
+  const marketplacesRegistryPath = service.claudeMarketplacesFile || CLAUDE_MARKETPLACES_REGISTRY;
   const installedPlugins = service.listPlugins().plugins || [];
   const plugins = [];
 
   for (const plugin of installedPlugins) {
     if (plugin.installPath && fs.existsSync(plugin.installPath)) {
-      const pluginDir = assertPathInside(CLAUDE_PLUGINS_DIR, plugin.installPath)
+      const pluginDir = assertPathInside(pluginsDir, plugin.installPath)
         || assertPathInside(LEGACY_PLUGINS_DIR, plugin.installPath);
       if (pluginDir) {
         const { manifest, manifestPath } = detectPluginManifest(pluginDir, [
@@ -987,7 +1071,7 @@ function exportClaudePluginsByPlatform(service) {
             version: manifest.version || plugin.version || '1.0.0',
             description: manifest.description || plugin.description || '',
             author: manifest.author || plugin.author || '',
-            directory: path.relative(CLAUDE_PLUGINS_DIR, pluginDir),
+            directory: path.relative(pluginsDir, pluginDir),
             enabled: plugin.enabled !== false,
             installedAt: plugin.installedAt,
             scope: plugin.scope,
@@ -1019,8 +1103,8 @@ function exportClaudePluginsByPlatform(service) {
   }
 
   const control = exportPluginControlSnapshot('claude', service);
-  const installedRegistry = readJsonConfigSnapshot(NATIVE_PLUGINS_REGISTRY);
-  const knownMarketplaces = readJsonConfigSnapshot(CLAUDE_MARKETPLACES_REGISTRY);
+  const installedRegistry = readJsonConfigSnapshot(installedRegistryPath);
+  const knownMarketplaces = readJsonConfigSnapshot(marketplacesRegistryPath);
   const legacyRegistry = readJsonConfigSnapshot(LEGACY_PLUGINS_REGISTRY);
   if (installedRegistry) control.installedRegistry = installedRegistry;
   if (knownMarketplaces) control.knownMarketplaces = knownMarketplaces;
@@ -1031,14 +1115,16 @@ function exportClaudePluginsByPlatform(service) {
 
 function exportCodexPluginsByPlatform(service) {
   const plugins = (service.listPlugins().plugins || [])
-    .map(plugin => buildManagedPluginExportItem(plugin, 'codex', CODEX_PLUGINS_CACHE_DIR, {
+    .map(plugin => buildManagedPluginExportItem(plugin, 'codex', service.codexPluginsCacheDir || CODEX_PLUGINS_CACHE_DIR, {
       type: 'codex-cache',
       pluginType: 'cache',
       manifestCandidates: ['.codex-plugin/plugin.json', 'plugin.json', 'package.json']
     }))
     .filter(Boolean);
   const control = exportPluginControlSnapshot('codex', service);
-  const codexConfig = readNativeConfigSnapshot({ path: NATIVE_PATHS.codex.config, format: 'text' });
+  const codexConfig = readNativeConfigSnapshot({ path: service.pathContext?.customized
+    ? service.pathContext.native?.config
+    : NATIVE_PATHS.codex.config, format: 'text' });
   if (codexConfig) {
     control.nativeConfig = codexConfig;
   }
@@ -1046,7 +1132,7 @@ function exportCodexPluginsByPlatform(service) {
 }
 
 function exportOpenCodePluginsByPlatform(service) {
-  const pluginsDir = getOpenCodePluginsDir();
+  const pluginsDir = service._getOpenCodePluginsDir?.() || getOpenCodePluginsDir();
   const plugins = (service.listPlugins().plugins || [])
     .map((plugin) => {
       if (plugin.pluginType === 'npm' || plugin.source === 'opencode-config') {
@@ -1078,6 +1164,9 @@ function exportOpenCodePluginsByPlatform(service) {
 }
 
 function exportOmpPluginsByPlatform(service) {
+  const extensionsDir = service.pathContext?.customized
+    ? (service.pathContext.native?.extensions || path.join(service.pathContext.native?.dir || '', 'extensions'))
+    : OMP_EXTENSIONS_DIR;
   const plugins = (service.listPlugins().plugins || [])
     .map((plugin) => {
       if (plugin.pluginType === 'package' || plugin.source === 'omp-settings') {
@@ -1095,7 +1184,7 @@ function exportOmpPluginsByPlatform(service) {
           source: plugin.source || 'omp-settings'
         };
       }
-      return buildManagedPluginExportItem(plugin, 'omp', OMP_EXTENSIONS_DIR, {
+      return buildManagedPluginExportItem(plugin, 'omp', extensionsDir, {
         type: 'omp-extension',
         pluginType: plugin.pluginType || 'extension',
         pluginKind: plugin.pluginKind || 'extension',
@@ -1107,10 +1196,10 @@ function exportOmpPluginsByPlatform(service) {
   return { plugins, control };
 }
 
-function exportPluginsSnapshotByPlatform() {
-  return getPluginPlatforms().reduce((result, platform) => {
+function exportPluginsSnapshotByPlatform(registry = getExportRegistry()) {
+  return getPluginPlatforms(registry).reduce((result, platform) => {
     try {
-      const service = new PluginsService(platform);
+      const service = new PluginsService(platform, { registry });
       if (platform === 'claude') {
         result[platform] = exportClaudePluginsByPlatform(service);
       } else if (platform === 'codex') {
@@ -1133,8 +1222,8 @@ function exportPluginsSnapshotByPlatform() {
   }, {});
 }
 
-function exportSkillsSnapshot(platform = 'claude') {
-  const skillService = new SkillService(platform);
+function exportSkillsSnapshot(platform = 'claude', registry = getExportRegistry()) {
+  const skillService = new SkillService(platform, { registry });
   const installedSkills = skillService.getInstalledSkills();
   const baseDir = skillService.installDir;
 
@@ -1154,10 +1243,10 @@ function exportSkillsSnapshot(platform = 'claude') {
   }).filter(Boolean);
 }
 
-function exportSkillsSnapshotByPlatform() {
-  return getSkillPlatforms().reduce((result, platform) => {
+function exportSkillsSnapshotByPlatform(registry = getExportRegistry()) {
+  return getSkillPlatforms(registry).reduce((result, platform) => {
     try {
-      result[platform] = exportSkillsSnapshot(platform);
+      result[platform] = exportSkillsSnapshot(platform, registry);
     } catch (err) {
       console.warn(`[ConfigExport] Failed to export skills for ${platform}:`, err.message);
       result[platform] = [];
@@ -1166,9 +1255,14 @@ function exportSkillsSnapshotByPlatform() {
   }, {});
 }
 
-function exportNativeConfigs() {
+function exportNativeConfigs(registry = getExportRegistry()) {
   const result = {};
-  for (const platform of getPlatformCatalog().keys({ capability: 'nativeConfig' })) {
+  const platforms = registry && typeof registry.list === 'function'
+    ? registry.list({ enabledOnly: true })
+      .filter(platform => platform?.key && platform.capabilities?.nativeConfig !== 'unsupported')
+      .map(platform => platform.key)
+    : getPlatformCatalog().keys({ capability: 'nativeConfig' });
+  for (const platform of platforms) {
     const driver = getPlatformCatalog().driver(platform, 'nativeConfig');
     if (!driver || typeof driver.exportSnapshot !== 'function') continue;
     const snapshot = driver.exportSnapshot();
@@ -1284,14 +1378,15 @@ function exportPluginsSnapshot() {
   return [...legacyPlugins, ...nativePlugins];
 }
 
-function getPluginsByPlatformItems(plugins = [], pluginsByPlatform = {}) {
-  const result = Object.fromEntries(getPluginPlatforms().map(platform => [platform, []]));
+function getPluginsByPlatformItems(plugins = [], pluginsByPlatform = {}, registry = getExportRegistry()) {
+  const supportedPlatforms = getPluginPlatforms(registry);
+  const result = Object.fromEntries(supportedPlatforms.map(platform => [platform, []]));
   const hasStructuredPlugins = pluginsByPlatform
     && typeof pluginsByPlatform === 'object'
     && Object.keys(pluginsByPlatform).length > 0;
 
   if (hasStructuredPlugins) {
-    for (const platform of getPluginPlatforms()) {
+    for (const platform of supportedPlatforms) {
       const platformSnapshot = pluginsByPlatform[platform];
       const platformPlugins = Array.isArray(platformSnapshot?.plugins)
         ? platformSnapshot.plugins
@@ -1305,7 +1400,10 @@ function getPluginsByPlatformItems(plugins = [], pluginsByPlatform = {}) {
 
   if (!hasStructuredPlugins && Array.isArray(plugins)) {
     for (const plugin of plugins) {
-      const platform = getPluginPlatforms().includes(plugin?.platform) ? plugin.platform : 'claude';
+      const platform = supportedPlatforms.includes(plugin?.platform)
+        ? plugin.platform
+        : (supportedPlatforms.includes('claude') ? 'claude' : null);
+      if (!platform) continue;
       result[platform].push({ ...plugin, platform });
     }
   }
@@ -1401,9 +1499,9 @@ function mergeTomlFile(filePath, updates = {}, overwrite = true) {
   return 'success';
 }
 
-function mergePluginRepoConfig(platform, snapshot = {}, overwrite = true) {
-  const reposPath = PATHS.pluginRepos?.[platform];
-  const marketCachePath = PATHS.pluginMarketCache?.[platform];
+function mergePluginRepoConfig(platform, snapshot = {}, overwrite = true, registry = getExportRegistry()) {
+  const reposPath = getConfiguredStatePath('pluginRepos', platform, registry);
+  const marketCachePath = getConfiguredStatePath('pluginMarketCache', platform, registry);
   let changed = 0;
   let skipped = 0;
   let failed = 0;
@@ -1427,10 +1525,10 @@ function mergePluginRepoConfig(platform, snapshot = {}, overwrite = true) {
   return { changed, skipped, failed };
 }
 
-function mergeCodexPluginConfig(snapshot = {}, plugins = [], overwrite = true) {
+function mergeCodexPluginConfig(snapshot = {}, plugins = [], overwrite = true, configPath = NATIVE_PATHS.codex.config) {
   const nativeConfig = snapshot.control?.nativeConfig;
   if (nativeConfig?.content !== undefined) {
-    return writeNativeConfigAbsolute({ path: NATIVE_PATHS.codex.config, format: 'text' }, nativeConfig, overwrite);
+    return writeNativeConfigAbsolute({ path: configPath, format: 'text' }, nativeConfig, overwrite);
   }
 
   const pluginEntries = {};
@@ -1452,13 +1550,13 @@ function mergeCodexPluginConfig(snapshot = {}, plugins = [], overwrite = true) {
     return 'skipped';
   }
 
-  return mergeTomlFile(NATIVE_PATHS.codex.config, {
+  return mergeTomlFile(configPath, {
     ...(Object.keys(pluginEntries).length > 0 ? { plugins: pluginEntries } : {}),
     ...(Object.keys(marketplaces).length > 0 ? { marketplaces } : {})
   }, overwrite);
 }
 
-function writeOpenCodePluginConfig(packages = [], overwrite = true) {
+function writeOpenCodePluginConfig(packages = [], overwrite = true, configDir = NATIVE_PATHS.opencode.config) {
   if (packages.length === 0) return 'skipped';
   const openCodePaths = getOpenCodeConfigPaths();
   const configPath = [
@@ -1467,7 +1565,7 @@ function writeOpenCodePluginConfig(packages = [], overwrite = true) {
     openCodePaths.config
   ].find(filePath => filePath && fs.existsSync(filePath))
     || openCodePaths.opencode
-    || path.join(NATIVE_PATHS.opencode.config, 'opencode.json');
+    || path.join(configDir, 'opencode.json');
   const existing = readJsonFileSafe(configPath) || {};
   if (fs.existsSync(configPath) && !overwrite) {
     return 'skipped';
@@ -1477,17 +1575,17 @@ function writeOpenCodePluginConfig(packages = [], overwrite = true) {
   return writeJsonFileAbsolute(configPath, { ...existing, plugin: mergedPlugins }, true);
 }
 
-function writeOmpPluginSettings(plugins = [], snapshot = {}, overwrite = true) {
+function writeOmpPluginSettings(plugins = [], snapshot = {}, overwrite = true, settingsPath = OMP_SETTINGS_PATH) {
   const nativeSettings = snapshot.control?.nativeSettings;
   if (nativeSettings?.content !== undefined) {
-    return writeNativeConfigAbsolute({ path: OMP_SETTINGS_PATH, format: 'yaml' }, {
+    return writeNativeConfigAbsolute({ path: settingsPath, format: 'yaml' }, {
       ...nativeSettings,
       format: 'yaml'
     }, overwrite);
   }
 
-  const settings = readYamlFileSafe(OMP_SETTINGS_PATH) || {};
-  if (fs.existsSync(OMP_SETTINGS_PATH) && !overwrite) {
+  const settings = readYamlFileSafe(settingsPath) || {};
+  if (fs.existsSync(settingsPath) && !overwrite) {
     return 'skipped';
   }
   const existingPackages = Array.isArray(settings.packages) ? settings.packages : [];
@@ -1535,14 +1633,14 @@ function writeOmpPluginSettings(plugins = [], snapshot = {}, overwrite = true) {
     return 'skipped';
   }
 
-  return writeYamlFileAbsolute(OMP_SETTINGS_PATH, {
+  return writeYamlFileAbsolute(settingsPath, {
     ...settings,
     packages: mergePackageEntries(existingPackages, packages),
     disabledPackages: mergePackageEntries(existingDisabled, disabledPackages)
   }, true);
 }
 
-function importPluginToDirectory(platform, plugin, baseDir, overwrite) {
+function importPluginToDirectory(platform, plugin, baseDir, overwrite, options = {}) {
   const files = Array.isArray(plugin.files) ? plugin.files : [];
   if (files.length === 0) {
     return 'skipped';
@@ -1585,7 +1683,7 @@ function importPluginToDirectory(platform, plugin, baseDir, overwrite) {
   }
 
   if (platform === 'claude') {
-    updateClaudePluginRegistry(plugin, pluginDir);
+    updateClaudePluginRegistry(plugin, pluginDir, options);
   }
 
   return 'success';
@@ -1601,14 +1699,15 @@ function applyImportStatus(results, status) {
   }
 }
 
-function importPluginsByPlatformSnapshot(snapshotByPlatform = {}, legacyPlugins = [], overwrite = true, results) {
-  const pluginsByPlatform = getPluginsByPlatformItems(legacyPlugins, snapshotByPlatform);
+function importPluginsByPlatformSnapshot(snapshotByPlatform = {}, legacyPlugins = [], overwrite = true, results, registry = getExportRegistry()) {
+  const pluginsByPlatform = getPluginsByPlatformItems(legacyPlugins, snapshotByPlatform, registry);
 
-  for (const platform of getPluginPlatforms()) {
+  for (const platform of getPluginPlatforms(registry)) {
+    const pluginPaths = getPlatformPluginPaths(platform, registry);
     const snapshot = snapshotByPlatform?.[platform] && typeof snapshotByPlatform[platform] === 'object'
       ? snapshotByPlatform[platform]
       : {};
-    const repoStatus = mergePluginRepoConfig(platform, snapshot, overwrite);
+    const repoStatus = mergePluginRepoConfig(platform, snapshot, overwrite, registry);
     results.plugins.success += repoStatus.changed;
     results.plugins.skipped += repoStatus.skipped;
     results.plugins.failed += repoStatus.failed;
@@ -1617,38 +1716,45 @@ function importPluginsByPlatformSnapshot(snapshotByPlatform = {}, legacyPlugins 
     const hasControl = snapshot?.control && Object.keys(snapshot.control).length > 0;
 
     if (platform === 'codex' && (hasControl || plugins.length > 0)) {
-      applyImportStatus(results, mergeCodexPluginConfig(snapshot, plugins, overwrite));
+      applyImportStatus(results, mergeCodexPluginConfig(snapshot, plugins, overwrite, pluginPaths.configPath));
     } else if (platform === 'opencode' && (hasControl || plugins.length > 0)) {
       const packages = plugins
         .filter(plugin => plugin.type === 'opencode-package' || plugin.pluginType === 'npm')
         .map(plugin => plugin.name || plugin.directory)
         .filter(Boolean);
-      applyImportStatus(results, writeOpenCodePluginConfig(packages, overwrite));
+      applyImportStatus(results, writeOpenCodePluginConfig(packages, overwrite, pluginPaths.configDir));
     } else if (platform === 'omp' && (hasControl || plugins.length > 0)) {
-      applyImportStatus(results, writeOmpPluginSettings(plugins, snapshot, overwrite));
+      applyImportStatus(results, writeOmpPluginSettings(plugins, snapshot, overwrite, pluginPaths.settingsPath));
     }
 
     for (const plugin of plugins) {
       try {
         if (platform === 'codex') {
-          applyImportStatus(results, importPluginToDirectory(platform, plugin, CODEX_PLUGINS_CACHE_DIR, overwrite));
+          applyImportStatus(results, importPluginToDirectory(platform, plugin, pluginPaths.cacheDir || CODEX_PLUGINS_CACHE_DIR, overwrite));
         } else if (platform === 'opencode') {
           if (plugin.type === 'opencode-package' || plugin.pluginType === 'npm') {
             continue;
           }
-          applyImportStatus(results, importPluginToDirectory(platform, plugin, getOpenCodePluginsDir(), overwrite));
+          const openCodePluginsDir = fs.existsSync(pluginPaths.legacyPluginsDir) && !fs.existsSync(pluginPaths.pluginsDir)
+            ? pluginPaths.legacyPluginsDir
+            : pluginPaths.pluginsDir;
+          applyImportStatus(results, importPluginToDirectory(platform, plugin, openCodePluginsDir || getOpenCodePluginsDir(), overwrite));
         } else if (platform === 'omp') {
           if (plugin.type === 'omp-package' || plugin.pluginType === 'package') {
             continue;
           }
-          applyImportStatus(results, importPluginToDirectory(platform, plugin, OMP_EXTENSIONS_DIR, overwrite));
+          applyImportStatus(results, importPluginToDirectory(platform, plugin, pluginPaths.extensionsDir || OMP_EXTENSIONS_DIR, overwrite));
         } else if (platform === 'claude') {
           const isLegacy = plugin.type === 'legacy';
           applyImportStatus(results, importPluginToDirectory(
             platform,
             plugin,
-            isLegacy ? LEGACY_PLUGINS_DIR : CLAUDE_PLUGINS_DIR,
-            overwrite
+            isLegacy ? LEGACY_PLUGINS_DIR : (pluginPaths.pluginsDir || CLAUDE_PLUGINS_DIR),
+            overwrite,
+            isLegacy ? {} : {
+              installedRegistryPath: pluginPaths.installedRegistry,
+              settingsPath: claudeSettingsPath
+            }
           ));
         }
       } catch (err) {
@@ -1659,11 +1765,11 @@ function importPluginsByPlatformSnapshot(snapshotByPlatform = {}, legacyPlugins 
   }
 }
 
-function updateClaudePluginRegistry(plugin, pluginDir) {
+function updateClaudePluginRegistry(plugin, pluginDir, { installedRegistryPath = NATIVE_PLUGINS_REGISTRY, settingsPath = CLAUDE_SETTINGS_PATH } = {}) {
   const pluginName = plugin.name || path.basename(pluginDir);
   const marketplace = plugin.marketplace || '';
   const nativeKey = marketplace ? `${pluginName}@${marketplace}` : pluginName;
-  const installed = readJsonFileSafe(NATIVE_PLUGINS_REGISTRY) || { version: 2, plugins: {} };
+  const installed = readJsonFileSafe(installedRegistryPath) || { version: 2, plugins: {} };
   installed.version = installed.version || 2;
   installed.plugins = installed.plugins && typeof installed.plugins === 'object' ? installed.plugins : {};
   installed.plugins[nativeKey] = [{
@@ -1684,14 +1790,14 @@ function updateClaudePluginRegistry(plugin, pluginDir) {
     ...(plugin.repoLocalPath ? { repoLocalPath: plugin.repoLocalPath } : {}),
     ...(plugin.repoId ? { repoId: plugin.repoId } : {})
   }];
-  writeJsonFileAbsolute(NATIVE_PLUGINS_REGISTRY, installed, true);
+  writeJsonFileAbsolute(installedRegistryPath, installed, true);
 
-  const settings = readJsonFileSafe(CLAUDE_SETTINGS_PATH) || {};
+  const settings = readJsonFileSafe(settingsPath) || {};
   settings.enabledPlugins = settings.enabledPlugins && typeof settings.enabledPlugins === 'object'
     ? settings.enabledPlugins
     : {};
   settings.enabledPlugins[nativeKey] = plugin.enabled !== false;
-  writeJsonFileAbsolute(CLAUDE_SETTINGS_PATH, settings, true);
+  writeJsonFileAbsolute(settingsPath, settings, true);
 }
 
 function writeTextFile(baseDir, relativePath, content, overwrite) {
@@ -1721,6 +1827,9 @@ function getAllChannelsByType() {
 }
 function exportAllConfigs() {
   try {
+    const registry = getExportRegistry();
+    const claudeNative = getConfiguredNativePaths('claude', registry);
+    const claudeSettingsPath = claudeNative.settings || CLAUDE_SETTINGS_PATH;
     // 获取所有配置模板(只导出自定义模板)
     const allConfigTemplates = configTemplatesService.getAllTemplates();
     const customConfigTemplates = allConfigTemplates.filter(t => !t.isBuiltin);
@@ -1738,9 +1847,9 @@ function exportAllConfigs() {
     const favorites = favoritesService.loadFavorites();
 
     // 获取 Agents / Skills / Commands 配置（多平台）
-    const agentsByPlatform = exportAgentsSnapshotByPlatform();
-    const skillsByPlatform = exportSkillsSnapshotByPlatform();
-    const commandsByPlatform = exportCommandsSnapshotByPlatform();
+    const agentsByPlatform = exportAgentsSnapshotByPlatform(registry);
+    const skillsByPlatform = exportSkillsSnapshotByPlatform(registry);
+    const commandsByPlatform = exportCommandsSnapshotByPlatform(registry);
     const agents = agentsByPlatform.claude || [];
     const skills = skillsByPlatform.claude || [];
     const commands = commandsByPlatform.claude || [];
@@ -1750,9 +1859,10 @@ function exportAllConfigs() {
     const mcpServers = mcpService.getAllServers();
 
     // 获取 Plugins 配置
-    const plugins = exportPluginsSnapshot();
-    const pluginsByPlatform = exportPluginsSnapshotByPlatform();
-    const nativeConfigs = exportNativeConfigs();
+    const pluginsByPlatform = exportPluginsSnapshotByPlatform(registry);
+    const plugins = Object.values(pluginsByPlatform)
+      .flatMap(snapshot => Array.isArray(snapshot?.plugins) ? snapshot.plugins : []);
+    const nativeConfigs = exportNativeConfigs(registry);
     const oauthCredentials = readJsonFileSafe(PATHS.oauthCredentials);
 
     // 读取 Markdown 配置文件
@@ -1780,7 +1890,7 @@ function exportAllConfigs() {
     const security = readJsonFileSafe(CC_SECURITY_PATH);
     const appConfig = loadConfig();
 
-    const claudeSettings = readJsonFileSafe(CLAUDE_SETTINGS_PATH);
+    const claudeSettings = readJsonFileSafe(claudeSettingsPath);
     const claudeHooks = {
       uiConfig: readJsonFileSafe(LEGACY_UI_CONFIG_PATH),
       notifyScript: readTextFileSafe(LEGACY_NOTIFY_HOOK_PATH),
@@ -1861,6 +1971,10 @@ function exportAllConfigsZip() {
  */
 async function importConfigs(importData, options = {}) {
   const { overwrite = true } = options; // 默认覆盖模式
+  const registry = options.registry || getExportRegistry();
+  const claudeNative = getConfiguredNativePaths('claude', registry);
+  const claudeSettingsPath = claudeNative.settings || CLAUDE_SETTINGS_PATH;
+  const claudePluginPaths = getPlatformPluginPaths('claude', registry);
   const results = {
     configTemplates: { success: 0, failed: 0, skipped: 0 },
     channels: { success: 0, failed: 0, skipped: 0 },
@@ -1912,9 +2026,9 @@ async function importConfigs(importData, options = {}) {
       claudeHooks = null
     } = importData.data;
 
-    const importAgentsByPlatform = normalizePlatformItems(agents, agentsByPlatform, getAgentPlatforms());
-    const importSkillsByPlatform = normalizePlatformItems(skills, skillsByPlatform, getSkillPlatforms());
-    const importCommandsByPlatform = normalizePlatformItems(commands, commandsByPlatform, getCommandPlatforms());
+    const importAgentsByPlatform = normalizePlatformItems(agents, agentsByPlatform, getAgentPlatforms(registry));
+    const importSkillsByPlatform = normalizePlatformItems(skills, skillsByPlatform, getSkillPlatforms(registry));
+    const importCommandsByPlatform = normalizePlatformItems(commands, commandsByPlatform, getCommandPlatforms(registry));
 
     const channelPlatforms = getPlatformCatalog().keys({ capability: 'channels' });
     const hasTypedChannels = channelsByType && typeof channelsByType === 'object';
@@ -2024,13 +2138,13 @@ async function importConfigs(importData, options = {}) {
     }
 
     // 导入 Agents（多平台）
-    if (getAgentPlatforms().some(platform => importAgentsByPlatform[platform]?.length > 0)) {
+    if (getAgentPlatforms(registry).some(platform => importAgentsByPlatform[platform]?.length > 0)) {
       try {
-        for (const platform of getAgentPlatforms()) {
+        for (const platform of getAgentPlatforms(registry)) {
           const platformAgents = importAgentsByPlatform[platform] || [];
           if (platformAgents.length === 0) continue;
 
-          const agentsService = new AgentsService(platform);
+          const agentsService = new AgentsService(platform, { registry });
           const baseDir = agentsService.userAgentsDir;
 
           for (const agent of platformAgents) {
@@ -2053,13 +2167,13 @@ async function importConfigs(importData, options = {}) {
     }
 
     // 导入 Skills（多平台）
-    if (getSkillPlatforms().some(platform => importSkillsByPlatform[platform]?.length > 0)) {
+    if (getSkillPlatforms(registry).some(platform => importSkillsByPlatform[platform]?.length > 0)) {
       try {
-        for (const platform of getSkillPlatforms()) {
+        for (const platform of getSkillPlatforms(registry)) {
           const platformSkills = importSkillsByPlatform[platform] || [];
           if (platformSkills.length === 0) continue;
 
-          const skillService = new SkillService(platform);
+          const skillService = new SkillService(platform, { registry });
           const baseDir = skillService.installDir;
           ensureDir(baseDir);
 
@@ -2116,7 +2230,7 @@ async function importConfigs(importData, options = {}) {
 
     // 导入 Plugins（优先使用多平台结构，兼容旧结构 plugins）
     if (pluginsByPlatform && typeof pluginsByPlatform === 'object' && Object.keys(pluginsByPlatform).length > 0) {
-      importPluginsByPlatformSnapshot(pluginsByPlatform, plugins, overwrite, results);
+      importPluginsByPlatformSnapshot(pluginsByPlatform, plugins, overwrite, results, registry);
     }
 
     // 导入旧版 Plugins 结构。新包已经通过 pluginsByPlatform 处理过，避免重复写入。
@@ -2147,8 +2261,8 @@ async function importConfigs(importData, options = {}) {
                 results.plugins.failed++;
                 continue;
               }
-              targetDir = path.join(CLAUDE_PLUGINS_DIR, pluginId);
-              registryPath = NATIVE_PLUGINS_REGISTRY;
+              targetDir = path.join(claudePluginPaths.pluginsDir || CLAUDE_PLUGINS_DIR, pluginId);
+              registryPath = claudePluginPaths.installedRegistry || NATIVE_PLUGINS_REGISTRY;
             } else {
               console.warn(`[ConfigImport] Unknown plugin type: ${pluginType}`);
               results.plugins.failed++;
@@ -2261,13 +2375,13 @@ async function importConfigs(importData, options = {}) {
     }
 
     // 导入 Commands（多平台）
-    if (getCommandPlatforms().some(platform => importCommandsByPlatform[platform]?.length > 0)) {
+    if (getCommandPlatforms(registry).some(platform => importCommandsByPlatform[platform]?.length > 0)) {
       try {
-        for (const platform of getCommandPlatforms()) {
+        for (const platform of getCommandPlatforms(registry)) {
           const platformCommands = importCommandsByPlatform[platform] || [];
           if (platformCommands.length === 0) continue;
 
-          const commandsService = new CommandsService(platform);
+          const commandsService = new CommandsService(platform, { registry });
           const baseDir = commandsService.userCommandsDir;
 
           for (const command of platformCommands) {
@@ -2466,10 +2580,10 @@ async function importConfigs(importData, options = {}) {
         }
 
         if (claudeHooks.stopHook !== undefined) {
-          if (!overwrite && fs.existsSync(CLAUDE_SETTINGS_PATH)) {
+          if (!overwrite && fs.existsSync(claudeSettingsPath)) {
             didSkip = true;
           } else {
-            const settings = readJsonFileSafe(CLAUDE_SETTINGS_PATH) || {};
+            const settings = readJsonFileSafe(claudeSettingsPath) || {};
             settings.hooks = settings.hooks || {};
             if (claudeHooks.stopHook) {
               settings.hooks.Stop = claudeHooks.stopHook;
@@ -2479,7 +2593,7 @@ async function importConfigs(importData, options = {}) {
                 delete settings.hooks;
               }
             }
-            writeJsonFileAbsolute(CLAUDE_SETTINGS_PATH, settings, true);
+            writeJsonFileAbsolute(claudeSettingsPath, settings, true);
             didWrite = true;
           }
         }

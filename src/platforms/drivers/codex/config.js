@@ -3,11 +3,20 @@ const path = require('path');
 const toml = require('toml');
 const { NATIVE_PATHS } = require('../../../config/paths');
 
+const DEFAULT_CODEX_DIR = NATIVE_PATHS.codex.dir;
+let codexDirOverride = null;
+
+function configure({ pathContext } = {}) {
+  codexDirOverride = pathContext?.customized
+    ? (pathContext.native?.dir || path.dirname(pathContext.native?.config || DEFAULT_CODEX_DIR))
+    : null;
+}
+
 /**
  * 获取 Codex 配置目录
  */
 function getCodexDir() {
-  return NATIVE_PATHS.codex.dir;
+  return codexDirOverride || DEFAULT_CODEX_DIR;
 }
 
 /**
@@ -82,6 +91,7 @@ function isCodexInstalled() {
 }
 
 module.exports = {
+  configure,
   getCodexDir,
   loadConfig,
   loadAuth,

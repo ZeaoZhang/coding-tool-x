@@ -77,12 +77,22 @@ class SkillProjectionService {
   _userRoot(platform) {
     let root;
     if (this.nativeRoots[platform]) root = this.nativeRoots[platform];
-    else if (platform === 'claude') root = NATIVE_PATHS.claude.skills;
-    else if (platform === 'codex') root = NATIVE_PATHS.codex.skills || path.join(NATIVE_PATHS.codex.dir, 'skills');
-    else if (platform === 'gemini') root = NATIVE_PATHS.gemini.skills || path.join(NATIVE_PATHS.gemini.dir, 'skills');
-    else if (platform === 'opencode') root = path.join(NATIVE_PATHS.opencode.config, 'skills');
-    else if (platform === 'omp') root = getOmpPaths().skills;
-    else throw new Error(`Unsupported Skill platform: ${platform}`);
+    else {
+      let pathContext = null;
+      try {
+        if (typeof this.registry.resolvePathContext === 'function') {
+          pathContext = this.registry.resolvePathContext(platform);
+        }
+      } catch {
+        pathContext = null;
+      }
+      const native = pathContext?.customized
+        ? (pathContext.native || {})
+        : (NATIVE_PATHS[platform] || {});
+      root = native.skills || (native.dir ? path.join(native.dir, 'skills') : null);
+      if (!root && platform === 'omp') root = getOmpPaths().skills;
+    }
+    if (!root) throw new Error(`Unsupported Skill platform: ${platform}`);
     return this._assertNativeRoot(root);
   }
 

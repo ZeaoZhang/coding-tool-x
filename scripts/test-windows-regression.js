@@ -251,12 +251,21 @@ function run() {
   const resumeSource = fs.readFileSync(path.join(__dirname, '..', 'src/commands/resume.js'), 'utf8');
   assert.match(
     resumeSource,
-    /execSync\(command,\s*\{[\s\S]*?stdio:\s*'inherit',[\s\S]*?windowsHide:\s*true[\s\S]*?\}\)/,
-    '交互式恢复必须继承当前终端并显式设置 windowsHide'
+    /resolveOperation\(platform,\s*'sessions',\s*'launch',/,
+    '交互式恢复必须通过平台 sessions driver 启动'
+  );
+
+  const claudeSessionsSource = fs.readFileSync(
+    path.join(__dirname, '..', 'src/platforms/drivers/claude/sessions-implementation.js'),
+    'utf8'
+  );
+  assert.match(
+    claudeSessionsSource,
+    /processRunner\('claude',\s*args,\s*\{[\s\S]*?stdio:\s*'inherit',[\s\S]*?windowsHide:\s*true[\s\S]*?\}\)/,
+    'Claude 交互式恢复 driver 必须继承当前终端并显式设置 windowsHide'
   );
 
   console.log('Windows 专项回归测试通过');
 }
 
 run();
-

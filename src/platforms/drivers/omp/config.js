@@ -5,6 +5,13 @@ const yaml = require('js-yaml');
 const { HOME_DIR, PATHS = {} } = require('../../../config/paths');
 
 const DEFAULT_OMP_COMMAND = 'omp';
+let nativePathsOverride = null;
+
+function configure({ pathContext } = {}) {
+  nativePathsOverride = pathContext?.customized && pathContext.native?.dir
+    ? { ...pathContext.native, agentDir: pathContext.native.dir }
+    : null;
+}
 const YAML_DUMP_OPTIONS = Object.freeze({
   lineWidth: 120,
   noRefs: true,
@@ -97,6 +104,9 @@ function getOmpAgentDir(env = process.env, options = {}) {
 }
 
 function getOmpPaths(env = process.env, options = {}) {
+  if (nativePathsOverride && options.usePathContext !== false) {
+    return { ...nativePathsOverride };
+  }
   const runtime = options.runtime || (options.resolveRuntime === false ? null : resolveOmpRuntime(env, options));
   const agentDir = getOmpAgentDir(env, { ...options, runtime });
   return {
@@ -338,6 +348,7 @@ function getOmpStatus(env = process.env, options = {}) {
 }
 
 module.exports = {
+  configure,
   expandHome,
   getOmpAgentDir,
   getOmpPaths,

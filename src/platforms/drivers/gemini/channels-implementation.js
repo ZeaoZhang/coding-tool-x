@@ -13,6 +13,21 @@ const {
   upsertSyncedChannels
 } = require('../../../server/services/channel-sync-utils');
 
+let configuredNative = NATIVE_PATHS.gemini;
+let configuredState = { channels: PATHS.channels?.gemini };
+
+function configure({ pathContext } = {}) {
+  const custom = pathContext?.customized === true;
+  configuredNative = custom && pathContext.native?.env
+    ? { ...NATIVE_PATHS.gemini, ...pathContext.native }
+    : NATIVE_PATHS.gemini;
+  configuredState = {
+    channels: custom ? (pathContext.state?.channels || PATHS.channels?.gemini) : PATHS.channels?.gemini
+  };
+  require('../../native-oauth-adapters').configure?.({ pathContext });
+  if (service) service.channelsFilePath = configuredState.channels;
+}
+
 const GEMINI_API_FORMATS = new Set(['gemini_api', 'vertex_ai_v1']);
 
 function clearChannelBalanceCache(channel) {
@@ -69,7 +84,7 @@ function applyNativeGeminiOAuth(channel) {
   validateGeminiOAuthMutation(channel, 'apply');
   clearGeminiChannelConfig();
 
-  const settingsPath = NATIVE_PATHS.gemini.settings;
+  const settingsPath = configuredNative.settings;
   const settings = readGeminiSettings();
   settings.security = settings.security || {};
   settings.security.auth = settings.security.auth || {};
@@ -115,16 +130,16 @@ function normalizeGeminiApiFormat(value) {
 
 // 获取 Gemini 配置目录
 function getGeminiDir() {
-  return path.dirname(NATIVE_PATHS.gemini.env);
+  return configuredNative.dir || path.dirname(configuredNative.env);
 }
 
 // 获取渠道存储文件路径
 function getChannelsFilePath() {
-  const channelsDir = path.dirname(PATHS.channels.gemini);
+  const channelsDir = path.dirname(configuredState.channels);
   if (!fs.existsSync(channelsDir)) {
     fs.mkdirSync(channelsDir, { recursive: true });
   }
-  return PATHS.channels.gemini;
+  return configuredState.channels;
 }
 
 function readExistingGeminiEnv() {
@@ -673,7 +688,7 @@ function disableAllChannels() {
 }
 
 function readGeminiSettings() {
-  const settingsPath = NATIVE_PATHS.gemini.settings;
+  const settingsPath = configuredNative.settings;
   if (!settingsPath || !fs.existsSync(settingsPath)) {
     return {};
   }
@@ -788,6 +803,7 @@ function syncCurrentGeminiChannel() {
 }
 
 module.exports = {
+  configure,
   getChannels,
   createChannel,
   updateChannel,

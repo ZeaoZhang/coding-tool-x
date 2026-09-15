@@ -7,11 +7,11 @@ const { NATIVE_PATHS } = require('../../../config/paths');
 const { normalizeCost, normalizeUsage, hasUsage, subtractUsage } = require('../native-log-utils');
 const { calculateUsageCost } = require('../../../server/services/usage-log-utils');
 
-function getDatabasePath(fsImpl = fs) {
+function getDatabasePath(fsImpl = fs, dataDir) {
   const configured = typeof process.env.OPENCODE_DB_PATH === 'string' ? process.env.OPENCODE_DB_PATH.trim() : '';
   if (configured && fsImpl.existsSync(configured)) return configured;
   return require('./sessions-implementation').getOpenCodeDbPath
-    ? require('./sessions-implementation').getOpenCodeDbPath()
+    ? require('./sessions-implementation').getOpenCodeDbPath(dataDir)
     : require('path').join(NATIVE_PATHS.opencode.data, 'opencode.db');
 }
 
@@ -60,7 +60,11 @@ function readUsageRows(db) {
   });
 }
 
-function createDriver({ fsImpl = fs } = {}) {
+function createDriver({ fsImpl = fs, pathContext } = {}) {
+  const dataDir = pathContext?.customized ? pathContext.native?.data : undefined;
+  if (pathContext?.customized) {
+    require('./sessions-implementation').configure?.({ pathContext });
+  }
   return {
     platform: 'opencode',
     capability: 'nativeLogs',
@@ -69,7 +73,7 @@ function createDriver({ fsImpl = fs } = {}) {
       let initialized = false;
 
       const read = () => {
-        const dbPath = getDatabasePath(cursorFs);
+        const dbPath = getDatabasePath(cursorFs, dataDir);
         if (!dbPath || !cursorFs.existsSync(dbPath)) return [];
         let db;
         try {

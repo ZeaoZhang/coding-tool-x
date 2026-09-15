@@ -15,7 +15,15 @@ const {
   parseSkillContent,
 } = require('./format-converter');
 const { maskToken } = require('./oauth-utils');
-const { NATIVE_PATHS, HOME_DIR, PATHS } = require('../../config/paths');
+const pathsModule = require('../../config/paths');
+const { NATIVE_PATHS, HOME_DIR, PATHS } = pathsModule;
+const getPlatformStatePaths = typeof pathsModule.getPlatformStatePaths === 'function'
+  ? pathsModule.getPlatformStatePaths
+  : platform => ({
+    localSkills: PATHS.localSkills?.[platform],
+    skillRepos: PATHS.skillRepos?.[platform],
+    skillCaches: PATHS.skillCaches?.[platform]
+  });
 const { getOmpPaths } = require('../../platforms/drivers/omp/config');
 const { discoverOmpSkills } = require('../../platforms/drivers/omp/skill-discovery');
 const { migratePiStorage } = require('./pi-omp-migration');
@@ -286,13 +294,27 @@ class SkillService {
     }
     this.configDir = PATHS.config;
 
-    const platformConfig = PLATFORM_CONFIG[this.platform];
-    this.installDir = this.platform === 'omp'
+    this.pathContext = null;
+    try {
+      if (typeof this.registry?.resolvePathContext === 'function') {
+        this.pathContext = this.registry.resolvePathContext(this.platform);
+      }
+    } catch {
+      this.pathContext = null;
+    }
+    const pathContext = this.pathContext?.customized ? this.pathContext : null;
+    const native = pathContext?.native || NATIVE_PATHS[this.platform] || {};
+    const state = pathContext?.state || getPlatformStatePaths(this.platform);
+    const platformConfig = PLATFORM_CONFIG[this.platform] || {};
+    this.installDir = this.platform === 'omp' && !this.pathContext?.customized
       ? getOmpPaths().skills
-      : platformConfig.installDir;
-    this.storageDir = platformConfig.storageDir;
-    this.reposConfigPath = platformConfig.reposFile;
-    this.cachePath = platformConfig.cacheFile;
+      : native.skills
+      || (native.dir ? path.join(native.dir, 'skills') : null)
+      || platformConfig.installDir
+      || path.join(this.configDir, 'native', this.platform, 'skills');
+    this.storageDir = state.localSkills || platformConfig.storageDir;
+    this.reposConfigPath = state.skillRepos || platformConfig.reposFile;
+    this.cachePath = state.skillCaches || platformConfig.cacheFile;
     this.artifactStore = artifactStore || (
       PATHS.skillArtifacts
         ? new SkillArtifactStore({ root: PATHS.skillArtifacts })
@@ -328,7 +350,20 @@ class SkillService {
 
   refreshOmpPaths() {
     if (this.platform !== 'omp') return;
-    const nextInstallDir = getOmpPaths().skills;
+    let nextContext = null;
+    try {
+      if (typeof this.registry?.resolvePathContext === 'function') {
+        nextContext = this.registry.resolvePathContext(this.platform);
+      }
+    } catch {
+      nextContext = null;
+    }
+    const nextInstallDir = nextContext?.customized
+      ? (nextContext.native?.skills || getOmpPaths().skills)
+      : nextContext?.paths?.skills
+        ? nextContext.native?.skills
+        : getOmpPaths().skills;
+    this.pathContext = nextContext || this.pathContext;
     if (this.installDir !== nextInstallDir) {
       this.installDir = nextInstallDir;
       this.clearCache();
@@ -969,7 +1004,7 @@ class SkillService {
       : [];
 
     if (this.platform === 'omp') {
-      preparedSkills.unshift(...discoverOmpSkills(this, options));
+      preparedSkills.unshift(...discoverOmpSkills(this, { ...options, pathContext: this.pathContext }));
     }
     this.mergeLocalSkills(preparedSkills);
     if (this.platform !== 'omp') {
@@ -1341,9 +1376,10 @@ class SkillService {
       ? {
         ...legacyOptions,
         ...(options ? { force: true } : {}),
-        scope: legacyOptions.scope || (legacyOptions.cwd ? 'project' : 'user')
+        scope: legacyOptions.scope || (legacyOptions.cwd ? 'project' : 'user'),
+        includeRemote: legacyOptions.includeRemote !== false
       }
-      : options;
+      : { ...(options || {}), includeRemote: options?.includeRemote !== false };
     const result = await this.scanSkills(scanOptions || {});
     return result.skills;
   }
@@ -3592,7 +3628,8 @@ ${content}
       const discovered = discoverOmpSkills(this, {
         ...options,
         cwd: options.cwd || null,
-        force: false
+        force: false,
+        pathContext: this.pathContext
       }).find(skill => normalizeRepoPath(skill.directory) === normalizeRepoPath(safeDirectory));
       const discoveredPath = discovered?.realPath || discovered?.sourcePath;
       if (discoveredPath && fs.existsSync(discoveredPath) && !fs.lstatSync(discoveredPath).isSymbolicLink()) {

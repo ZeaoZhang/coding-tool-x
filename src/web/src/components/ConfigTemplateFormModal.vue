@@ -175,7 +175,7 @@
         <!-- OMP 配置 -->
         <template v-if="formData.cliType === 'omp'">
           <n-card title="OMP Commands" size="small" style="margin-bottom: 16px">
-            <n-tag size="small" type="success">.omp/commands</n-tag>
+            <n-tag size="small" type="success">{{ projectResourcePath('commands') || 'Commands' }}</n-tag>
           </n-card>
           <!-- Skills -->
           <n-card title="Skills" size="small" style="margin-bottom: 16px">
@@ -189,7 +189,29 @@
           </n-card>
           <!-- MCP Servers -->
           <n-card title="MCP Servers" size="small">
-            <n-tag size="small" type="default">packages/extensions</n-tag>
+            <n-tag size="small" type="default">{{ projectResourcePath('plugins') || 'packages/extensions' }}</n-tag>
+          </n-card>
+        </template>
+
+        <!-- 未内置专用编辑器的平台使用通用配置编辑器 -->
+        <template v-if="isGenericPlatform">
+          <n-card :title="`${activePlatformLabel} 配置`" size="small" style="margin-bottom: 16px">
+            <div class="ai-config-header">
+              <n-space align="center">
+                <n-switch v-model:value="formData.aiConfigs[formData.cliType].enabled" />
+                <n-text :depth="formData.aiConfigs[formData.cliType].enabled ? 1 : 3">
+                  启用 {{ activePromptFile || `${activePlatformLabel} 配置` }}
+                </n-text>
+              </n-space>
+            </div>
+            <n-collapse-transition :show="formData.aiConfigs[formData.cliType].enabled">
+              <MarkdownEditor
+                v-model="formData.aiConfigs[formData.cliType].content"
+                :rows="10"
+                :min-height="220"
+                :placeholder="`输入 ${activePromptFile || activePlatformLabel} 内容`"
+              />
+            </n-collapse-transition>
           </n-card>
         </template>
       </n-form>
@@ -234,39 +256,62 @@ const formRef = ref(null)
 const saving = ref(false)
 
 // CLI 工具类型选项（无"通用"选项）
-const CLI_TYPE_OPTIONS = [
-  { label: 'Claude Code', value: 'claude' },
-  { label: 'Codex', value: 'codex' },
-  { label: 'Gemini', value: 'gemini' },
-  { label: 'OpenCode', value: 'opencode' },
-  { label: 'OMP', value: 'omp' }
-]
+const platformDefinitions = computed(() => {
+  const definitions = props.availableConfigs?.platforms
+  return Array.isArray(definitions) ? definitions : []
+})
 
-const CLI_CAPABILITIES = {
-  claude: { skills: true, agents: true, commands: true },
-  codex: { skills: true, agents: true, commands: true },
-  gemini: { skills: true, agents: true, commands: true },
-  opencode: { skills: true, agents: true, commands: true },
-  omp: { skills: true, agents: false, commands: true }
+function getAvailablePlatformKeys(extra = []) {
+  const keys = [
+    ...platformDefinitions.value.map(platform => platform.key),
+    ...Object.keys(props.availableConfigs?.skillsByPlatform || {}),
+    ...Object.keys(props.availableConfigs?.agentsByPlatform || {}),
+    ...Object.keys(props.availableConfigs?.commandsByPlatform || {}),
+    ...extra
+  ]
+  return [...new Set(keys.filter(key => typeof key === 'string' && key.trim()))]
 }
+
+const CLI_TYPE_OPTIONS = computed(() => platformDefinitions.value.map(platform => ({
+  label: platform.label || platform.title || platform.key,
+  value: platform.key
+})))
+
+const activePlatform = computed(() => platformDefinitions.value.find(
+  platform => platform.key === formData.value.cliType
+))
+const activePlatformLabel = computed(() => activePlatform.value?.label || activePlatform.value?.title || formData.value.cliType)
+const activePromptFile = computed(() => activePlatform.value?.promptFile || '')
+function projectResourcePath(type) {
+  const resource = activePlatform.value?.projectResources?.[type]
+  return resource?.canonicalRoot || resource?.path || ''
+}
+const isGenericPlatform = computed(() => Boolean(formData.value.cliType && activePlatform.value && ![
+  'claude', 'codex', 'gemini', 'opencode', 'omp'
+].includes(formData.value.cliType)))
 
 const isEdit = computed(() => !!props.template?.id)
 
 // 表单数据
 const formData = ref(getDefaultFormData())
 
+watch(platformDefinitions, (definitions) => {
+  for (const platform of definitions) {
+    if (!formData.value.aiConfigs[platform.key]) {
+      formData.value.aiConfigs[platform.key] = { enabled: false, content: '' }
+    }
+  }
+}, { deep: true, immediate: true })
+
 function getDefaultFormData() {
+  const aiConfigs = Object.fromEntries(
+    getAvailablePlatformKeys().map(key => [key, { enabled: false, content: '' }])
+  )
   return {
     name: '',
     description: '',
     cliType: '',
-    aiConfigs: {
-      claude: { enabled: false, content: '' },
-      codex: { enabled: false, content: '' },
-      gemini: { enabled: false, content: '' },
-      opencode: { enabled: false, content: '' },
-      omp: { enabled: false, content: '' }
-    },
+    aiConfigs,
     claudeMd: { enabled: false, content: '' },
     skills: [],
     agents: [],
@@ -398,21 +443,19 @@ watch(() => props.show, (newVal) => {
   if (newVal) {
     selectedPromptId.value = null
     if (props.template) {
-      let aiConfigs = {
-        claude: { enabled: false, content: '' },
-        codex: { enabled: false, content: '' },
-        gemini: { enabled: false, content: '' },
-        opencode: { enabled: false, content: '' },
-        omp: { enabled: false, content: '' }
-      }
+      const configuredKeys = Object.keys(props.template.aiConfigs || {})
+      const aiConfigs = Object.fromEntries(
+        getAvailablePlatformKeys(configuredKeys).map(key => [key, { enabled: false, content: '' }])
+      )
 
       if (props.template.aiConfigs) {
-        for (const key of ['claude', 'codex', 'gemini', 'opencode', 'omp']) {
+        for (const key of getAvailablePlatformKeys(Object.keys(props.template.aiConfigs))) {
           if (props.template.aiConfigs[key]) {
             aiConfigs[key] = { ...props.template.aiConfigs[key] }
           }
         }
       } else if (props.template.claudeMd) {
+        if (!aiConfigs.claude) aiConfigs.claude = { enabled: false, content: '' }
         aiConfigs.claude = { ...props.template.claudeMd }
       }
 
@@ -434,7 +477,7 @@ watch(() => props.show, (newVal) => {
 })
 
 watch(() => formData.value.cliType, (cliType) => {
-  const capability = CLI_CAPABILITIES[cliType]
+  const capability = platformDefinitions.value.find(platform => platform.key === cliType)?.resourceTypes
   if (!capability) return
 
   if (!capability.skills) {

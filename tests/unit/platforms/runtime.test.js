@@ -36,23 +36,24 @@ test('creates injected capability drivers with resolved manifest and flat depend
   expect(runtime.invoke('demo-cli', 'sessions', 'list')).toEqual(['session-1']);
 });
 
-test('runtime passes legacy manifests through without path resolution', () => {
+test('runtime passes legacy manifests through while injecting resolved path context', () => {
   const driver = { list: vi.fn(() => ['legacy-session']) };
   const driverRegistry = { create: vi.fn(() => driver) };
   const manifest = { key: 'claude', paths: { sessions: '{home}/projects' }, capabilities: { sessions: 'legacy:claude' } };
   const registry = {
     getCapability: vi.fn(() => 'legacy:claude'),
     resolve: vi.fn(() => manifest),
-    resolvePaths: vi.fn(() => { throw new Error('path resolver should not run for legacy drivers'); })
+    resolvePaths: vi.fn(() => ({ home: '/tmp/claude' }))
   };
   const runtime = createPlatformRuntime({ registry, driverRegistry });
 
   expect(runtime.getDriver('claude', 'sessions')).toBe(driver);
-  expect(registry.resolvePaths).not.toHaveBeenCalled();
+  expect(registry.resolvePaths).toHaveBeenCalledWith('claude', {});
   expect(driverRegistry.create).toHaveBeenCalledWith('legacy:claude', expect.objectContaining({
     platform: 'claude',
     capability: 'sessions',
-    manifest
+    manifest,
+    pathContext: expect.objectContaining({ home: '/tmp/claude' })
   }));
   expect(runtime.invoke('claude', 'sessions', 'list')).toEqual(['legacy-session']);
 });
@@ -323,13 +324,13 @@ test('production singleton creates drivers through the default registry', () => 
     const runtime = getPlatformRuntime();
 
     expect(runtime.getDriver('claude', 'sessions')).toBe(driver);
-    expect(defaultDriverRegistry.create).toHaveBeenCalledWith('legacy:claude', {
+    expect(defaultDriverRegistry.create).toHaveBeenCalledWith('legacy:claude', expect.objectContaining({
       platform: 'claude',
       capability: 'sessions',
       manifest: expect.objectContaining({ key: 'claude' }),
       context: {},
       dependencies: {}
-    });
+    }));
   } finally {
     delete require.cache[RUNTIME_PATH];
     Module._load = originalLoad;

@@ -5,7 +5,18 @@ const path = require('path');
 const { HOME_DIR } = require('../../../config/paths');
 const { getOmpPaths } = require('./config');
 
+let ompSessionPathsOverride = null;
+
+function configure({ pathContext } = {}) {
+  require('./config').configure?.({ pathContext });
+  const native = pathContext?.customized ? (pathContext.native || {}) : {};
+  ompSessionPathsOverride = native.sessions
+    ? { ...native, agentDir: native.dir || path.dirname(native.sessions) }
+    : null;
+}
+
 function getOmpSessionPaths() {
+  if (ompSessionPathsOverride?.sessions) return ompSessionPathsOverride;
   return getOmpPaths(process.env, { resolveRuntime: false });
 }
 
@@ -261,4 +272,4 @@ async function parse(descriptor) {
   return { session, messages };
 }
 
-module.exports = { inventory, parse, convertOmpEntry, parseUsage, encodeProjectName: encodeProjectName, getDisplayName, readJsonLines, extractMessageText, normalizeTextContent };
+module.exports = { configure, inventory, parse, convertOmpEntry, parseUsage, encodeProjectName: encodeProjectName, getDisplayName, readJsonLines, extractMessageText, normalizeTextContent };

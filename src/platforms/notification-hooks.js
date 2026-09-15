@@ -37,6 +37,18 @@ const {
 
 const MANAGED_HOOK_NAME = notificationHooksDriver.MANAGED_HOOK_NAME;
 
+function getConfiguredNativePath(platform, name, fallback) {
+  try {
+    const { getPlatformContext } = require('../server/platform-context');
+    const pathContext = getPlatformContext().registry.resolvePathContext(platform);
+    if (pathContext?.customized && pathContext.native?.[name]) {
+      return pathContext.native[name];
+    }
+  } catch (_) {
+    // Keep legacy paths when notification helpers are used in isolation.
+  }
+  return fallback;
+}
 
 function normalizeType(type) {
   return type === 'dialog' || type === 'browser' ? type : 'notification';
@@ -69,11 +81,11 @@ function writeJsonFile(filePath, value) {
 }
 
 function readClaudeSettings() {
-  return readJsonFile(NATIVE_PATHS.claude.settings);
+  return readJsonFile(getConfiguredNativePath('claude', 'settings', NATIVE_PATHS.claude.settings));
 }
 
 function writeClaudeSettings(settings) {
-  writeJsonFile(NATIVE_PATHS.claude.settings, settings);
+  writeJsonFile(getConfiguredNativePath('claude', 'settings', NATIVE_PATHS.claude.settings), settings);
 }
 
 

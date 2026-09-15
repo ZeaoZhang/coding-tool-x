@@ -72,6 +72,17 @@
         ".omp/skills"
       ]
     },
+    "agents": {
+      "canonicalRoot": null
+    },
+    "commands": {
+      "canonicalRoot": ".omp/commands",
+      "format": "omp"
+    },
+    "plugins": {
+      "path": ".omp/config.yml",
+      "format": "omp-yaml"
+    },
     "mcp": {
       "path": ".omp/mcp.json",
       "format": "omp-json"

@@ -218,7 +218,10 @@ test('default registry file lookup does not load PATHS configuration when file i
 
     expect(registry.list()).toEqual([]);
     expect(registry.diagnostics()).toEqual([]);
-    expect(checkedPaths).toEqual([expect.stringContaining('.cc-tool/config/platforms.json')]);
+    expect(checkedPaths).toEqual([
+      expect.stringContaining('.cc-tool/config/platform-paths.json'),
+      expect.stringContaining('.cc-tool/config/platforms.json')
+    ]);
   } finally {
     delete require.cache[REGISTRY_PATH];
     Module._load = originalLoad;
@@ -238,6 +241,36 @@ test('platformsFile option controls user manifest file lookup', () => {
   expect(registry.resolve('demo-cli').label).toBe('Demo');
   expect(fsImpl.existsSync).toHaveBeenCalledWith('/tmp/platforms.json');
   expect(fsImpl.readFileSync).toHaveBeenCalledWith('/tmp/platforms.json', 'utf8');
+});
+
+test('resolves a platform through the path-only overlay without changing its manifest', () => {
+  const registry = createPlatformRegistry({
+    builtIns: [],
+    pathOverlay: {
+      platforms: {
+        'demo-cli': {
+          paths: { home: '/var/tmp/demo-cli', sessions: '{home}/history' },
+          capabilities: { sessions: 'legacy:claude' }
+        }
+      }
+    },
+    userFile: {
+      platforms: [{
+        key: 'demo-cli',
+        label: 'Demo',
+        command: 'demo',
+        paths: { home: '{home}/.demo', sessions: '{home}/sessions' },
+        capabilities: { sessions: 'generic-jsonl' }
+      }]
+    }
+  });
+
+  expect(registry.resolvePaths('demo-cli')).toEqual({
+    home: '/var/tmp/demo-cli',
+    sessions: '/var/tmp/demo-cli/history'
+  });
+  expect(registry.resolve('demo-cli').capabilities.sessions).toBe('generic-jsonl');
+  expect(registry.resolvePathContext('demo-cli').paths.sessions).toBe('/var/tmp/demo-cli/history');
 });
 
 test('duplicate user platform keys keep the first entry and record diagnostics', () => {

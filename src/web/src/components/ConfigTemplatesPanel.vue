@@ -116,14 +116,27 @@ const availableConfigs = ref({})
 const searchQuery = ref('')
 const filterCliType = ref('')
 
-const cliTypeFilterOptions = [
-  { label: '全部 CLI', value: '' },
-  { label: 'Claude Code', value: 'claude' },
-  { label: 'Codex', value: 'codex' },
-  { label: 'Gemini', value: 'gemini' },
-  { label: 'OpenCode', value: 'opencode' },
-  { label: 'OMP', value: 'omp' }
-]
+const cliTypeFilterOptions = computed(() => {
+  const definitions = Array.isArray(availableConfigs.value?.platforms)
+    ? availableConfigs.value.platforms
+    : []
+  const knownFromTemplates = templates.value
+    .map(template => template.cliType)
+    .filter(Boolean)
+    .map(key => ({ key, label: key }))
+  const seen = new Set()
+  const options = [{ label: '全部 CLI', value: '' }]
+  for (const platform of [...definitions, ...knownFromTemplates]) {
+    const key = String(platform?.key || '').trim().toLowerCase()
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    options.push({
+      label: platform.label || platform.title || key,
+      value: key
+    })
+  }
+  return options
+})
 
 const deletingId = ref(null)
 

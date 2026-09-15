@@ -5,7 +5,14 @@ const path = require('path');
 const readline = require('readline');
 const { NATIVE_PATHS } = require('../../../config/paths');
 
-const CLAUDE_PROJECTS_DIR = NATIVE_PATHS?.claude?.projects || '';
+const DEFAULT_CLAUDE_PROJECTS_DIR = NATIVE_PATHS?.claude?.projects || '';
+let claudeProjectsDir = DEFAULT_CLAUDE_PROJECTS_DIR;
+
+function configure({ pathContext } = {}) {
+  claudeProjectsDir = pathContext?.customized
+    ? (pathContext.native?.projects || DEFAULT_CLAUDE_PROJECTS_DIR)
+    : DEFAULT_CLAUDE_PROJECTS_DIR;
+}
 
 function _asContentBlocks(content) {
   if (Array.isArray(content)) return content;
@@ -100,7 +107,7 @@ function parseRealProjectPath(encodedName, config = {}) {
  */
 async function inventory({ projectsDir } = {}) {
   const descriptors = [];
-  const rootDir = projectsDir || CLAUDE_PROJECTS_DIR;
+  const rootDir = projectsDir || claudeProjectsDir;
 
   try {
     await fs.promises.stat(rootDir);
@@ -303,4 +310,4 @@ async function parse(descriptor) {
   };
 }
 
-module.exports = { inventory, parse, getClaudeUserText };
+module.exports = { configure, inventory, parse, getClaudeUserText };

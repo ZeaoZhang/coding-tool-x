@@ -145,18 +145,32 @@ function isPlainObject(value) {
 
 function createResourceSyncDriver({ platform, configTypes = CONFIG_TYPES, resourcePaths = {}, ...context } = {}) {
   const { PATHS, NATIVE_PATHS, HOME_DIR } = require('../../config/paths');
-  const home = HOME_DIR || os.homedir();
-  const native = NATIVE_PATHS || {};
-  const codexConfigPath = native.codex.config;
+  const pathContext = context.pathContext || {};
+  const home = pathContext.home || HOME_DIR || os.homedir();
+  const configuredNative = pathContext.native || {};
+  const native = configuredNative[platform]
+    ? configuredNative
+    : { ...(NATIVE_PATHS || {}), [platform]: configuredNative };
+  const claudeNative = native.claude || {};
+  const codexNative = native.codex || {};
+  const geminiNative = native.gemini || {};
+  const opencodeNative = native.opencode || {};
+  const ompNative = native.omp || {};
+  const claudeDir = claudeNative.dir || path.dirname(claudeNative.settings || '') || path.join(home, '.claude');
+  const codexDir = codexNative.dir || path.dirname(codexNative.config || '') || path.join(home, '.codex');
+  const geminiDir = geminiNative.dir || path.dirname(geminiNative.settings || '') || path.join(home, '.gemini');
+  const opencodeDir = opencodeNative.config || path.join(home, '.config', 'opencode');
+  const ompDir = ompNative.dir || path.join(home, '.omp', 'agent');
+  const codexConfigPath = codexNative.config || path.join(codexDir, 'config.toml');
   const config = {
     home,
     configs: PATHS.configs,
     skillArtifacts: PATHS.skillArtifacts,
-    claudeDir: native.claude?.dir || path.dirname(native.claude?.settings || '') || path.join(home, '.claude'),
-    codexDir: path.dirname(codexConfigPath),
-    geminiDir: path.join(home, '.gemini'),
-    opencodeDir: native.opencode?.config,
-    ompDir: native.omp?.dir || path.join(home, '.omp', 'agent'),
+    claudeDir,
+    codexDir,
+    geminiDir,
+    opencodeDir,
+    ompDir,
     codexConfigPath,
     ...resourcePaths
   };

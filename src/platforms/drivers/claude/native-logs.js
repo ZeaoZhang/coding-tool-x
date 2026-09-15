@@ -12,12 +12,15 @@ const {
 } = require('../native-log-utils');
 const { calculateUsageCost } = require('../../../server/services/usage-log-utils');
 
-function createDriver({ nativeRoot = NATIVE_PATHS.claude.projects, fsImpl = fs } = {}) {
+function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
+  const resolvedNativeRoot = pathContext?.customized
+    ? (pathContext.native?.projects || nativeRoot || NATIVE_PATHS.claude.projects)
+    : (nativeRoot || NATIVE_PATHS.claude.projects);
   return {
     platform: 'claude',
     capability: 'nativeLogs',
     createNativeLogCursor({ fs: cursorFs = fsImpl } = {}) {
-      const scanFiles = () => walkFiles(nativeRoot, name => name.endsWith('.jsonl') && !name.startsWith('agent-'), cursorFs);
+      const scanFiles = () => walkFiles(resolvedNativeRoot, name => name.endsWith('.jsonl') && !name.startsWith('agent-'), cursorFs);
       const parseFile = filePath => readJsonLines(filePath, cursorFs).flatMap(record => {
         const message = record.message && typeof record.message === 'object' ? record.message : {};
         const role = record.role || message.role || (record.type === 'assistant' ? 'assistant' : null);

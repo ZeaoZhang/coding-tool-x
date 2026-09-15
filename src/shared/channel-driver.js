@@ -62,12 +62,16 @@ function createChannelDriver({
   cliMetadata = {},
   formatCliChannelDetails,
   dashboardChannelShape = 'object',
-  modelListType
+  modelListType,
+  ...context
 } = {}) {
   let service;
   const loadService = () => {
     if (!service) {
       service = requireImpl ? requireImpl(servicePath) : require(localServicePath);
+      if (typeof service?.configure === 'function') {
+        service.configure({ ...context, platform, capability });
+      }
     }
     return service;
   };

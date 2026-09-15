@@ -4,23 +4,31 @@ const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
 const { NATIVE_PATHS } = require('../../../config/paths');
 const { syncCodexUserEnvironment } = require('./env-manager');
+const DEFAULT_NATIVE_PATHS = NATIVE_PATHS.codex;
+let nativePaths = DEFAULT_NATIVE_PATHS;
+
+function configure({ pathContext } = {}) {
+  nativePaths = pathContext?.customized && pathContext.native?.config
+    ? { ...DEFAULT_NATIVE_PATHS, ...pathContext.native }
+    : DEFAULT_NATIVE_PATHS;
+}
 
 // Codex 配置文件路径
 function getConfigPath() {
-  return NATIVE_PATHS.codex.config;
+  return nativePaths.config;
 }
 
 function getAuthPath() {
-  return NATIVE_PATHS.codex.auth;
+  return nativePaths.auth;
 }
 
 // 备份文件路径
 function getConfigBackupPath() {
-  return NATIVE_PATHS.codex.configBackup;
+  return nativePaths.configBackup;
 }
 
 function getAuthBackupPath() {
-  return NATIVE_PATHS.codex.authBackup;
+  return nativePaths.authBackup;
 }
 
 // 检查配置文件是否存在
@@ -354,6 +362,7 @@ function getCurrentProxyPort() {
 }
 
 module.exports = {
+  configure,
   getConfigPath,
   getAuthPath,
   getConfigBackupPath,

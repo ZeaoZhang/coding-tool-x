@@ -47,12 +47,15 @@ function parseSession(filePath, fsImpl) {
   });
 }
 
-function createDriver({ nativeRoot = NATIVE_PATHS.gemini.tmp, fsImpl = fs } = {}) {
+function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
+  const resolvedNativeRoot = pathContext?.customized
+    ? (pathContext.native?.tmp || nativeRoot || NATIVE_PATHS.gemini.tmp)
+    : (nativeRoot || NATIVE_PATHS.gemini.tmp);
   return {
     platform: 'gemini',
     capability: 'nativeLogs',
     createNativeLogCursor({ fs: cursorFs = fsImpl } = {}) {
-      const scanFiles = () => walkFiles(nativeRoot, name => /^session-.*\.(json|jsonl)$/.test(name), cursorFs);
+      const scanFiles = () => walkFiles(resolvedNativeRoot, name => /^session-.*\.(json|jsonl)$/.test(name), cursorFs);
       return createScannedFileCursor({
         scanFiles,
         parseFile: filePath => parseSession(filePath, cursorFs),
