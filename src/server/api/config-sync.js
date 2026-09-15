@@ -4,9 +4,10 @@
 
 const express = require('express');
 const { ConfigSyncService } = require('../../platforms/drivers/claude/config-sync');
+const { getPlatformContext } = require('../platform-context');
 
 const router = express.Router();
-const configSyncService = new ConfigSyncService();
+const configSyncService = new ConfigSyncService({ registry: getPlatformContext().registry });
 
 /**
  * 获取可同步的配置列表

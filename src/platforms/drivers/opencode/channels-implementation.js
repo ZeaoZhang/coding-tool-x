@@ -18,6 +18,17 @@ const {
   upsertSyncedChannels
 } = require('../../../server/services/channel-sync-utils');
 
+let configuredState = { channels: PATHS.channels.opencode };
+
+function configure({ pathContext } = {}) {
+  configuredState = {
+    channels: pathContext?.customized
+      ? (pathContext.state?.channels || PATHS.channels?.opencode)
+      : PATHS.channels?.opencode
+  };
+  if (service) service.channelsFilePath = configuredState.channels;
+}
+
 function clearChannelBalanceCache(channel) {
   try {
     require('../../../server/services/channel-balance').clearChannelBalanceCache('opencode', channel);
@@ -60,11 +71,11 @@ function normalizeChannelName(value) {
 
 // 获取渠道存储文件路径
 function getChannelsFilePath() {
-  const channelsDir = path.dirname(PATHS.channels.opencode);
+  const channelsDir = path.dirname(configuredState.channels);
   if (!fs.existsSync(channelsDir)) {
     fs.mkdirSync(channelsDir, { recursive: true });
   }
-  return PATHS.channels.opencode;
+  return configuredState.channels;
 }
 
 function getCodexChannelsFilePath() {
@@ -639,6 +650,7 @@ function syncCurrentOpenCodeChannel() {
 }
 
 module.exports = {
+  configure,
   getChannels,
   createChannel,
   updateChannel,

@@ -157,9 +157,24 @@ function collectSkillFiles(rootDir) {
  * Config Registry Service
  */
 class ConfigRegistryService {
-  constructor({ controlService = null, artifactStore = null, formatAdapter = null } = {}) {
+  constructor({ controlService = null, artifactStore = null, formatAdapter = null, registry = getPlatformContext().registry } = {}) {
+    this.registry = registry;
     this.registryPath = REGISTRY_FILE;
     this.configsDir = CONFIGS_DIR;
+    let native = NATIVE_PATHS.claude || {};
+    try {
+      const pathContext = this.registry?.resolvePathContext?.('claude');
+      if (pathContext?.customized) native = pathContext.native || native;
+    } catch {
+      // Keep the compatibility defaults when the registry is unavailable.
+    }
+    const claudeHomeDir = native.dir || path.dirname(native.settings || CLAUDE_HOME_DIR);
+    this.claudeDirs = {
+      skills: native.skills || path.join(claudeHomeDir, 'skills'),
+      commands: native.commands || path.join(claudeHomeDir, 'commands'),
+      agents: native.agents || path.join(claudeHomeDir, 'agents'),
+      plugins: native.plugins || path.join(claudeHomeDir, 'plugins')
+    };
     this.artifactStore = artifactStore || (
       PATHS.skillArtifacts ? new SkillArtifactStore({ root: PATHS.skillArtifacts }) : null
     );
@@ -560,7 +575,7 @@ class ConfigRegistryService {
       throw new Error(`Invalid config type: ${type}`);
     }
 
-    const sourceDir = CLAUDE_DIRS[type];
+    const sourceDir = this.claudeDirs[type];
     const destDir = path.join(this.configsDir, type);
 
     if (!fs.existsSync(sourceDir)) {

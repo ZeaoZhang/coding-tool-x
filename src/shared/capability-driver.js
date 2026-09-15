@@ -22,6 +22,7 @@ function createCapabilityDriver({
   let service;
   let adapter;
   let configured = false;
+  let adapterConfigured = false;
   const configureService = target => {
     if (configured) return;
     if (typeof target?.configure === 'function') {
@@ -32,6 +33,12 @@ function createCapabilityDriver({
   const loadAdapter = () => {
     if (!adapter && (adapterPath || adapterLocalPath)) {
       adapter = adapterPath && requireImpl ? requireImpl(adapterPath) : require(adapterLocalPath);
+    }
+    if (!adapterConfigured && adapter) {
+      if (typeof adapter.configure === 'function') {
+        adapter.configure({ ...injected, ...context, platform, capability });
+      }
+      adapterConfigured = true;
     }
     return adapter;
   };

@@ -52,6 +52,17 @@
         ".codex/skills"
       ]
     },
+    "agents": {
+      "canonicalRoot": null
+    },
+    "commands": {
+      "canonicalRoot": ".codex/prompts",
+      "format": "codex"
+    },
+    "plugins": {
+      "path": null,
+      "format": "codex"
+    },
     "mcp": {
       "path": ".codex/config.toml",
       "format": "codex-toml"

@@ -6,6 +6,7 @@
 
 ## [Unreleased]
 ### Added
+- **原生路径可配置** - 新增 `~/.cc-tool/config/platform-paths.json` 路径覆盖层；Claude、Codex、Gemini、OpenCode、OMP 及新增 Registry 平台的原生配置、会话状态、渠道、Skills、Plugins 和请求快照均可按平台重定向，未配置时保持原有默认路径，不自动搬迁已有数据。
 - **配置驱动的平台 Registry** - 新增 Manifest 校验、allowlisted capability driver、`~/.cc-tool/config/platforms.json` 用户扩展和安全的 `GET /api/platforms` 公共目录；符合通用协议的 CLI 可通过受控 Manifest / driver 扩展，但不会自动获得任意平台的完整能力。
 - **Registry-backed CLI / Web UI 路由** - 代理、日志、统计、端口配置、Dashboard 聚合和前端平台元数据改为从 Registry 派生，同时保留旧 CLI/API facade、OMP managed mode 与现有测试 mock seam。
 - **项目级配置控制** - 在项目历史会话页管理原生项目指令、Skills 和 MCP，配置按项目 realpath 隔离并保留用户级配置。

@@ -13,6 +13,7 @@ const { NATIVE_PATHS } = require('../config/paths');
 const { RepoScannerBase } = require('../server/services/repo-scanner-base');
 const { LocalResourceIndex } = require('../server/services/local-resource-index');
 const { createPlatformAccessError } = require('./access');
+const { getPlatformContext } = require('../server/platform-context');
 const {
   parseFrontmatter
 } = require('../server/services/format-converter');
@@ -397,15 +398,41 @@ class CommandsRepoScanner extends RepoScannerBase {
  * Commands 服务类
  */
 class CommandsService {
-  constructor(platform = 'claude') {
+  constructor(platform = 'claude', { registry } = {}) {
     this.platform = normalizePlatform(platform);
     const config = PLATFORM_CONFIG[this.platform];
+    this.registry = registry || (() => {
+      try {
+        return getPlatformContext().registry;
+      } catch {
+        return null;
+      }
+    })();
+    this.pathContext = null;
+    try {
+      if (typeof this.registry?.resolvePathContext === 'function') {
+        this.pathContext = this.registry.resolvePathContext(this.platform);
+      }
+    } catch {
+      this.pathContext = null;
+    }
+    const native = this.pathContext?.customized
+      ? (this.pathContext.native || {})
+      : (NATIVE_PATHS[this.platform] || {});
+    const configuredUserCommandsDir = this.pathContext?.customized
+      ? (native.commands
+        || (this.platform === 'opencode' ? path.join(native.config || OPENCODE_CONFIG_DIR, 'commands') : null)
+        || (native.dir ? path.join(native.dir, 'commands') : null))
+      : null;
 
-    this.userCommandsDir = config.userCommandsDir;
+    this.userCommandsDir = configuredUserCommandsDir || config.userCommandsDir;
     if (this.platform === 'opencode') {
       const legacyUserDir = config.legacyUserCommandsDir;
-      if (legacyUserDir && fs.existsSync(legacyUserDir) && !fs.existsSync(this.userCommandsDir)) {
-        this.userCommandsDir = legacyUserDir;
+      const configuredLegacyUserDir = this.pathContext?.customized && native.config
+        ? path.join(native.config, 'command')
+        : legacyUserDir;
+      if (configuredLegacyUserDir && fs.existsSync(configuredLegacyUserDir) && !fs.existsSync(this.userCommandsDir)) {
+        this.userCommandsDir = configuredLegacyUserDir;
       }
     }
 

@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { PATHS, ensureStorageDirMigrated } = require('../../config/paths');
+const { PATHS, ensureStorageDirMigrated, getPlatformStatePath } = require('../../config/paths');
 
 function normalizeString(value) {
   return String(value || '').trim();
@@ -74,7 +74,7 @@ function resolveApiKeyValue(value, env = process.env) {
 function readActiveChannelId(platform) {
   try {
     ensureStorageDirMigrated?.();
-    const filePath = PATHS.activeChannel?.[platform];
+    const filePath = getPlatformStatePath('activeChannel', platform);
     if (!filePath || !fs.existsSync(filePath)) return null;
     const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
     return data?.activeChannelId || null;

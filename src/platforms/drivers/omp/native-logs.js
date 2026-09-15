@@ -14,7 +14,11 @@ function resolveChannel(provider) {
   return channel ? { channelId: channel.id, channel: channel.name } : {};
 }
 
-function createDriver() {
+function createDriver({ pathContext } = {}) {
+  if (pathContext?.customized) {
+    require('./sessions-implementation').configure?.({ pathContext });
+    require('./channels-implementation').configure?.({ pathContext });
+  }
   return {
     platform: 'omp',
     capability: 'nativeLogs',

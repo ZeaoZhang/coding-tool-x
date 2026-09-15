@@ -1,10 +1,17 @@
 const fs = require('fs');
 const path = require('path');
 const { PATHS, HOME_DIR } = require('../../../config/paths');
+const ompConfig = require('./config');
 let sessionHistoryIndex = null;
+let ompSessionPathsOverride = null;
 
-function configure({ sessionHistoryIndex: index } = {}) {
+function configure({ sessionHistoryIndex: index, pathContext } = {}) {
   sessionHistoryIndex = index || null;
+  ompConfig.configure?.({ pathContext });
+  const native = pathContext?.customized ? (pathContext.native || {}) : {};
+  ompSessionPathsOverride = native.sessions
+    ? { ...native, agentDir: native.dir || path.dirname(native.sessions) }
+    : null;
 }
 
 function getSessionHistoryIndex(options = {}) {
@@ -345,6 +352,7 @@ function parseSessionUsageEvents(filePath) {
 }
 
 function getOmpSessionPaths() {
+  if (ompSessionPathsOverride?.sessions) return ompSessionPathsOverride;
   // Reading historical sessions normally only needs OMP's native directory
   // convention. Avoid starting the CLI here: project/count snapshot workers
   // invoke this path independently, which made Windows repeatedly open

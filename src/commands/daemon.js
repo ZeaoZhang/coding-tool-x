@@ -310,8 +310,16 @@ async function getProxyStatusEntries({ registry = getPlatformRegistry(), runtime
 }
 
 function getManagedPorts(config = loadConfig(), registry = getPlatformRegistry()) {
-  const ports = [config.ports?.webUI || 19999];
+  const configuredPorts = config.ports && typeof config.ports === 'object' ? config.ports : {};
+  const ports = [configuredPorts.webUI || 19999];
+  const configuredKeys = new Set(['webUI']);
+  for (const [key, port] of Object.entries(configuredPorts)) {
+    if (configuredKeys.has(key)) continue;
+    configuredKeys.add(key);
+    if (port) ports.push(port);
+  }
   for (const platform of listProxyPlatforms(registry)) {
+    if (platform.portKey && configuredKeys.has(platform.portKey)) continue;
     const port = getPlatformPort(platform, config);
     if (port) ports.push(port);
   }

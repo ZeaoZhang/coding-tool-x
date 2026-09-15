@@ -524,6 +524,65 @@ const PATHS = {
   }
 };
 
+const PLATFORM_STATE_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
+
+function normalizePlatformStateKey(platformKey) {
+  const key = String(platformKey || '').trim().toLowerCase();
+  return PLATFORM_STATE_KEY_PATTERN.test(key) ? key : '';
+}
+
+function getPlatformStatePath(category, platformKey, { basePaths = PATHS } = {}) {
+  const key = normalizePlatformStateKey(platformKey);
+  if (!key) return undefined;
+
+  const categoryPaths = basePaths && basePaths[category];
+  if (categoryPaths && typeof categoryPaths === 'object' && !Array.isArray(categoryPaths)) {
+    if (typeof categoryPaths[key] === 'string') return categoryPaths[key];
+  }
+
+  switch (category) {
+    case 'channels':
+      return path.join(basePaths.channelsDir, `${key}.json`);
+    case 'activeChannel':
+      return path.join(basePaths.activeChannelDir, `${key}.json`);
+    case 'proxyRuntime':
+      return path.join(path.dirname(basePaths.proxyRuntime.claude), `${key}-proxy.json`);
+    case 'requestSnapshots':
+      return path.join(path.dirname(basePaths.requestSnapshots.claude), `${key}.jsonl`);
+    case 'localSkills':
+      return path.join(path.dirname(basePaths.localSkills.claude), key);
+    case 'skillRepos':
+      return path.join(path.dirname(basePaths.skillRepos.claude), `${key}.json`);
+    case 'skillCaches':
+      return path.join(path.dirname(basePaths.skillCaches.claude), `${key}.json`);
+    case 'pluginRepos':
+      return path.join(path.dirname(basePaths.pluginRepos.claude), `${key}.json`);
+    case 'pluginMarketCache':
+      return path.join(path.dirname(basePaths.pluginMarketCache.claude), `${key}-market.json`);
+    case 'gatewaySecret':
+      return path.join(path.dirname(basePaths.ompGatewaySecret), `${key}-gateway-secret`);
+    default:
+      return undefined;
+  }
+}
+
+function getPlatformStatePaths(platformKey, options = {}) {
+  const key = normalizePlatformStateKey(platformKey);
+  if (!key) return {};
+  return {
+    channels: getPlatformStatePath('channels', key, options),
+    activeChannel: getPlatformStatePath('activeChannel', key, options),
+    proxyRuntime: getPlatformStatePath('proxyRuntime', key, options),
+    requestSnapshots: getPlatformStatePath('requestSnapshots', key, options),
+    localSkills: getPlatformStatePath('localSkills', key, options),
+    skillRepos: getPlatformStatePath('skillRepos', key, options),
+    skillCaches: getPlatformStatePath('skillCaches', key, options),
+    pluginRepos: getPlatformStatePath('pluginRepos', key, options),
+    pluginMarketCache: getPlatformStatePath('pluginMarketCache', key, options),
+    gatewaySecret: getPlatformStatePath('gatewaySecret', key, options)
+  };
+}
+
 const LEGACY_STORAGE_RELOCATIONS = [
   // 全局配置文件
   { source: rootEntry('config.json'), target: PATHS.configFile },
@@ -942,5 +1001,8 @@ module.exports = {
   getGeminiDir,
   getOpenCodeDataDir,
   getOpenCodeConfigDir,
-  getOmpAgentDir
+  getOmpAgentDir,
+  getPlatformStatePath,
+  getPlatformStatePaths,
+  normalizePlatformStateKey
 };

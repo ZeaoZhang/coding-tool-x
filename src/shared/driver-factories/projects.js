@@ -18,6 +18,7 @@ function createProjectsDriver({
   const loadService = () => {
     if (service) return service;
     service = requireImpl ? requireImpl(servicePath) : require(localServicePath);
+    service.configure?.({ ...context, platform, capability: 'projects' });
     return service;
   };
 

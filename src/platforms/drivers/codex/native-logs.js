@@ -6,9 +6,12 @@ const { NATIVE_PATHS } = require('../../../config/paths');
 const { normalizeCost, normalizeUsage, subtractUsage, readJsonLines, walkFiles } = require('../native-log-utils');
 const { calculateUsageCost } = require('../../../server/services/usage-log-utils');
 
-function createDriver({ nativeRoot = NATIVE_PATHS.codex.sessions, fsImpl = fs } = {}) {
+function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
+  const resolvedNativeRoot = pathContext?.customized
+    ? (pathContext.native?.sessions || nativeRoot || NATIVE_PATHS.codex.sessions)
+    : (nativeRoot || NATIVE_PATHS.codex.sessions);
   const createRead = (cursorFs, state) => () => {
-    const scanFiles = () => walkFiles(nativeRoot, name => /^rollout-.*\.jsonl$/.test(name), cursorFs);
+    const scanFiles = () => walkFiles(resolvedNativeRoot, name => /^rollout-.*\.jsonl$/.test(name), cursorFs);
     const latest = new Map();
     for (const filePath of scanFiles()) {
       const lines = readJsonLines(filePath, cursorFs);

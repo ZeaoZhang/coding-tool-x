@@ -17,7 +17,11 @@ const { listPlugins, getPlugin, updatePlugin: updatePluginRegistry } = require('
 const { installPlugin: installPluginCore, uninstallPlugin: uninstallPluginCore } = require('../../plugins/plugin-installer');
 const { initializePlugins, shutdownPlugins } = require('../../plugins/plugin-manager');
 const { INSTALLED_DIR, CONFIG_DIR } = require('../../plugins/constants');
-const { NATIVE_PATHS, PATHS } = require('../../config/paths');
+const pathsModule = require('../../config/paths');
+const { NATIVE_PATHS, PATHS } = pathsModule;
+const getPlatformStatePath = typeof pathsModule.getPlatformStatePath === 'function'
+  ? pathsModule.getPlatformStatePath
+  : (category, platform) => PATHS[category]?.[platform];
 const { OmpNativePluginAdapter } = require('../../platforms/drivers/omp/native-plugin-adapter');
 const {
   importLegacyPluginRepos,
@@ -438,19 +442,50 @@ function stripJsonComments(input = '') {
 }
 
 class PluginsService {
-  constructor(platform = 'claude') {
+  constructor(platform = 'claude', { registry } = {}) {
     this.platform = resolveManagedPlatform(platform).platform;
+    this.registry = registry || (() => {
+      try {
+        return require('../../platforms/runtime').getPlatformRegistry();
+      } catch {
+        return null;
+      }
+    })();
+    this.pathContext = null;
+    try {
+      if (typeof this.registry?.resolvePathContext === 'function') {
+        this.pathContext = this.registry.resolvePathContext(this.platform);
+      }
+    } catch {
+      this.pathContext = null;
+    }
+    const native = this.pathContext?.customized
+      ? (this.pathContext.native || {})
+      : (NATIVE_PATHS[this.platform] || {});
     this._ompMigrationWarnings = [];
     if (this.platform === 'omp') {
       const migration = migratePiStorage(PATHS);
       this._ompMigrationWarnings.push(...migration.warnings);
     }
     this.configDir = PATHS.config || path.join((PATHS.base || process.env.HOME || os.homedir()), 'config');
-    this.ccToolConfigDir = path.dirname(PATHS.pluginRepos.claude);
-    this.opencodePluginsDir = path.join(OPENCODE_CONFIG_DIR, 'plugins');
-    this.opencodeLegacyPluginsDir = path.join(OPENCODE_CONFIG_DIR, 'plugin');
-    this.codexPluginsCacheDir = CODEX_PLUGINS_CACHE_DIR;
-    this.marketCachePath = PATHS.pluginMarketCache[this.platform] || PATHS.pluginMarketCache.claude;
+    this.ccToolConfigDir = path.dirname(getPlatformStatePath('pluginRepos', this.platform));
+    this.claudePluginsDir = this.platform === 'claude'
+      ? native.plugins || CLAUDE_PLUGINS_DIR
+      : CLAUDE_PLUGINS_DIR;
+    this.claudeInstalledFile = path.join(this.claudePluginsDir, 'installed_plugins.json');
+    this.claudeMarketplacesFile = path.join(this.claudePluginsDir, 'known_marketplaces.json');
+    this.claudePluginsCacheDir = path.join(this.claudePluginsDir, 'cache');
+    this.claudeMarketplacesDir = path.join(this.claudePluginsDir, 'marketplaces');
+    this.codexPluginsDir = this.platform === 'codex'
+      ? path.join(native.dir || path.dirname(native.config || ''), 'plugins')
+      : CODEX_PLUGINS_DIR;
+    this.codexPluginsCacheDir = path.join(this.codexPluginsDir, 'cache');
+    this.opencodeConfigDir = this.platform === 'opencode'
+      ? (native.config || OPENCODE_CONFIG_DIR)
+      : OPENCODE_CONFIG_DIR;
+    this.opencodePluginsDir = path.join(this.opencodeConfigDir, 'plugins');
+    this.opencodeLegacyPluginsDir = path.join(this.opencodeConfigDir, 'plugin');
+    this.marketCachePath = getPlatformStatePath('pluginMarketCache', this.platform);
     this._marketCache = null;
     this._marketCacheByKey = new Map();
     this._pluginListCache = new Map();
@@ -460,7 +495,7 @@ class PluginsService {
     this._marketRepoFingerprint = null;
     this._marketLastUsedStale = false;
     this.ompNativeAdapter = this.platform === 'omp'
-      ? new OmpNativePluginAdapter()
+      ? new OmpNativePluginAdapter({ pathContext: this.pathContext })
       : null;
   }
 
@@ -491,7 +526,19 @@ class PluginsService {
 
 
   getCapabilities() {
-    return { ...(PLATFORM_CAPABILITIES[this.platform] || PLATFORM_CAPABILITIES.claude) };
+    return {
+      platform: this.platform,
+      supportsPlugins: false,
+      repositories: false,
+      market: false,
+      install: false,
+      uninstall: false,
+      toggle: false,
+      config: false,
+      import: false,
+      syncRepos: false,
+      ...(PLATFORM_CAPABILITIES[this.platform] || {})
+    };
   }
   getRequestOptions(requestData = {}) {
     return {
@@ -777,9 +824,9 @@ class PluginsService {
   }
 
   _getOpenCodeConfigPath() {
-    const jsonc = path.join(OPENCODE_CONFIG_DIR, 'opencode.jsonc');
-    const json = path.join(OPENCODE_CONFIG_DIR, 'opencode.json');
-    const config = path.join(OPENCODE_CONFIG_DIR, 'config.json');
+    const jsonc = path.join(this.opencodeConfigDir, 'opencode.jsonc');
+    const json = path.join(this.opencodeConfigDir, 'opencode.json');
+    const config = path.join(this.opencodeConfigDir, 'config.json');
     if (fs.existsSync(jsonc)) return jsonc;
     if (fs.existsSync(json)) return json;
     if (fs.existsSync(config)) return config;
@@ -934,7 +981,7 @@ class PluginsService {
             marketplace: marketplaceEntry.name,
             version: manifest.version || selectedVersion.name,
             installPath: selectedVersion.fullPath,
-            directory: path.relative(CODEX_PLUGINS_DIR, selectedVersion.fullPath),
+            directory: path.relative(this.codexPluginsDir, selectedVersion.fullPath),
             source: 'codex-cache',
             installed: true,
             enabled: this._isCodexPluginEnabled(manifest.name || pluginEntry.name, marketplaceEntry.name),
@@ -965,7 +1012,9 @@ class PluginsService {
   }
 
   _readCodexConfig() {
-    const filePath = NATIVE_PATHS.codex.config;
+    const filePath = this.pathContext?.customized
+      ? (this.pathContext.native?.config || NATIVE_PATHS.codex.config)
+      : NATIVE_PATHS.codex.config;
     if (!fs.existsSync(filePath)) return { filePath, config: {} };
     try {
       const raw = fs.readFileSync(filePath, 'utf8');
@@ -978,7 +1027,9 @@ class PluginsService {
   }
 
   _writeCodexConfig(config) {
-    const filePath = NATIVE_PATHS.codex.config;
+    const filePath = this.pathContext?.customized
+      ? (this.pathContext.native?.config || NATIVE_PATHS.codex.config)
+      : NATIVE_PATHS.codex.config;
     this._ensureDir(path.dirname(filePath));
     const safeConfig = JSON.parse(JSON.stringify(config || {}));
     fs.writeFileSync(filePath, tomlStringify(safeConfig), 'utf8');
@@ -986,7 +1037,9 @@ class PluginsService {
   }
 
   _readClaudeSettings() {
-    const filePath = NATIVE_PATHS.claude.settings;
+    const filePath = this.pathContext?.customized
+      ? (this.pathContext.native?.settings || NATIVE_PATHS.claude.settings)
+      : NATIVE_PATHS.claude.settings;
     if (!fs.existsSync(filePath)) return { filePath, settings: {} };
     try {
       const raw = fs.readFileSync(filePath, 'utf8');
@@ -998,7 +1051,9 @@ class PluginsService {
   }
 
   _writeClaudeSettings(settings) {
-    const filePath = NATIVE_PATHS.claude.settings;
+    const filePath = this.pathContext?.customized
+      ? (this.pathContext.native?.settings || NATIVE_PATHS.claude.settings)
+      : NATIVE_PATHS.claude.settings;
     this._ensureDir(path.dirname(filePath));
     fs.writeFileSync(filePath, JSON.stringify(settings || {}, null, 2), 'utf8');
     this._invalidatePluginList();
@@ -1053,7 +1108,7 @@ class PluginsService {
 
   _resolveClaudePluginCachePath(marketplace, pluginName, version) {
     return resolveInsideRoot(
-      CLAUDE_PLUGINS_CACHE_DIR,
+      this.claudePluginsCacheDir,
       path.posix.join(
         normalizeClaudeMarketplaceSegment(marketplace),
         normalizePluginCacheSegment(pluginName, 'Claude plugin name', 'plugin'),
@@ -1065,7 +1120,7 @@ class PluginsService {
 
   _resolveClaudeMarketplacePath(marketplace) {
     return resolveInsideRoot(
-      CLAUDE_MARKETPLACES_DIR,
+      this.claudeMarketplacesDir,
       normalizeClaudeMarketplaceSegment(marketplace),
       'Claude marketplace path'
     );
@@ -1086,11 +1141,11 @@ class PluginsService {
     };
     fs.writeFileSync(manifestPath, JSON.stringify(marketplaceManifest, null, 2), 'utf8');
 
-    this._ensureDir(CLAUDE_PLUGINS_DIR);
+    this._ensureDir(this.claudePluginsDir);
     let known = {};
-    if (fs.existsSync(CLAUDE_MARKETPLACES_FILE)) {
+    if (fs.existsSync(this.claudeMarketplacesFile)) {
       try {
-        known = JSON.parse(fs.readFileSync(CLAUDE_MARKETPLACES_FILE, 'utf8'));
+        known = JSON.parse(fs.readFileSync(this.claudeMarketplacesFile, 'utf8'));
       } catch {
         known = {};
       }
@@ -1103,7 +1158,7 @@ class PluginsService {
       installLocation: marketplaceDir,
       lastUpdated: new Date().toISOString()
     };
-    fs.writeFileSync(CLAUDE_MARKETPLACES_FILE, JSON.stringify(known, null, 2), 'utf8');
+    fs.writeFileSync(this.claudeMarketplacesFile, JSON.stringify(known, null, 2), 'utf8');
 
     const { settings } = this._readClaudeSettings();
     const nextSettings = (settings && typeof settings === 'object') ? { ...settings } : {};
@@ -1171,11 +1226,11 @@ class PluginsService {
   }
 
   _registerClaudeInstalledPlugin(name, marketplace, installPath, installData = {}) {
-    this._ensureDir(CLAUDE_PLUGINS_DIR);
+    this._ensureDir(this.claudePluginsDir);
     let nativeData = { version: 2, plugins: {} };
-    if (fs.existsSync(CLAUDE_INSTALLED_FILE)) {
+    if (fs.existsSync(this.claudeInstalledFile)) {
       try {
-        nativeData = JSON.parse(fs.readFileSync(CLAUDE_INSTALLED_FILE, 'utf8'));
+        nativeData = JSON.parse(fs.readFileSync(this.claudeInstalledFile, 'utf8'));
       } catch {
         nativeData = { version: 2, plugins: {} };
       }
@@ -1195,7 +1250,7 @@ class PluginsService {
       ...(installData.source ? { source: installData.source } : {}),
       ...(installData.repoSourceMeta || {})
     }];
-    fs.writeFileSync(CLAUDE_INSTALLED_FILE, JSON.stringify(nativeData, null, 2), 'utf8');
+    fs.writeFileSync(this.claudeInstalledFile, JSON.stringify(nativeData, null, 2), 'utf8');
     this._invalidatePluginList();
     this._setClaudePluginEnabled(name, marketplace, true);
   }
@@ -1353,9 +1408,9 @@ class PluginsService {
     };
 
     // Read Claude Code's installed_plugins.json
-    if (fs.existsSync(CLAUDE_INSTALLED_FILE)) {
+    if (fs.existsSync(this.claudeInstalledFile)) {
       try {
-        const data = JSON.parse(fs.readFileSync(CLAUDE_INSTALLED_FILE, 'utf8'));
+        const data = JSON.parse(fs.readFileSync(this.claudeInstalledFile, 'utf8'));
         if (data.plugins) {
           for (const [key, installations] of Object.entries(data.plugins)) {
             if (installations && installations.length > 0) {
@@ -2041,9 +2096,9 @@ class PluginsService {
     // Claude: Remove from native installed_plugins.json and delete install directories
     let removed = false;
     const safeName = normalizePluginPathName(name, 'plugin name');
-    if (fs.existsSync(CLAUDE_INSTALLED_FILE)) {
+    if (fs.existsSync(this.claudeInstalledFile)) {
       try {
-        const data = JSON.parse(fs.readFileSync(CLAUDE_INSTALLED_FILE, 'utf8'));
+        const data = JSON.parse(fs.readFileSync(this.claudeInstalledFile, 'utf8'));
         if (data.plugins) {
           const keysToDelete = [];
           const baseName = safeName.split('/').pop(); // handle "plugins/pr-review-toolkit" → "pr-review-toolkit"
@@ -2058,7 +2113,7 @@ class PluginsService {
                     try {
                       const installPath = assertInsideAllowedRoots(
                         install.installPath,
-                        [INSTALLED_DIR, CLAUDE_PLUGINS_DIR],
+                        [INSTALLED_DIR, this.claudePluginsDir],
                         'Claude plugin install path'
                       );
                       fs.rmSync(installPath, { recursive: true, force: true });
@@ -2076,7 +2131,7 @@ class PluginsService {
               this._removeClaudePluginEnabled(parsed.name || safeName, parsed.marketplace || '');
               delete data.plugins[key];
             }
-            fs.writeFileSync(CLAUDE_INSTALLED_FILE, JSON.stringify(data, null, 2), 'utf8');
+            fs.writeFileSync(this.claudeInstalledFile, JSON.stringify(data, null, 2), 'utf8');
             this._invalidatePluginList();
             removed = true;
           }
@@ -2158,9 +2213,9 @@ class PluginsService {
     // First check if plugin exists in native installed_plugins.json
     let pluginExists = false;
     const baseName = name.split('/').pop();
-    if (fs.existsSync(CLAUDE_INSTALLED_FILE)) {
+    if (fs.existsSync(this.claudeInstalledFile)) {
       try {
-        const data = JSON.parse(fs.readFileSync(CLAUDE_INSTALLED_FILE, 'utf8'));
+        const data = JSON.parse(fs.readFileSync(this.claudeInstalledFile, 'utf8'));
         if (data.plugins) {
           for (const key of Object.keys(data.plugins)) {
             const { name: pluginName } = splitPluginMarketplaceKey(key);
@@ -2193,9 +2248,9 @@ class PluginsService {
     } catch (e) {
       console.warn('[PluginsService] Failed to update plugin registry:', e.message);
     }
-    if (fs.existsSync(CLAUDE_INSTALLED_FILE)) {
+    if (fs.existsSync(this.claudeInstalledFile)) {
       try {
-        const data = JSON.parse(fs.readFileSync(CLAUDE_INSTALLED_FILE, 'utf8'));
+        const data = JSON.parse(fs.readFileSync(this.claudeInstalledFile, 'utf8'));
         for (const key of Object.keys(data.plugins || {})) {
           const parsed = splitPluginMarketplaceKey(key);
           if (parsed.name === name || key === name || parsed.name === baseName) {
@@ -2238,7 +2293,7 @@ class PluginsService {
     }
 
     if (this._isOpenCode()) {
-      const configDir = path.join(OPENCODE_CONFIG_DIR, 'plugins-config');
+      const configDir = path.join(this.opencodeConfigDir, 'plugins-config');
       const configFile = resolvePluginConfigFile(configDir, name);
       this._ensureDir(path.dirname(configFile));
       fs.writeFileSync(configFile, JSON.stringify(config, null, 2), 'utf8');
@@ -2273,13 +2328,14 @@ class PluginsService {
    * @returns {string} Config file path
    */
   getReposConfigPath() {
-    const filePath = PATHS.pluginRepos[this.platform] || PATHS.pluginRepos.claude;
+    const filePath = getPlatformStatePath('pluginRepos', this.platform);
+    if (!filePath) throw new Error(`Plugin repository path is not configured for ${this.platform}`);
     this._ensureDir(path.dirname(filePath));
     return filePath;
   }
 
   _getDefaultRepos() {
-    return cloneRepos(DEFAULT_REPOS_BY_PLATFORM[this.platform] || DEFAULT_REPOS_BY_PLATFORM.claude);
+    return cloneRepos(DEFAULT_REPOS_BY_PLATFORM[this.platform] || []);
   }
 
   /**
@@ -2358,9 +2414,9 @@ class PluginsService {
     }
 
     // 2. Load Claude Code's native marketplace config (Claude only)
-    if (this.platform === 'claude' && fs.existsSync(CLAUDE_MARKETPLACES_FILE)) {
+    if (this.platform === 'claude' && fs.existsSync(this.claudeMarketplacesFile)) {
       try {
-        const marketplaces = JSON.parse(fs.readFileSync(CLAUDE_MARKETPLACES_FILE, 'utf8'));
+        const marketplaces = JSON.parse(fs.readFileSync(this.claudeMarketplacesFile, 'utf8'));
         const entries = [];
         if (Array.isArray(marketplaces)) {
           entries.push(...marketplaces.map(item => ({ key: '', data: item })));

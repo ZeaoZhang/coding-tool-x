@@ -12,6 +12,7 @@ function createDriver(context = {}) {
       const config = context.requireImpl
         ? context.requireImpl('./gemini/config')
         : require('./config');
+      config.configure?.({ pathContext: context.pathContext });
       return config.isGeminiInstalled();
     },
     onSuccess: operation => {

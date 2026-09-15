@@ -16,9 +16,11 @@
 
 const fs = require('fs');
 const path = require('path');
-const { PATHS } = require('../../config/paths');
-
-const REQUEST_SNAPSHOTS_DIR = path.dirname(PATHS.requestSnapshots.claude);
+const pathsModule = require('../../config/paths');
+const { PATHS } = pathsModule;
+const getPlatformStatePath = typeof pathsModule.getPlatformStatePath === 'function'
+  ? pathsModule.getPlatformStatePath
+  : (category, platform) => PATHS[category]?.[platform];
 
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) {
@@ -55,7 +57,8 @@ function persistProxyRequestSnapshot(source, payload) {
   if (!isProxyRequestLoggingEnabled()) return;
 
   try {
-    const logPath = PATHS.requestSnapshots[source] || path.join(REQUEST_SNAPSHOTS_DIR, `${source}.jsonl`);
+    const logPath = getPlatformStatePath('requestSnapshots', source);
+    if (!logPath) return;
     ensureDir(path.dirname(logPath));
     fs.appendFile(logPath, `${JSON.stringify(payload)}\n`, (error) => {
       if (error) {

@@ -2,11 +2,20 @@ const fs = require('fs');
 const path = require('path');
 const { NATIVE_PATHS } = require('../../../config/paths');
 
+const DEFAULT_GEMINI_DIR = path.dirname(NATIVE_PATHS.gemini.env);
+let geminiDirOverride = null;
+
+function configure({ pathContext } = {}) {
+  geminiDirOverride = pathContext?.customized
+    ? (pathContext.native?.dir || path.dirname(pathContext.native?.env || DEFAULT_GEMINI_DIR))
+    : null;
+}
+
 /**
  * 获取 Gemini 配置目录
  */
 function getGeminiDir() {
-  return path.dirname(NATIVE_PATHS.gemini.env);
+  return geminiDirOverride || DEFAULT_GEMINI_DIR;
 }
 
 /**
@@ -66,6 +75,7 @@ function isGeminiInstalled() {
 }
 
 module.exports = {
+  configure,
   getGeminiDir,
   loadEnv,
   loadSettings,

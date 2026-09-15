@@ -11,7 +11,15 @@ const { NATIVE_PATHS, PATHS } = require('../../../config/paths');
 
 const PROJECT_ORDER_FILE = PATHS.opencodeProjectOrder;
 const SESSION_ORDER_FILE = PATHS.opencodeSessionOrder;
-function getOpenCodeDbPath(dataDir = NATIVE_PATHS.opencode.data) {
+let opencodeDataDirOverride = null;
+
+function configure({ pathContext } = {}) {
+  opencodeDataDirOverride = pathContext?.customized
+    ? (pathContext.native?.data || null)
+    : null;
+}
+
+function getOpenCodeDbPath(dataDir = opencodeDataDirOverride || NATIVE_PATHS.opencode.data) {
   const configuredPath = typeof process.env.OPENCODE_DB_PATH === 'string'
     ? process.env.OPENCODE_DB_PATH.trim()
     : '';
@@ -895,6 +903,7 @@ function getProjectAndSessionCounts(options = {}) {
 }
 
 module.exports = {
+  configure,
   getOpenCodeDbPath,
   isOpenCodeInstalled,
   getProjects,

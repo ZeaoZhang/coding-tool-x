@@ -4,9 +4,11 @@ const { getCodexDir } = require('./config');
 const { parseSession, parseSessionMeta, extractSessionMeta, readJSONL } = require('./parser');
 const { globalCache, CacheKeys } = require('../../../server/services/enhanced-cache');
 let sessionHistoryIndex = null;
+let codexDirOverride = null;
 
-function configure({ sessionHistoryIndex: index } = {}) {
+function configure({ sessionHistoryIndex: index, pathContext } = {}) {
   sessionHistoryIndex = index || null;
+  codexDirOverride = pathContext?.customized ? (pathContext.native?.dir || null) : null;
 }
 
 function getSessionHistoryIndex(options = {}) {
@@ -62,7 +64,7 @@ function getCodexSessionsCacheKey(projectName) {
  * 获取会话目录
  */
 function getSessionsDir() {
-  return path.join(getCodexDir(), 'sessions');
+  return path.join(codexDirOverride || getCodexDir(), 'sessions');
 }
 
 /**
@@ -552,7 +554,7 @@ function getProjectOrder() {
   const { getProjectOrder: getClaudeProjectOrder } = require('../claude/sessions-implementation');
   const { getCodexDir } = require('./config');
   // 复用 Claude Code 的排序存储，使用特殊的配置对象标识 Codex
-  return getClaudeProjectOrder({ projectsDir: getCodexDir() });
+  return getClaudeProjectOrder({ projectsDir: codexDirOverride || getCodexDir() });
 }
 
 /**
@@ -563,7 +565,7 @@ function saveProjectOrder(order) {
   const { saveProjectOrder: saveClaudeProjectOrder } = require('../claude/sessions-implementation');
   const { getCodexDir } = require('./config');
   // 复用 Claude Code 的排序存储
-  saveClaudeProjectOrder({ projectsDir: getCodexDir() }, order);
+  saveClaudeProjectOrder({ projectsDir: codexDirOverride || getCodexDir() }, order);
   globalCache.delete(CODEX_PROJECTS_CACHE_KEY);
 }
 

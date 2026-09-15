@@ -2,9 +2,33 @@
 
 const fs = require('fs');
 const path = require('path');
-const { PATHS, NATIVE_PATHS } = require('../../config/paths');
+const pathsModule = require('../../config/paths');
+const { PATHS: DEFAULT_PATHS, NATIVE_PATHS: DEFAULT_NATIVE_PATHS } = pathsModule;
 const codexSettingsManager = require('./codex/native-config-implementation');
 const geminiSettingsManager = require('./gemini/native-config-implementation');
+
+let PATHS = DEFAULT_PATHS;
+let NATIVE_PATHS = DEFAULT_NATIVE_PATHS;
+
+function configure({ pathContext } = {}) {
+  PATHS = DEFAULT_PATHS;
+  NATIVE_PATHS = DEFAULT_NATIVE_PATHS;
+  if (!pathContext?.customized) return;
+
+  const platform = pathContext.platform;
+  const native = pathContext.native || {};
+  const platformNative = DEFAULT_NATIVE_PATHS[platform] || {};
+  const state = pathContext.state || {};
+  NATIVE_PATHS = {
+    ...DEFAULT_NATIVE_PATHS,
+    [platform]: { ...platformNative, ...native }
+  };
+  PATHS = {
+    ...DEFAULT_PATHS,
+    ...(pathContext.paths?.notifyHook ? { notifyHook: pathContext.paths.notifyHook } : {}),
+    ...(state.channels ? { channels: { ...DEFAULT_PATHS.channels, [platform]: state.channels } } : {})
+  };
+}
 
 const MANAGED_HOOK_NAME = 'coding-tool-notify';
 const MANAGED_OPENCODE_PLUGIN_FILE = 'coding-tool-notify.js';
@@ -487,26 +511,36 @@ function defaultTestHooks({ type, platform }) {
   return notificationHooks.testNotification({ type, source: platform });
 }
 
-function createNotificationHooksDriver({ platform, capability = 'hooks', testNotification } = {}) {
+function createNotificationHooksDriver({ platform, capability = 'hooks', testNotification, pathContext } = {}) {
   const implementation = IMPLEMENTATIONS[platform];
   const definition = HOOK_DEFINITIONS[platform];
   if (!implementation || !definition) {
     return { status: 'unsupported', platform, capability };
   }
 
+  configure({ pathContext });
   const runTest = typeof testNotification === 'function' ? testNotification : defaultTestHooks;
   return {
     platform,
     capability,
-    getHooks: () => implementation.getHooks(),
-    saveHooks: (input = {}) => implementation.saveHooks({
-      enabled: input.enabled === true,
-      type: normalizeType(input.type)
-    }),
-    testHooks: (input = {}) => runTest({
-      type: normalizeType(input.type),
-      platform
-    }),
+    getHooks: () => {
+      configure({ pathContext });
+      return implementation.getHooks();
+    },
+    saveHooks: (input = {}) => {
+      configure({ pathContext });
+      return implementation.saveHooks({
+        enabled: input.enabled === true,
+        type: normalizeType(input.type)
+      });
+    },
+    testHooks: (input = {}) => {
+      configure({ pathContext });
+      return runTest({
+        type: normalizeType(input.type),
+        platform
+      });
+    },
     getDefinition: () => cloneDefinition(definition)
   };
 }
@@ -515,6 +549,7 @@ module.exports = {
   HOOK_TYPES,
   HOOK_DEFINITIONS,
   MANAGED_HOOK_NAME,
+  configure,
   createNotificationHooksDriver,
   normalizeType,
   parseManagedType,

@@ -1,10 +1,4 @@
-const BUILT_IN_MANIFESTS = [
-  require('../platforms/manifests/claude.json'),
-  require('../platforms/manifests/codex.json'),
-  require('../platforms/manifests/gemini.json'),
-  require('../platforms/manifests/opencode.json'),
-  require('../platforms/manifests/omp.json')
-];
+const { BUILT_IN_MANIFESTS } = require('../platforms/registry');
 
 const DEFAULT_ENABLED_CLI_PLATFORMS = BUILT_IN_MANIFESTS
   .filter(manifest => manifest.defaultEnabled !== false)

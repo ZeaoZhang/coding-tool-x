@@ -7,6 +7,7 @@ const { loadConfig, getConfigFilePath } = require('../config/loader');
 const { PATHS, NATIVE_PATHS } = require('../config/paths');
 const { isPortInUse } = require('../utils/port-helper');
 const { getPlatformCatalog } = require('../server/services/platform-catalog');
+const { getPlatformContext } = require('../server/platform-context');
 
 const execAsync = promisify(exec);
 
@@ -188,7 +189,15 @@ function buildPortCheckMap(config = {}) {
  * 检查 Claude Code 配置
  */
 async function checkClaudeConfig() {
-  const settingsPath = NATIVE_PATHS.claude.settings;
+  let settingsPath = NATIVE_PATHS.claude.settings;
+  try {
+    const pathContext = getPlatformContext().registry.resolvePathContext('claude');
+    if (pathContext?.customized && pathContext.native?.settings) {
+      settingsPath = pathContext.native.settings;
+    }
+  } catch (_) {
+    // Keep the legacy path when the registry is unavailable during diagnostics.
+  }
   const exists = fs.existsSync(settingsPath);
 
   if (exists) {

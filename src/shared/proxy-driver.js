@@ -10,11 +10,17 @@ function createProxyDriver({
   requireImpl,
   capability = 'proxy',
   manifest = {},
-  cliMetadata = {}
+  cliMetadata = {},
+  ...context
 } = {}) {
   let service;
   const loadService = () => {
-    if (!service) service = requireImpl ? requireImpl(servicePath) : require(localServicePath);
+    if (!service) {
+      service = requireImpl ? requireImpl(servicePath) : require(localServicePath);
+      if (typeof service?.configure === 'function') {
+        service.configure({ ...context, platform, capability });
+      }
+    }
     return service;
   };
   const call = (operation, args = []) => {

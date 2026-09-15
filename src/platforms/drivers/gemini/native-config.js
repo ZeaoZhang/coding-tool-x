@@ -5,14 +5,18 @@ const path = require('path');
 const { createNativeSnapshotMethods } = require('../native-config-snapshot');
 
 function createDriver({ requireImpl, ...context } = {}) {
-  const currentNativePaths = require('../../../config/paths').NATIVE_PATHS;
+  const configuredPaths = context.pathContext?.native;
+  const currentNativePaths = context.pathContext?.customized && configuredPaths?.env
+    ? configuredPaths
+    : require('../../../config/paths').NATIVE_PATHS.gemini;
   const settings = requireImpl
     ? requireImpl('./gemini/native-config-implementation')
     : implementation;
+  settings.configure?.({ pathContext: context.pathContext });
   const snapshotMethods = createNativeSnapshotMethods({
-    env: { path: currentNativePaths.gemini.env, format: 'text', mode: 0o600 },
+    env: { path: currentNativePaths.env, format: 'text', mode: 0o600 },
     settings: {
-      path: path.join(path.dirname(currentNativePaths.gemini.env), 'settings.json'),
+      path: currentNativePaths.settings || path.join(path.dirname(currentNativePaths.env), 'settings.json'),
       format: 'json'
     }
   }, { platform: 'gemini', runtime: context.runtime });
@@ -22,7 +26,11 @@ function createDriver({ requireImpl, ...context } = {}) {
     ...context,
     ...settings,
     ...snapshotMethods,
-    clearNativeOAuth: () => require('../../native-oauth-adapters').clearNativeOAuth('gemini'),
+    clearNativeOAuth: () => {
+      const adapters = require('../../native-oauth-adapters');
+      adapters.configure?.(context);
+      return adapters.clearNativeOAuth('gemini');
+    },
     preserveNativeOAuthOnProxyStart: true,
     restoreNativeSettingsOnProxyStop: true
   };

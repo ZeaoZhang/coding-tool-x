@@ -7,9 +7,11 @@ const DEFAULT_CONFIG = require('../../../config/default');
 const { resolveModelPricing, calculateTokenCost } = require('../../../server/utils/pricing');
 const GEMINI_BASE_PRICING = DEFAULT_CONFIG.pricing.gemini;
 let sessionHistoryIndex = null;
+let geminiDirOverride = null;
 
-function configure({ sessionHistoryIndex: index } = {}) {
+function configure({ sessionHistoryIndex: index, pathContext } = {}) {
   sessionHistoryIndex = index || null;
+  geminiDirOverride = pathContext?.customized ? (pathContext.native?.dir || null) : null;
 }
 
 function getSessionHistoryIndex(options = {}) {
@@ -38,7 +40,7 @@ const PATH_MAPPING_CACHE_TTL = 60000; // 1分钟缓存
  * 获取 Gemini tmp 目录（包含所有项目）
  */
 function getTmpDir() {
-  return path.join(getGeminiDir(), 'tmp');
+  return path.join(geminiDirOverride || getGeminiDir(), 'tmp');
 }
 
 /**
@@ -72,7 +74,7 @@ function readProjectRootFile(projectDir) {
 }
 
 function loadProjectRootsByStorageName() {
-  const projectsPath = path.join(getGeminiDir(), 'projects.json');
+  const projectsPath = path.join(geminiDirOverride || getGeminiDir(), 'projects.json');
   const content = readTextFile(projectsPath);
   if (!content) {
     return new Map();

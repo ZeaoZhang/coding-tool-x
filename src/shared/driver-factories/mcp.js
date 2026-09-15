@@ -89,15 +89,22 @@ function normalizeSpec(spec) {
 function createMcpDriver({ platform, ...context } = {}) {
   const { PATHS, NATIVE_PATHS } = require('../../config/paths');
   const { resolvePreferredHomeDir } = require('../../utils/home-dir');
-  const home = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
-  const native = NATIVE_PATHS || {};
+  const pathContext = context.pathContext || {};
+  const home = pathContext.home || resolvePreferredHomeDir(process.platform, process.env, os.homedir());
+  const configuredNative = pathContext.native || {};
+  const native = configuredNative[platform]
+    ? configuredNative[platform]
+    : configuredNative;
+  const legacyNative = NATIVE_PATHS || {};
   const paths = {
-    claude: native.claude?.mcp || path.join(home, '.claude.json'),
-    codex: native.codex?.config,
-    gemini: native.gemini?.settings || (native.gemini?.env ? path.join(path.dirname(native.gemini.env), 'settings.json') : path.join(home, '.gemini', 'settings.json')),
-    opencode: native.opencode?.config,
-    omp: native.omp?.mcp || path.join(native.omp?.dir || path.join(home, '.omp', 'agent'), 'mcp.json')
+    claude: native.mcp || legacyNative.claude?.mcp || path.join(home, '.claude.json'),
+    codex: native.mcp || legacyNative.codex?.config || (native.config ? native.config : undefined),
+    gemini: native.mcp || legacyNative.gemini?.settings || (native.settings ? native.settings : path.join(home, '.gemini', 'settings.json')),
+    opencode: native.mcp || legacyNative.opencode?.config || native.config,
+    omp: native.mcp || legacyNative.omp?.mcp || path.join(native.dir || path.join(home, '.omp', 'agent'), 'mcp.json')
   };
+
+  if (!paths[platform]) throw new Error(`MCP path is not configured for ${platform}`);
 
   function selectOpenCodePath() {
     const candidates = [

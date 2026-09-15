@@ -3,6 +3,7 @@
 const path = require('path');
 const { createPlatformRegistry } = require('./registry');
 const { resolveTemplate } = require('./path-resolver');
+const { createPlatformPathContext } = require('./platform-path-context');
 
 let platformRegistry;
 let platformRuntime;
@@ -121,9 +122,20 @@ function createPlatformRuntime({ registry, driverRegistry, dependencies = {} } =
       if (!driverRegistry || typeof driverRegistry.create !== 'function') return null;
       const rawManifest = typeof resolvedRegistry.resolve === 'function' ? resolvedRegistry.resolve(platform) : null;
       const pathOptions = context.pathResolver || context.pathResolverOptions || resolvedDependencies.pathResolver || resolvedDependencies.pathResolverOptions || {};
-      const resolvedPaths = rawManifest && !isLegacyDriverId(driverId) && typeof resolvedRegistry.resolvePaths === 'function'
-        ? resolvedRegistry.resolvePaths(platform, pathOptions)
-        : null;
+      let pathContext = null;
+      let resolvedPaths = null;
+      if (rawManifest && typeof resolvedRegistry.resolvePathContext === 'function') {
+        pathContext = resolvedRegistry.resolvePathContext(platform, pathOptions);
+        resolvedPaths = pathContext && pathContext.paths;
+      } else if (rawManifest && typeof resolvedRegistry.resolvePaths === 'function') {
+        resolvedPaths = resolvedRegistry.resolvePaths(platform, pathOptions);
+        pathContext = createPlatformPathContext({
+          key: platform,
+          manifest: rawManifest,
+          resolvedPaths,
+          pathOptions
+        });
+      }
       const manifest = isLegacyDriverId(driverId)
         ? rawManifest
         : buildResolvedManifest(rawManifest, resolvedPaths, pathOptions, driverId);
@@ -132,6 +144,8 @@ function createPlatformRuntime({ registry, driverRegistry, dependencies = {} } =
         platform,
         capability,
         manifest,
+        pathContext,
+        paths: pathContext ? pathContext.native : resolvedPaths,
         context,
         dependencies: resolvedDependencies
       };

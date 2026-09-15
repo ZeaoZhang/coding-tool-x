@@ -184,6 +184,32 @@ const schema = {
             }
           }
         },
+        agents: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['canonicalRoot'],
+          properties: {
+            canonicalRoot: { type: ['string', 'null'] }
+          }
+        },
+        commands: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['canonicalRoot', 'format'],
+          properties: {
+            canonicalRoot: { type: ['string', 'null'] },
+            format: { type: 'string', minLength: 1 }
+          }
+        },
+        plugins: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['path'],
+          properties: {
+            path: { type: ['string', 'null'] },
+            format: { type: 'string', minLength: 1 }
+          }
+        },
         mcp: {
           type: 'object',
           additionalProperties: false,
@@ -244,6 +270,18 @@ function validateProjectResources(manifest, errors) {
     if (!isSafeRelativePath(root)) {
       errors.push({ instancePath: `/projectResources/skills/readRoots/${index}`, message: 'must be a safe relative path' });
     }
+  }
+
+  for (const resourceType of ['agents', 'commands']) {
+    const root = resources[resourceType]?.canonicalRoot;
+    if (root !== null && root !== undefined && !isSafeRelativePath(root)) {
+      errors.push({ instancePath: `/projectResources/${resourceType}/canonicalRoot`, message: 'must be a safe relative path or null' });
+    }
+  }
+
+  const pluginPath = resources.plugins?.path;
+  if (pluginPath !== null && pluginPath !== undefined && !isSafeRelativePath(pluginPath)) {
+    errors.push({ instancePath: '/projectResources/plugins/path', message: 'must be a safe relative path or null' });
   }
 
   const mcpPath = resources.mcp?.path;

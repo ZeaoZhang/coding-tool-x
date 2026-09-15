@@ -7,6 +7,7 @@ function createDriver({ requireImpl, ...context } = {}) {
   const settings = requireImpl
     ? requireImpl('./opencode/native-config-implementation')
     : implementation;
+  settings.configure?.({ pathContext: context.pathContext });
   const configPaths = settings.CONFIG_PATHS || {};
   const snapshotMethods = createNativeSnapshotMethods({
     opencodeJsonc: { path: configPaths.opencodec, format: 'text' },

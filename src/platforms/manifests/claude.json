@@ -50,6 +50,17 @@
         ".claude/skills"
       ]
     },
+    "agents": {
+      "canonicalRoot": ".claude/agents"
+    },
+    "commands": {
+      "canonicalRoot": ".claude/commands",
+      "format": "claude"
+    },
+    "plugins": {
+      "path": null,
+      "format": "claude"
+    },
     "mcp": {
       "path": ".mcp.json",
       "format": "claude-json"

@@ -13,18 +13,43 @@ const {
   upsertSyncedChannels
 } = require('../../../server/services/channel-sync-utils');
 
+let configuredNative = NATIVE_PATHS.claude;
+let configuredState = {
+  channels: PATHS.channels?.claude,
+  activeChannel: PATHS.activeChannel?.claude
+    || path.join(path.dirname(PATHS.channels?.claude || 'active-channel.json'), 'active-channel.json')
+};
+
+function configure({ pathContext } = {}) {
+  const custom = pathContext?.customized === true;
+  configuredNative = custom && pathContext.native?.settings
+    ? { ...NATIVE_PATHS.claude, ...pathContext.native }
+    : NATIVE_PATHS.claude;
+  configuredState = {
+    channels: custom ? (pathContext.state?.channels || PATHS.channels?.claude) : PATHS.channels?.claude,
+    activeChannel: custom
+      ? (pathContext.state?.activeChannel || PATHS.activeChannel?.claude)
+      : PATHS.activeChannel?.claude
+  };
+  if (!configuredState.activeChannel) {
+    configuredState.activeChannel = path.join(path.dirname(configuredState.channels || 'active-channel.json'), 'active-channel.json');
+  }
+  require('../../native-oauth-adapters').configure?.({ pathContext });
+  if (service) service.channelsFilePath = configuredState.channels;
+}
+
 // ── Claude 特有工具函数 ──
 
 function getActiveChannelIdPath() {
-  const dir = path.dirname(PATHS.activeChannel.claude);
+  const dir = path.dirname(configuredState.activeChannel);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  return PATHS.activeChannel.claude;
+  return configuredState.activeChannel;
 }
 
 function getClaudeSettingsPath() {
-  return NATIVE_PATHS.claude.settings;
+  return configuredNative.settings;
 }
 
 function saveActiveChannelId(channelId) {
@@ -251,7 +276,7 @@ class ClaudeChannelService extends BaseChannelService {
   constructor() {
     super({
       platform: 'claude',
-      channelsFilePath: PATHS.channels.claude,
+      channelsFilePath: configuredState.channels,
       defaultGatewaySource: 'claude',
       isProxyRunning: () => isClaudeProxyRunning(),
       oauthChannelPolicy: 'single-enabled',
@@ -569,6 +594,7 @@ function disableAllChannels() {
 }
 
 module.exports = {
+  configure,
   getAllChannels,
   getCurrentChannel,
   getCurrentSettings,

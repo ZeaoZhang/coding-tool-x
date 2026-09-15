@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { PATHS } = require('../../config/paths');
+const { PATHS, getPlatformStatePath } = require('../../config/paths');
  
 const LOG_RECOVERY_BYTES = 1024 * 1024;
 const LOG_FILE_PATH = path.join(PATHS.logs, 'cc-tool-out.log');
@@ -19,8 +19,8 @@ const PROXY_START_LOG_PATTERNS = {
 };
 
 function getRuntimeFilePath(proxyType) {
-  const filePath = PATHS.proxyRuntime?.[proxyType]
-    || path.join(path.dirname(PATHS.proxyRuntime.claude), `${proxyType}-proxy.json`);
+  const filePath = getPlatformStatePath('proxyRuntime', proxyType);
+  if (!filePath) return null;
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -31,6 +31,7 @@ function getRuntimeFilePath(proxyType) {
 function saveProxyStartTime(proxyType, preserveExisting = false) {
   try {
     const filePath = getRuntimeFilePath(proxyType);
+    if (!filePath) return null;
     if (preserveExisting && fs.existsSync(filePath)) {
       return JSON.parse(fs.readFileSync(filePath, 'utf8'));
     }
@@ -58,6 +59,7 @@ function persistRecoveredStartTime(proxyType, startTime, recoveredFrom) {
   }
 
   const runtimeFilePath = getRuntimeFilePath(proxyType);
+  if (!runtimeFilePath) return null;
   const data = {
     startTime: validStartTime,
     type: proxyType,
@@ -70,6 +72,7 @@ function persistRecoveredStartTime(proxyType, startTime, recoveredFrom) {
 function readStoredProxyStartTime(proxyType) {
   try {
     const filePath = getRuntimeFilePath(proxyType);
+    if (!filePath) return null;
     if (!fs.existsSync(filePath)) return null;
     const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
     return toValidStartTime(data.startTime);
@@ -136,7 +139,7 @@ function recoverProxyStartTime(proxyType) {
       return logRecoveredStartTime;
     }
 
-    const activeChannelPath = PATHS.activeChannel?.[proxyType];
+    const activeChannelPath = getPlatformStatePath('activeChannel', proxyType);
     if (!activeChannelPath || !fs.existsSync(activeChannelPath)) {
       return null;
     }

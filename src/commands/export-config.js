@@ -3,6 +3,24 @@ const path = require('path');
 const archiver = require('archiver');
 const chalk = require('chalk');
 const { HOME_DIR } = require('../config/paths');
+const { getPlatformContext } = require('../server/platform-context');
+
+function resolveClaudeExportPaths(options = {}) {
+  const registry = options.registry || getPlatformContext().registry;
+  const pathContext = options.pathContext
+    || registry?.resolvePathContext?.('claude', options.pathOptions || {});
+  const homeDir = pathContext?.home || HOME_DIR;
+  const native = pathContext?.native || {};
+  const claudeDir = native.dir || path.join(homeDir, '.claude');
+
+  return {
+    homeDir,
+    claudeDir,
+    prompt: native.prompt || path.join(claudeDir, 'CLAUDE.md'),
+    settings: native.settings || path.join(claudeDir, 'settings.json'),
+    skills: native.skills || path.join(claudeDir, 'skills')
+  };
+}
 
 /**
  * 导出 Claude Code 配置为 ZIP 压缩包
@@ -14,8 +32,8 @@ async function exportConfig(options = {}) {
   try {
     console.log(chalk.blue('[START] 开始导出 Claude Code 配置...'));
 
-    const homeDir = HOME_DIR;
-    const claudeDir = path.join(homeDir, '.claude');
+    const exportPaths = resolveClaudeExportPaths(options);
+    const { homeDir, claudeDir } = exportPaths;
     const currentDir = process.cwd();
 
     // 检查 .claude 目录是否存在
@@ -54,7 +72,7 @@ async function exportConfig(options = {}) {
     };
 
     // 1. 导出全局 CLAUDE.md
-    const globalClaudeMd = path.join(claudeDir, 'CLAUDE.md');
+    const globalClaudeMd = exportPaths.prompt;
     if (fs.existsSync(globalClaudeMd)) {
       archive.file(globalClaudeMd, { name: 'global/CLAUDE.md' });
       manifest.globalConfig.claudeMd = true;
@@ -63,7 +81,7 @@ async function exportConfig(options = {}) {
     }
 
     // 2. 导出 settings.json
-    const settingsJson = path.join(claudeDir, 'settings.json');
+    const settingsJson = exportPaths.settings;
     if (fs.existsSync(settingsJson)) {
       archive.file(settingsJson, { name: 'global/settings.json' });
       manifest.globalConfig.settings = true;
@@ -89,7 +107,7 @@ async function exportConfig(options = {}) {
     }
 
     // 3. 导出 Skills
-    const skillsDir = path.join(claudeDir, 'skills');
+    const skillsDir = exportPaths.skills;
     if (fs.existsSync(skillsDir)) {
       const skills = fs.readdirSync(skillsDir).filter(f => !f.startsWith('.'));
       if (skills.length > 0) {

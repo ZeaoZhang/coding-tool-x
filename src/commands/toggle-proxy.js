@@ -3,7 +3,7 @@ const fs = require('fs');
 const chalk = require('chalk');
 const inquirer = require('inquirer');
 const { loadConfig } = require('../config/loader');
-const { PATHS } = require('../config/paths');
+const { getPlatformStatePath } = require('../config/paths');
 const { normalizePlatformKey } = require('../shared/platforms');
 const { getPlatformRuntime, getPlatformRegistry } = require('../platforms/runtime');
 
@@ -81,7 +81,7 @@ function getSettingsManager(cliType, runtime = getPlatformRuntime()) {
 
 function removeActiveChannelMarker(cliType) {
   const normalizedCliType = normalizePlatformKey(cliType || 'claude');
-  const markerPath = PATHS.activeChannel?.[normalizedCliType];
+  const markerPath = getPlatformStatePath('activeChannel', normalizedCliType);
   if (!markerPath) {
     return;
   }
@@ -97,7 +97,7 @@ function removeActiveChannelMarker(cliType) {
 
 function loadActiveChannelId(cliType) {
   const normalizedCliType = normalizePlatformKey(cliType || 'claude');
-  const markerPath = PATHS.activeChannel?.[normalizedCliType];
+  const markerPath = getPlatformStatePath('activeChannel', normalizedCliType);
   if (!markerPath) {
     return null;
   }

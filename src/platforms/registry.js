@@ -5,6 +5,13 @@ const os = require('os');
 const path = require('path');
 const { validateManifest, normalizeManifestError } = require('./manifest-schema');
 const { resolveManifestPaths } = require('./path-resolver');
+const {
+  createPlatformPathContext,
+  getDefaultPlatformPathsFile,
+  mergePathOverlay,
+  normalizePathOverlay,
+  readPlatformPathOverlay
+} = require('./platform-path-context');
 
 const BUILT_IN_MANIFESTS = [
   require('./manifests/claude.json'),
@@ -42,13 +49,49 @@ function publicResourceTypes(resourceTypes) {
   );
 }
 
+function hasCustomPathResolution(pathOptions = {}, overlay = {}, platformKey = '') {
+  if (pathOptions.homeDir || pathOptions.env || pathOptions.commandRunner) return true;
+  const entry = overlay?.platforms?.[String(platformKey || '').trim().toLowerCase()];
+  return Boolean(entry && Object.keys(entry.paths || {}).length > 0);
+}
 
 
-function createPlatformRegistry({ builtIns, userFile, fsImpl = fs, logger, platformsFile } = {}) {
+
+function createPlatformRegistry({
+  builtIns,
+  userFile,
+  fsImpl = fs,
+  logger,
+  platformsFile,
+  pathOverlay,
+  platformPathsFile
+} = {}) {
   const diagnostics = [];
   const definitions = new Map();
   const builtInKeys = new Set();
   const sourceBuiltIns = builtIns || BUILT_IN_MANIFESTS;
+
+  let configuredPathOverlay = { platforms: {} };
+  if (pathOverlay === undefined) {
+    const loadedPathOverlay = readPlatformPathOverlay({
+      fsImpl,
+      filePath: platformPathsFile || getDefaultPlatformPathsFile(),
+      logger
+    });
+    configuredPathOverlay = { platforms: loadedPathOverlay.platforms };
+    if (Array.isArray(loadedPathOverlay.diagnostics)) diagnostics.push(...loadedPathOverlay.diagnostics);
+  } else {
+    try {
+      configuredPathOverlay = normalizePathOverlay(pathOverlay);
+    } catch (error) {
+      diagnostics.push({
+        key: error.key || null,
+        source: 'pathOverlay',
+        reason: 'invalid path overlay',
+        message: error.message
+      });
+    }
+  }
 
   for (const manifest of sourceBuiltIns) {
     const result = validateManifest(manifest);
@@ -166,7 +209,31 @@ function createPlatformRegistry({ builtIns, userFile, fsImpl = fs, logger, platf
     resolvePaths(key, options) {
       const platform = getStored(key);
       if (!platform) return null;
-      return resolveManifestPaths(platform, options);
+      const pathOptions = options || {};
+      const overlay = pathOptions.platformPathOverlay || pathOptions.pathOverlay || configuredPathOverlay;
+      const effectiveManifest = mergePathOverlay(platform, overlay);
+      const resolverOptions = { ...pathOptions };
+      delete resolverOptions.platformPathOverlay;
+      delete resolverOptions.pathOverlay;
+      return resolveManifestPaths(effectiveManifest, resolverOptions);
+    },
+    resolvePathContext(key, options) {
+      const platform = getStored(key);
+      if (!platform) return null;
+      const pathOptions = options || {};
+      const overlay = pathOptions.platformPathOverlay || pathOptions.pathOverlay || configuredPathOverlay;
+      const effectiveManifest = mergePathOverlay(platform, overlay);
+      const resolverOptions = { ...pathOptions };
+      delete resolverOptions.platformPathOverlay;
+      delete resolverOptions.pathOverlay;
+      const resolvedPaths = resolveManifestPaths(effectiveManifest, resolverOptions);
+      return createPlatformPathContext({
+        key: platform.key,
+        manifest: effectiveManifest,
+        resolvedPaths,
+        pathOptions: resolverOptions,
+        customized: hasCustomPathResolution(pathOptions, overlay, platform.key)
+      });
     },
     getPublicDefinition(key) {
       const platform = getStored(key);

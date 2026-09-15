@@ -10,6 +10,10 @@ const HASH_RE = /^[a-f0-9]{64}$/;
 const SESSION_FILE_RE = /^session-(.*)-([a-f0-9]+)\.(json|jsonl)$/;
 const DESCRIPTOR_HEADER_BYTES = 64 * 1024;
 
+function configure({ pathContext } = {}) {
+  require('./config').configure?.({ pathContext });
+}
+
 function readDescriptorMetadata(filePath, size) {
   let fd;
   try {
@@ -337,4 +341,4 @@ async function parse(descriptor) {
   return { session, messages };
 }
 
-module.exports = { inventory, parse, extractContentText, normalizeMessageRecord, parseSessionContent };
+module.exports = { configure, inventory, parse, extractContentText, normalizeMessageRecord, parseSessionContent };

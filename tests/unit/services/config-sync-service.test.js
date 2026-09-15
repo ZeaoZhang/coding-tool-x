@@ -42,6 +42,29 @@ function writeFile(filePath, content) {
 }
 
 describe('ConfigSyncService scanning and stats', () => {
+  test('uses customized native directories from the platform registry', () => {
+    const customClaudeDir = path.join(testDir, 'configured-claude');
+    const customRegistry = {
+      resolvePathContext: () => ({
+        customized: true,
+        native: {
+          dir: customClaudeDir,
+          skills: path.join(customClaudeDir, 'custom-skills'),
+          agents: path.join(customClaudeDir, 'custom-agents'),
+          commands: path.join(customClaudeDir, 'custom-commands')
+        }
+      })
+    };
+    writeFile(path.join(customClaudeDir, 'custom-agents', 'helper.md'), '---\nname: "Helper"\n---\nbody');
+
+    const service = new ConfigSyncService({ registry: customRegistry });
+
+    expect(service.getAvailableConfigs('global').agents).toEqual([
+      expect.objectContaining({ path: 'helper.md', name: 'Helper' })
+    ]);
+    expect(service.globalConfigDir).toBe(customClaudeDir);
+  });
+
   test('scans global skills, agents and commands with metadata', () => {
     writeFile(path.join(globalClaudeDir, 'skills', 'review-skill', 'SKILL.md'), '---\nname: "Review Skill"\ndescription: "Helpful"\n---\nBody');
     writeFile(path.join(globalClaudeDir, 'skills', 'review-skill', 'docs', 'guide.md'), '# Guide');

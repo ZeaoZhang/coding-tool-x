@@ -47,6 +47,30 @@ describe('omp-config path resolution', () => {
     }));
   });
 
+  test('uses native paths supplied by a customized platform context', () => {
+    const { configure, getOmpPaths } = require('../../../src/platforms/drivers/omp/config');
+    const agentDir = path.join(homeDir, 'configured-omp');
+
+    configure({
+      pathContext: {
+        customized: true,
+        native: {
+          dir: agentDir,
+          config: path.join(agentDir, 'omp.yml'),
+          sessions: path.join(agentDir, 'history')
+        }
+      }
+    });
+
+    expect(getOmpPaths()).toEqual(expect.objectContaining({
+      agentDir,
+      config: path.join(agentDir, 'omp.yml'),
+      sessions: path.join(agentDir, 'history')
+    }));
+
+    configure();
+  });
+
   test('prefers PI_CODING_AGENT_DIR over the legacy OMP_CODING_AGENT_DIR fallback', () => {
     const { getOmpAgentDir, getOmpPaths } = require('../../../src/platforms/drivers/omp/config');
     const env = {

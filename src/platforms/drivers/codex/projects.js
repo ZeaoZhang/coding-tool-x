@@ -12,6 +12,7 @@ function createDriver(context = {}) {
       const config = context.requireImpl
         ? context.requireImpl('./codex/config')
         : require('./config');
+      config.configure?.({ pathContext: context.pathContext });
       return config.isCodexInstalled();
     },
     onSuccess: operation => {

@@ -20,7 +20,6 @@ const { convertCommandToCodex, convertCommandToGemini } = require('./format-conv
 const { assertNoSymlinkComponents, resolveProjectTarget } = require('../../shared/project-config');
 const mcpService = require('./mcp-service');
 const promptsService = require('./prompts-service');
-const pluginsService = new PluginsService();
 
 function getAiConfigMap(registry = getPlatformContext().registry) {
   if (!registry || typeof registry.list !== 'function') return {};
@@ -37,9 +36,41 @@ function getAiConfigMap(registry = getPlatformContext().registry) {
   );
 }
 
-// Configuration file destinations are declared by platform manifests.
-const AI_CONFIG_MAP = getAiConfigMap();
-const CLI_DEFAULT_AI_TYPE = Object.fromEntries(Object.keys(AI_CONFIG_MAP).map(key => [key, key]));
+function getTemplateRegistry(options = {}) {
+  return options.registry || getPlatformContext().registry;
+}
+
+function getTemplatePlatforms(registry = getPlatformContext().registry) {
+  if (!registry || typeof registry.list !== 'function') return [];
+  return registry.list({ enabledOnly: true })
+    .filter(platform => platform && platform.key);
+}
+
+function getProjectResourceDescriptor(platformKey, resourceType, registry = getPlatformContext().registry) {
+  if (!registry || typeof registry.resolve !== 'function') return null;
+  const platform = registry.resolve(platformKey);
+  if (!platform || platform.resourceTypes?.[resourceType] === false) return null;
+
+  const resource = platform.projectResources?.[resourceType];
+  if (!resource) return null;
+
+  const relativePath = resource.canonicalRoot || resource.path || null;
+  if (!relativePath) return null;
+
+  return {
+    platform: platform.key,
+    prefix: relativePath,
+    format: resource.format || resourceType,
+    sortOrder: platform.sortOrder || 0
+  };
+}
+
+function getProjectResourceTargets(platformKeys, resourceType, registry = getPlatformContext().registry) {
+  return (platformKeys || [])
+    .map(platformKey => getProjectResourceDescriptor(platformKey, resourceType, registry))
+    .filter(Boolean)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+}
 
 /**
  * 确保目录存在
@@ -54,17 +85,19 @@ function pushSkipped(list, type, item, reason) {
   list.push({ type, item, reason });
 }
 
-function getTemplateDefaultAiType(template) {
-  if (template?.cliType && CLI_DEFAULT_AI_TYPE[template.cliType]) {
-    return CLI_DEFAULT_AI_TYPE[template.cliType];
+function getTemplateDefaultAiType(template, registry = getPlatformContext().registry) {
+  const aiConfigMap = getAiConfigMap(registry);
+  if (template?.cliType && aiConfigMap[template.cliType]) {
+    return template.cliType;
   }
-  return 'claude';
+  return Object.keys(aiConfigMap)[0] || 'claude';
 }
 
-function normalizeRequestedAiConfigTypes(options = {}, template = null, skipped = []) {
+function normalizeRequestedAiConfigTypes(options = {}, template = null, skipped = [], registry = getPlatformContext().registry) {
+  const aiConfigMap = getAiConfigMap(registry);
   let aiConfigTypes = options.aiConfigTypes;
   if (!aiConfigTypes) {
-    aiConfigTypes = options.aiConfigType ? [options.aiConfigType] : [getTemplateDefaultAiType(template)];
+    aiConfigTypes = options.aiConfigType ? [options.aiConfigType] : [getTemplateDefaultAiType(template, registry)];
   }
   if (!Array.isArray(aiConfigTypes)) {
     aiConfigTypes = [aiConfigTypes];
@@ -79,7 +112,7 @@ function normalizeRequestedAiConfigTypes(options = {}, template = null, skipped 
     }
     const aiType = rawType.trim().toLowerCase();
     if (!aiType) continue;
-    if (!AI_CONFIG_MAP[aiType]) {
+    if (!aiConfigMap[aiType]) {
       pushSkipped(skipped, 'aiConfigType', aiType, `不支持的 AI 配置类型: ${aiType}`);
       continue;
     }
@@ -90,7 +123,7 @@ function normalizeRequestedAiConfigTypes(options = {}, template = null, skipped 
   }
 
   if (normalized.length === 0) {
-    const fallbackType = getTemplateDefaultAiType(template);
+    const fallbackType = getTemplateDefaultAiType(template, registry);
     normalized.push(fallbackType);
     pushSkipped(skipped, 'aiConfigType', fallbackType, `未提供有效 AI 配置类型，已回退到默认类型: ${fallbackType}`);
   }
@@ -114,14 +147,14 @@ function resolveItemName(primary, fallback, defaultPrefix) {
   return `${defaultPrefix}-${Date.now()}`;
 }
 
-function normalizeAiConfigs(aiConfigs = {}, claudeMd = null) {
-  const normalized = {
-    claude: { enabled: false, content: '' },
-    codex: { enabled: false, content: '' },
-    gemini: { enabled: false, content: '' },
-    opencode: { enabled: false, content: '' },
-    omp: { enabled: false, content: '' }
-  };
+function normalizeAiConfigs(aiConfigs = {}, claudeMd = null, registry = getPlatformContext().registry) {
+  const keys = new Set([
+    ...Object.keys(getAiConfigMap(registry)),
+    ...Object.keys(aiConfigs || {})
+  ]);
+  const normalized = Object.fromEntries(
+    [...keys].map(key => [key, { enabled: false, content: '' }])
+  );
 
   for (const key of Object.keys(normalized)) {
     const cfg = aiConfigs?.[key];
@@ -133,7 +166,7 @@ function normalizeAiConfigs(aiConfigs = {}, claudeMd = null) {
     }
   }
 
-  if (claudeMd?.enabled && claudeMd?.content && !normalized.claude.content) {
+  if (claudeMd?.enabled && claudeMd?.content && normalized.claude && !normalized.claude.content) {
     normalized.claude = {
       enabled: true,
       content: claudeMd.content
@@ -141,7 +174,7 @@ function normalizeAiConfigs(aiConfigs = {}, claudeMd = null) {
   }
 
   // OpenCode defaults to Codex profile if not explicitly configured.
-  if (!normalized.opencode.content) {
+  if (normalized.opencode && !normalized.opencode.content) {
     const fallback = normalized.codex.content ? normalized.codex : normalized.claude;
     normalized.opencode = {
       enabled: !!fallback.enabled,
@@ -355,9 +388,15 @@ function readCurrentConfig(targetDir) {
  * 获取所有可用配置（用于模板编辑器选择）
  * 返回用户级的 agents, commands, plugins + MCP 服务器列表
  */
-function getAvailableConfigs() {
-  const agentPlatforms = ['claude', 'codex', 'gemini', 'opencode'];
-  const commandPlatforms = ['claude', 'codex', 'gemini', 'opencode', 'omp'];
+function getAvailableConfigs(options = {}) {
+  const registry = getTemplateRegistry(options);
+  const platforms = getTemplatePlatforms(registry);
+  const agentPlatforms = platforms
+    .filter(platform => getProjectResourceDescriptor(platform.key, 'agents', registry))
+    .map(platform => platform.key);
+  const commandPlatforms = platforms
+    .filter(platform => getProjectResourceDescriptor(platform.key, 'commands', registry))
+    .map(platform => platform.key);
   const agentMap = new Map();
   const commandMap = new Map();
   const agentsByPlatform = {};
@@ -366,7 +405,7 @@ function getAvailableConfigs() {
   for (const platform of agentPlatforms) {
     let service;
     try {
-      service = new AgentsService(platform);
+      service = new AgentsService(platform, { registry });
       const { agents } = service.listAgents();
       for (const agent of agents || []) {
         if (agent.scope !== 'user') continue;
@@ -385,7 +424,7 @@ function getAvailableConfigs() {
   for (const platform of commandPlatforms) {
     let service;
     try {
-      service = new CommandsService(platform);
+      service = new CommandsService(platform, { registry });
       const { commands } = service.listCommands();
       for (const command of commands || []) {
         if (command.scope !== 'user') continue;
@@ -402,8 +441,10 @@ function getAvailableConfigs() {
   }
   // 按平台分别获取 skills（每个平台有独立的安装目录）
   const skillsByPlatform = {};
-  for (const platform of ['claude', 'codex', 'gemini', 'opencode', 'omp']) {
-    const service = new SkillService(platform);
+  for (const platform of platforms
+    .filter(item => getProjectResourceDescriptor(item.key, 'skills', registry))
+    .map(item => item.key)) {
+    const service = new SkillService(platform, { registry });
     skillsByPlatform[platform] = service.getInstalledSkills().map(skill => {
       const normalized = {
         directory: skill.directory,
@@ -423,7 +464,8 @@ function getAvailableConfigs() {
   }
 
   // 获取已安装的插件和市场插件
-  const { plugins: installedPlugins } = pluginsService.listPlugins();
+  const configuredPluginsService = new PluginsService({ registry });
+  const { plugins: installedPlugins } = configuredPluginsService.listPlugins();
 
   // 获取 MCP 服务器
   const mcpServers = mcpService.getAllServers();
@@ -451,6 +493,15 @@ function getAvailableConfigs() {
   }));
 
   return {
+    platforms: platforms.map(platform => ({
+      key: platform.key,
+      label: platform.label || platform.title || platform.key,
+      title: platform.title || platform.label || platform.key,
+      promptFile: platform.promptFile || null,
+      promptLabel: platform.promptLabel || null,
+      resourceTypes: platform.resourceTypes || {},
+      projectResources: platform.projectResources || {}
+    })),
     skillsByPlatform,
     agents: Array.from(agentMap.values()),
     agentsByPlatform,
@@ -501,8 +552,8 @@ function buildTemplateCommandFileName(commandName, format) {
   return `${commandName}.${format === 'gemini' ? 'toml' : 'md'}`;
 }
 
-function getCommandPreviewExtension(prefix) {
-  return prefix === '.gemini/commands' ? 'toml' : 'md';
+function getCommandPreviewExtension(format) {
+  return format === 'gemini' ? 'toml' : 'md';
 }
 
 function writeAtomicFile(filePath, content, rootDir = null) {
@@ -558,13 +609,13 @@ function writeYamlFile(filePath, data, rootDir = null) {
   }), rootDir);
 }
 
-function mergeOmpProjectPackages(targetDir, plugins = []) {
+function mergeOmpProjectPackages(targetDir, plugins = [], relativePath) {
   const packages = plugins.map(plugin => plugin.name).filter(Boolean);
-  if (packages.length === 0) {
+  if (packages.length === 0 || !relativePath) {
     return false;
   }
 
-  const settingsPath = resolveProjectTarget(targetDir, '.omp/config.yml', 'template OMP config');
+  const settingsPath = resolveProjectTarget(targetDir, relativePath, 'template OMP config');
   let settings = {};
   if (fs.existsSync(settingsPath)) {
     let parsed;
@@ -612,11 +663,13 @@ async function applyTemplateToProject(targetDir, templateId, options = {}) {
     skipped: []
   };
 
-  const aiConfigTypes = normalizeRequestedAiConfigTypes(options, template, results.skipped);
+  const registry = getTemplateRegistry(options);
+  const aiConfigMap = getAiConfigMap(registry);
+  const aiConfigTypes = normalizeRequestedAiConfigTypes(options, template, results.skipped, registry);
 
   for (const aiConfigType of aiConfigTypes) {
     const aiConfig = resolveAiConfig(template, aiConfigType);
-    const configInfo = AI_CONFIG_MAP[aiConfigType];
+    const configInfo = aiConfigMap[aiConfigType];
     if (!configInfo?.fileName) {
       const reason = aiConfigType === 'omp'
         ? 'OMP 项目级命令模板通过 .omp/commands 写入，未生成单独 AI 配置文件'
@@ -639,7 +692,7 @@ async function applyTemplateToProject(targetDir, templateId, options = {}) {
         pushSkipped(results.skipped, 'aiConfig', configInfo.fileName, `写入项目级指令失败: ${error.message}`);
       }
     } else {
-      const fileName = AI_CONFIG_MAP[aiConfigType]?.fileName || aiConfigType;
+      const fileName = aiConfigMap[aiConfigType]?.fileName || aiConfigType;
       pushSkipped(results.skipped, 'aiConfig', fileName, `模板未启用 ${fileName}，已跳过`);
     }
   }
@@ -702,16 +755,7 @@ async function applyTemplateToProject(targetDir, templateId, options = {}) {
   }
 
   if (template.agents?.length > 0) {
-    const agentTargets = [];
-    if (aiConfigTypes.includes('claude')) {
-      agentTargets.push({ prefix: '.claude/agents' });
-    }
-    if (aiConfigTypes.includes('opencode')) {
-      agentTargets.push({ prefix: '.opencode/agents' });
-    }
-    if (aiConfigTypes.includes('gemini')) {
-      agentTargets.push({ prefix: '.gemini/agents' });
-    }
+    const agentTargets = getProjectResourceTargets(aiConfigTypes, 'agents', registry);
 
     for (const agent of template.agents) {
       const fileName = resolveItemName(agent.fileName, agent.name, 'agent').toLowerCase().replace(/\s+/g, '-');
@@ -737,22 +781,7 @@ async function applyTemplateToProject(targetDir, templateId, options = {}) {
   }
 
   if (template.commands?.length > 0) {
-    const commandTargets = [];
-    if (aiConfigTypes.includes('claude')) {
-      commandTargets.push({ prefix: '.claude/commands', format: 'claude' });
-    }
-    if (aiConfigTypes.includes('codex')) {
-      commandTargets.push({ prefix: '.codex/prompts', format: 'codex' });
-    }
-    if (aiConfigTypes.includes('opencode')) {
-      commandTargets.push({ prefix: '.opencode/commands', format: 'claude' });
-    }
-    if (aiConfigTypes.includes('gemini')) {
-      commandTargets.push({ prefix: '.gemini/commands', format: 'gemini' });
-    }
-    if (aiConfigTypes.includes('omp')) {
-      commandTargets.push({ prefix: '.omp/commands', format: 'omp' });
-    }
+    const commandTargets = getProjectResourceTargets(aiConfigTypes, 'commands', registry);
 
     for (const command of template.commands) {
       const commandName = resolveItemName(command.name, null, 'command');
@@ -791,8 +820,10 @@ async function applyTemplateToProject(targetDir, templateId, options = {}) {
   }
 
   const hasMcp = template.mcpServers?.length > 0;
-  const hasPluginsForOpenCode = aiConfigTypes.includes('opencode') && template.plugins?.length > 0;
-  const hasPluginsForOmp = aiConfigTypes.includes('omp') && template.plugins?.length > 0;
+  const openCodePluginTarget = getProjectResourceDescriptor('opencode', 'plugins', registry);
+  const ompPluginTarget = getProjectResourceDescriptor('omp', 'plugins', registry);
+  const hasPluginsForOpenCode = Boolean(openCodePluginTarget && aiConfigTypes.includes('opencode') && template.plugins?.length > 0);
+  const hasPluginsForOmp = Boolean(ompPluginTarget && aiConfigTypes.includes('omp') && template.plugins?.length > 0);
   if (hasMcp) {
     const allServers = mcpService.getAllServers();
     const presets = mcpService.getPresets();
@@ -833,7 +864,7 @@ async function applyTemplateToProject(targetDir, templateId, options = {}) {
   }
 
   if (hasPluginsForOpenCode) {
-    const opencodePath = resolveProjectTarget(targetDir, '.opencode/opencode.json', 'template OpenCode config');
+    const opencodePath = resolveProjectTarget(targetDir, openCodePluginTarget.prefix, 'template OpenCode config');
     let opencodeConfig = {};
     if (fs.existsSync(opencodePath)) {
       let parsed;
@@ -853,7 +884,7 @@ async function applyTemplateToProject(targetDir, templateId, options = {}) {
   }
 
   if (hasPluginsForOmp) {
-    mergeOmpProjectPackages(targetDir, template.plugins || []);
+    mergeOmpProjectPackages(targetDir, template.plugins || [], ompPluginTarget.prefix);
   }
 
   const configRecord = {
@@ -908,11 +939,13 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
     }
   };
 
-  const aiConfigTypes = normalizeRequestedAiConfigTypes(options, template, preview.skipped);
+  const registry = getTemplateRegistry(options);
+  const aiConfigMap = getAiConfigMap(registry);
+  const aiConfigTypes = normalizeRequestedAiConfigTypes(options, template, preview.skipped, registry);
 
   for (const aiConfigType of aiConfigTypes) {
     const aiConfig = resolveAiConfig(template, aiConfigType);
-    const configInfo = AI_CONFIG_MAP[aiConfigType];
+    const configInfo = aiConfigMap[aiConfigType];
     if (!configInfo?.fileName) {
       const reason = aiConfigType === 'omp'
         ? 'OMP 项目级命令模板通过 .omp/commands 写入，预览不生成单独 AI 配置文件'
@@ -927,7 +960,7 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
       }
       preview.summary.aiConfigs.push({ type: aiConfigType, fileName: configInfo.fileName, name: configInfo.name });
     } else {
-      const fileName = AI_CONFIG_MAP[aiConfigType]?.fileName || aiConfigType;
+      const fileName = aiConfigMap[aiConfigType]?.fileName || aiConfigType;
       pushSkipped(preview.skipped, 'aiConfig', fileName, `模板未启用 ${fileName}，已跳过`);
     }
   }
@@ -938,16 +971,13 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
   }
 
   if (template.agents?.length > 0) {
-    const agentPrefixes = [];
-    if (aiConfigTypes.includes('claude')) agentPrefixes.push('.claude/agents');
-    if (aiConfigTypes.includes('opencode')) agentPrefixes.push('.opencode/agents');
-    if (aiConfigTypes.includes('gemini')) agentPrefixes.push('.gemini/agents');
+    const agentTargets = getProjectResourceTargets(aiConfigTypes, 'agents', registry);
 
     for (const agent of template.agents) {
       const fileName = resolveItemName(agent.fileName, agent.name, 'agent').toLowerCase().replace(/\s+/g, '-');
       let applicable = false;
-      for (const prefix of agentPrefixes) {
-        const relativePath = `${prefix}/${fileName}.md`;
+      for (const target of agentTargets) {
+        const relativePath = `${target.prefix}/${fileName}.md`;
         const fullPath = resolveProjectTarget(targetDir, relativePath, 'template agent file');
         if (fs.existsSync(fullPath)) {
           preview.willOverwrite.push(relativePath);
@@ -969,21 +999,16 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
   }
 
   if (template.commands?.length > 0) {
-    const commandPrefixes = [];
-    if (aiConfigTypes.includes('claude')) commandPrefixes.push('.claude/commands');
-    if (aiConfigTypes.includes('codex')) commandPrefixes.push('.codex/prompts');
-    if (aiConfigTypes.includes('opencode')) commandPrefixes.push('.opencode/commands');
-    if (aiConfigTypes.includes('gemini')) commandPrefixes.push('.gemini/commands');
-    if (aiConfigTypes.includes('omp')) commandPrefixes.push('.omp/commands');
+    const commandTargets = getProjectResourceTargets(aiConfigTypes, 'commands', registry);
 
     for (const command of template.commands) {
       const commandName = resolveItemName(command.name, null, 'command');
       let applicable = false;
-      for (const prefix of commandPrefixes) {
-        const extension = getCommandPreviewExtension(prefix);
+      for (const target of commandTargets) {
+        const extension = getCommandPreviewExtension(target.format);
         const relativePath = command.namespace
-          ? `${prefix}/${command.namespace}/${commandName}.${extension}`
-          : `${prefix}/${commandName}.${extension}`;
+          ? `${target.prefix}/${command.namespace}/${commandName}.${extension}`
+          : `${target.prefix}/${commandName}.${extension}`;
         const fullPath = resolveProjectTarget(targetDir, relativePath, 'template command file');
         if (fs.existsSync(fullPath)) {
           preview.willOverwrite.push(relativePath);
@@ -998,8 +1023,16 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
     }
   }
 
-  const writesGenericMcpConfig = template.mcpServers?.length > 0 && aiConfigTypes.some(type => type !== 'omp');
-  const writesOmpMcpConfig = template.mcpServers?.length > 0 && aiConfigTypes.includes('omp');
+  const genericMcpTarget = getProjectResourceTargets(
+    aiConfigTypes.filter(type => type !== 'omp'),
+    'mcp',
+    registry
+  )[0];
+  const writesGenericMcpConfig = Boolean(
+    template.mcpServers?.length > 0 && aiConfigTypes.some(type => type !== 'omp') && genericMcpTarget
+  );
+  const ompMcpTarget = getProjectResourceDescriptor('omp', 'mcp', registry);
+  const writesOmpMcpConfig = Boolean(template.mcpServers?.length > 0 && aiConfigTypes.includes('omp') && ompMcpTarget);
   const allServers = mcpService.getAllServers();
   const presets = mcpService.getPresets();
   let resolvableMcpCount = 0;
@@ -1021,43 +1054,46 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
   }
 
   if (writesGenericMcpConfig && resolvableMcpCount > 0) {
-    const mcpPath = resolveProjectTarget(targetDir, '.mcp.json', 'template MCP file');
+    const mcpRelativePath = genericMcpTarget.prefix;
+    const mcpPath = resolveProjectTarget(targetDir, mcpRelativePath, 'template MCP file');
     if (fs.existsSync(mcpPath)) {
-      preview.willOverwrite.push('.mcp.json');
+      preview.willOverwrite.push(mcpRelativePath);
     } else {
-      preview.willCreate.push('.mcp.json');
+      preview.willCreate.push(mcpRelativePath);
     }
     preview.summary.mcpServers = resolvableMcpCount;
   }
 
   if (writesOmpMcpConfig && resolvableMcpCount > 0) {
-    const ompMcpPath = resolveProjectTarget(targetDir, '.omp/mcp.json', 'template OMP MCP file');
+    const ompMcpPath = resolveProjectTarget(targetDir, ompMcpTarget.prefix, 'template OMP MCP file');
     if (fs.existsSync(ompMcpPath)) {
-      preview.willOverwrite.push('.omp/mcp.json');
+      preview.willOverwrite.push(ompMcpTarget.prefix);
     } else {
-      preview.willCreate.push('.omp/mcp.json');
+      preview.willCreate.push(ompMcpTarget.prefix);
     }
     preview.summary.mcpServers = resolvableMcpCount;
   }
 
-  if (aiConfigTypes.includes('opencode') && (resolvableMcpCount > 0 || template.plugins?.length > 0)) {
-    const opencodeConfigPath = resolveProjectTarget(targetDir, '.opencode/opencode.json', 'template OpenCode config');
+  const openCodePluginTarget = getProjectResourceDescriptor('opencode', 'plugins', registry);
+  if (aiConfigTypes.includes('opencode') && openCodePluginTarget && (resolvableMcpCount > 0 || template.plugins?.length > 0)) {
+    const opencodeConfigPath = resolveProjectTarget(targetDir, openCodePluginTarget.prefix, 'template OpenCode config');
     if (fs.existsSync(opencodeConfigPath)) {
-      preview.willOverwrite.push('.opencode/opencode.json');
+      preview.willOverwrite.push(openCodePluginTarget.prefix);
     } else {
-      preview.willCreate.push('.opencode/opencode.json');
+      preview.willCreate.push(openCodePluginTarget.prefix);
     }
   }
 
   if (template.plugins?.length > 0) {
     if (aiConfigTypes.includes('opencode') || aiConfigTypes.includes('omp')) {
       preview.summary.plugins = template.plugins.length;
-      if (aiConfigTypes.includes('omp')) {
-        const ompSettingsPath = path.join(targetDir, '.omp/config.yml');
+      const ompPluginTarget = getProjectResourceDescriptor('omp', 'plugins', registry);
+      if (aiConfigTypes.includes('omp') && ompPluginTarget) {
+        const ompSettingsPath = resolveProjectTarget(targetDir, ompPluginTarget.prefix, 'template OMP config');
         if (fs.existsSync(ompSettingsPath)) {
-          preview.willOverwrite.push('.omp/config.yml');
+          preview.willOverwrite.push(ompPluginTarget.prefix);
         } else {
-          preview.willCreate.push('.omp/config.yml');
+          preview.willCreate.push(ompPluginTarget.prefix);
         }
       }
     } else {

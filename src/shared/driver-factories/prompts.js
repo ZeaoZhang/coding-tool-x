@@ -8,17 +8,23 @@ const { ok, failed } = require('../driver-result');
 function createPromptDriver({ platform, ...context } = {}) {
   const { NATIVE_PATHS } = require('../../config/paths');
   const { resolvePreferredHomeDir } = require('../../utils/home-dir');
-  const home = resolvePreferredHomeDir(process.platform, process.env, os.homedir());
-  const native = NATIVE_PATHS || {};
-  const claudeDir = native.claude?.dir || path.dirname(native.claude?.settings || '') || path.join(home, '.claude');
+  const pathContext = context.pathContext || {};
+  const home = pathContext.home || resolvePreferredHomeDir(process.platform, process.env, os.homedir());
+  const configuredNative = pathContext.native || {};
+  const native = configuredNative[platform]
+    ? configuredNative[platform]
+    : configuredNative;
+  const legacyNative = NATIVE_PATHS || {};
+  const claudeDir = native.dir || legacyNative.claude?.dir || path.dirname(legacyNative.claude?.settings || '') || path.join(home, '.claude');
   const paths = {
-    claude: native.claude?.prompt || path.join(claudeDir, 'CLAUDE.md'),
-    codex: path.join(home, '.codex', 'AGENTS.md'),
-    gemini: path.join(home, '.gemini', 'GEMINI.md'),
-    opencode: path.join(native.opencode?.config || path.join(home, '.config', 'opencode'), 'AGENTS.md'),
-    omp: native.omp?.prompt || path.join(native.omp?.dir || path.join(home, '.omp', 'agent'), 'AGENTS.md')
+    claude: native.prompt || legacyNative.claude?.prompt || path.join(claudeDir, 'CLAUDE.md'),
+    codex: native.prompt || legacyNative.codex?.prompt || path.join(native.dir || legacyNative.codex?.dir || path.join(home, '.codex'), 'AGENTS.md'),
+    gemini: native.prompt || legacyNative.gemini?.prompt || path.join(native.dir || legacyNative.gemini?.dir || path.join(home, '.gemini'), 'GEMINI.md'),
+    opencode: native.prompt || legacyNative.opencode?.prompt || path.join(native.config || legacyNative.opencode?.config || path.join(home, '.config', 'opencode'), 'AGENTS.md'),
+    omp: native.prompt || legacyNative.omp?.prompt || path.join(native.dir || legacyNative.omp?.dir || path.join(home, '.omp', 'agent'), 'AGENTS.md')
   };
-  const promptPath = paths[platform];
+  const promptPath = paths[platform] || native.prompt;
+  if (!promptPath) throw new Error(`Prompt path is not configured for ${platform}`);
   const read = () => fs.existsSync(promptPath) ? fs.readFileSync(promptPath, 'utf8') : '';
   const write = content => {
     if (typeof content !== 'string') throw new Error('提示词内容必须是字符串');

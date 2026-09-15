@@ -1,6 +1,7 @@
 const fs = require('fs');
 const { PATHS, NATIVE_PATHS, ensureStorageDirMigrated } = require('./config/paths');
 const { isWindowsLikePlatform } = require('./utils/home-dir');
+const { getPlatformContext } = require('./server/platform-context');
 
 function buildEchoCommand(value) {
   if (isWindowsLikePlatform(process.platform, process.env)) {
@@ -13,6 +14,21 @@ function buildEchoCommand(value) {
 async function resetConfig() {
   console.log('\n开始恢复默认配置...\n');
   ensureStorageDirMigrated();
+
+  let claudeNativePaths = NATIVE_PATHS.claude;
+  let claudeStatePaths = {
+    activeChannel: PATHS.activeChannel.claude,
+    channels: PATHS.channels.claude
+  };
+  try {
+    const pathContext = getPlatformContext().registry.resolvePathContext('claude');
+    if (pathContext?.customized) {
+      claudeNativePaths = { ...claudeNativePaths, ...(pathContext.native || {}) };
+      claudeStatePaths = { ...claudeStatePaths, ...(pathContext.state || {}) };
+    }
+  } catch (_) {
+    // Keep legacy defaults when reset is invoked without a usable registry.
+  }
 
   try {
     // 1. 尝试停止代理服务器（如果正在运行）
@@ -31,8 +47,8 @@ async function resetConfig() {
     }
 
     // 2. 检查并恢复 settings.json
-    const settingsPath = NATIVE_PATHS.claude.settings;
-    const backupPath = NATIVE_PATHS.claude.settingsBackup;
+    const settingsPath = claudeNativePaths.settings;
+    const backupPath = claudeNativePaths.settingsBackup;
 
     if (fs.existsSync(backupPath)) {
       console.log('发现备份文件，正在恢复...');
@@ -50,10 +66,10 @@ async function resetConfig() {
         console.log('检测到代理配置，尝试恢复到正常渠道...');
 
         // 读取激活的渠道
-        const activeChannelPath = PATHS.activeChannel.claude;
+        const activeChannelPath = claudeStatePaths.activeChannel;
         if (fs.existsSync(activeChannelPath)) {
           const activeChannelData = JSON.parse(fs.readFileSync(activeChannelPath, 'utf8'));
-          const channelsPath = PATHS.channels.claude;
+          const channelsPath = claudeStatePaths.channels;
 
           if (fs.existsSync(channelsPath)) {
             const channelsData = JSON.parse(fs.readFileSync(channelsPath, 'utf8'));
