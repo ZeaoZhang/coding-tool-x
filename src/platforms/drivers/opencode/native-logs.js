@@ -68,18 +68,25 @@ function createDriver({ fsImpl = fs, pathContext } = {}) {
   return {
     platform: 'opencode',
     capability: 'nativeLogs',
-    createNativeLogCursor({ fs: cursorFs = fsImpl } = {}) {
+    createNativeLogCursor({ fs: cursorFs = fsImpl, onDiagnostic } = {}) {
       let rowState = new Map();
       let initialized = false;
 
       const read = () => {
         const dbPath = getDatabasePath(cursorFs, dataDir);
-        if (!dbPath || !cursorFs.existsSync(dbPath)) return [];
+        const stats = { files: 0, bytesRead: 0, parsedRecords: 0, maxLineLength: 0 };
+        if (!dbPath || !cursorFs.existsSync(dbPath)) {
+          try { onDiagnostic?.(stats); } catch (_) {}
+          return [];
+        }
+        stats.files = 1;
+        try { stats.bytesRead = cursorFs.statSync(dbPath).size; } catch (_) {}
         let db;
         try {
           db = new DatabaseSync(dbPath, { readOnly: true, timeout: 1000 });
           const events = [];
           for (const event of readUsageRows(db)) {
+            stats.parsedRecords += 1;
             const signature = usageSignature(event);
             const previous = rowState.get(event.id);
             if (!previous) {
@@ -101,8 +108,10 @@ function createDriver({ fsImpl = fs, pathContext } = {}) {
             }
           }
           initialized = true;
+          try { onDiagnostic?.({ ...stats, initialized }); } catch (_) {}
           return events;
         } catch (_) {
+          try { onDiagnostic?.({ ...stats, parseErrors: 1, initialized }); } catch (_) {}
           return [];
         } finally {
           try { db?.close(); } catch (_) {}

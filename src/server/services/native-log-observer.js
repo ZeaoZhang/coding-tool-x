@@ -11,8 +11,39 @@ let pollTimer = null;
 let enabled = false;
 let intervalMs = DEFAULT_INTERVAL_MS;
 let cursors = new Map();
+let cursorDiagnostics = new Map();
+let firstPollObserved = false;
 let configSavedListener = null;
 let lifecycleState = 'stopped';
+
+function memoryTraceEnabled() {
+  return process.env.CC_TOOL_MEMORY_TRACE === '1';
+}
+
+function traceMemory(platform, stage, details = {}, durationMs = null) {
+  if (!memoryTraceEnabled()) return;
+  const usage = process.memoryUsage();
+  const payload = {
+    pid: process.pid,
+    platform,
+    stage,
+    ...(durationMs === null ? {} : { durationMs: Number(durationMs.toFixed(3)) }),
+    files: Number(details.files) || 0,
+    bytesRead: Number(details.bytesRead) || 0,
+    parsedRecords: Number(details.parsedRecords) || 0,
+    maxLineLength: Number(details.maxLineLength) || 0,
+    rss: usage.rss,
+    heapTotal: usage.heapTotal,
+    heapUsed: usage.heapUsed,
+    external: usage.external,
+    arrayBuffers: usage.arrayBuffers
+  };
+  console.log(`[MEM] native-log ${JSON.stringify(payload)}`);
+}
+
+function traceClock() {
+  return Number(process.hrtime.bigint()) / 1e6;
+}
 
 function normalizeInterval(value) {
   const seconds = Number(value);
@@ -37,6 +68,7 @@ function closeCursor(cursor) {
 
 function resolveCursors(runtime = getPlatformRuntime(), registry = getPlatformRegistry()) {
   const next = new Map();
+  const traceEnabled = memoryTraceEnabled();
   const platforms = registry.list({ enabledOnly: true });
   for (const platform of platforms) {
     const key = platform.key;
@@ -44,16 +76,28 @@ function resolveCursors(runtime = getPlatformRuntime(), registry = getPlatformRe
     try { driver = runtime.getDriver(key, 'nativeLogs'); } catch (_) { driver = null; }
     if (!driver || typeof driver.createNativeLogCursor !== 'function') continue;
 
-    const cursor = cursors.get(key) || driver.createNativeLogCursor({ skipInitialParse: true });
-    if (!cursors.has(key)) {
+    const existing = cursors.get(key);
+    let cursor = existing;
+    if (!cursor) {
+      const options = { skipInitialParse: true };
+      if (traceEnabled) {
+        options.onDiagnostic = details => cursorDiagnostics.set(key, details || {});
+      }
+      cursor = driver.createNativeLogCursor(options);
+      const startedAt = traceClock();
+      traceMemory(key, 'cursor-initialize-before', {}, 0);
       try { cursor.initialize?.(); } catch (error) {
         console.warn(`[Native Logs] Failed to initialize ${key}:`, error.message);
       }
+      traceMemory(key, 'cursor-initialize-after', cursorDiagnostics.get(key), traceClock() - startedAt);
     }
     next.set(key, cursor);
   }
   for (const [key, cursor] of cursors) {
-    if (!next.has(key)) closeCursor(cursor);
+    if (!next.has(key)) {
+      closeCursor(cursor);
+      cursorDiagnostics.delete(key);
+    }
   }
   cursors = next;
 }
@@ -124,14 +168,20 @@ function pollNativeCliLogs({ runtime = getPlatformRuntime(), registry = getPlatf
   if (!enabled) return getStatus();
   resolveCursors(runtime, registry);
   const channelCache = new Map();
+  const traceFirstPoll = memoryTraceEnabled() && !firstPollObserved;
   for (const [platform, cursor] of cursors) {
+    const startedAt = traceFirstPoll ? traceClock() : 0;
+    if (traceFirstPoll) traceMemory(platform, 'first-poll-before', cursorDiagnostics.get(platform), 0);
     try {
       const events = cursor.readNewEvents?.() || cursor.read?.() || [];
       events.forEach(event => recordEvent(platform, event, runtime, channelCache));
     } catch (error) {
       console.warn(`[Native Logs] Failed to read ${platform}:`, error.message);
+    } finally {
+      if (traceFirstPoll) traceMemory(platform, 'first-poll-after', cursorDiagnostics.get(platform), traceClock() - startedAt);
     }
   }
+  if (traceFirstPoll) firstPollObserved = true;
   return getStatus();
 }
 
@@ -177,6 +227,8 @@ function prepareNativeCliLogObserver({
     clearTimer();
     for (const cursor of cursors.values()) closeCursor(cursor);
     cursors = new Map();
+    cursorDiagnostics = new Map();
+    firstPollObserved = false;
     lifecycleState = 'stopped';
     return getStatus();
   }
@@ -217,6 +269,8 @@ function shutdownNativeCliLogObserver() {
   clearTimer();
   for (const cursor of cursors.values()) closeCursor(cursor);
   cursors = new Map();
+  cursorDiagnostics = new Map();
+  firstPollObserved = false;
   enabled = false;
   intervalMs = DEFAULT_INTERVAL_MS;
   lifecycleState = 'stopped';

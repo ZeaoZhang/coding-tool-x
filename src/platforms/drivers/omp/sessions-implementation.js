@@ -4,6 +4,9 @@ const { PATHS, HOME_DIR } = require('../../../config/paths');
 const ompConfig = require('./config');
 const {
   normalizeUsage: normalizeNativeUsage,
+  readJsonLines: readNativeJsonLines,
+  usageFieldPaths,
+  createSelectiveJsonLineParser,
   createIncrementalJsonlCursor
 } = require('../native-log-utils');
 let sessionHistoryIndex = null;
@@ -156,21 +159,7 @@ function parseUsage(usage = {}) {
 }
 
 function readJsonLines(filePath) {
-  try {
-    const raw = fs.readFileSync(filePath, 'utf8');
-    return raw
-      .split(/\r?\n/)
-      .filter(line => line.trim())
-      .map((line) => {
-        try {
-          return JSON.parse(line);
-        } catch {
-          return { type: 'invalid', raw: line };
-        }
-      });
-  } catch {
-    return [];
-  }
+  return readNativeJsonLines(filePath, fs);
 }
 
 function convertOmpEntry(entry = {}, index = 0) {
@@ -297,63 +286,6 @@ function parseSessionUsageEntries(filePath, entries, previousState = {}) {
   return { events, state };
 }
 
-function parseJsonLine(line) {
-  try {
-    return JSON.parse(line);
-  } catch {
-    return null;
-  }
-}
-
-function getUtf8SafeLength(buffer) {
-  let continuationBytes = 0;
-  for (let index = buffer.length - 1; index >= 0; index -= 1) {
-    if ((buffer[index] & 0xc0) !== 0x80) break;
-    continuationBytes += 1;
-  }
-  if (continuationBytes === 0) return buffer.length;
-
-  const leadIndex = buffer.length - continuationBytes - 1;
-  if (leadIndex < 0) return 0;
-  const lead = buffer[leadIndex];
-  const expectedLength = lead >= 0xc2 && lead <= 0xdf
-    ? 2
-    : lead >= 0xe0 && lead <= 0xef
-      ? 3
-      : lead >= 0xf0 && lead <= 0xf4
-        ? 4
-        : 0;
-  return expectedLength && continuationBytes < expectedLength - 1
-    ? leadIndex
-    : buffer.length;
-}
-
-function consumeSessionUsageBytes(filePath, buffer, state, events = null) {
-  const pendingBytes = state.utf8Remainder || Buffer.alloc(0);
-  const nextBytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || '');
-  const combinedBytes = pendingBytes.length > 0
-    ? Buffer.concat([pendingBytes, nextBytes])
-    : nextBytes;
-  const safeLength = getUtf8SafeLength(combinedBytes);
-  const text = combinedBytes.subarray(0, safeLength).toString('utf8');
-  state.utf8Remainder = combinedBytes.subarray(safeLength);
-  const combined = `${state.remainder || ''}${text}`;
-  if (!combined) return;
-
-  const lines = combined.split(/\r?\n/);
-  state.remainder = lines.pop() || '';
-  lines.forEach((line) => {
-    if (!line.trim()) return;
-    const entry = parseJsonLine(line);
-    if (entry) {
-      const event = parseSessionUsageEntry(filePath, entry, state.entryIndex, state);
-      if (event && events) events.push(event);
-    }
-    state.entryIndex += 1;
-  });
-}
-
-
 function parseSessionUsageEvents(filePath) {
   const entries = readJsonLines(filePath);
   return parseSessionUsageEntries(filePath, entries).events;
@@ -421,7 +353,15 @@ function getOmpUsageEvents(rootDir = getOmpSessionPaths().sessions) {
   });
 }
 
-function createOmpUsageEventCursor(rootDir = null, { skipInitialParse = false } = {}) {
+const OMP_SELECTED_FIELDS = [
+  'type', 'id', 'timestamp', 'provider', 'model', 'modelId', 'cwd',
+  'role', 'message.role', 'message.id', 'message.timestamp', 'message.provider',
+  'message.model', 'message.modelId',
+  ...usageFieldPaths('usage'),
+  ...usageFieldPaths('message.usage')
+];
+
+function createOmpUsageEventCursor(rootDir = null, { skipInitialParse = false, onDiagnostic } = {}) {
   return createIncrementalJsonlCursor({
     scanFiles: () => scanSessionFiles(rootDir || getOmpSessionPaths().sessions),
     createFileState: (filePath, _stat, previousState) => createSessionUsageParserState(
@@ -432,6 +372,8 @@ function createOmpUsageEventCursor(rootDir = null, { skipInitialParse = false } 
     parseLine: (filePath, record, state, index) => parseSessionUsageEntry(filePath, record, index, state),
     fsImpl: fs,
     skipInitialParse,
+    createLongLineParser: () => createSelectiveJsonLineParser(OMP_SELECTED_FIELDS),
+    onDiagnostic,
     onError: (error, filePath) => {
       console.warn('[OMP Sessions] Failed to read changed usage events:', filePath, error.message);
     }

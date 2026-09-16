@@ -7,6 +7,8 @@ const { NATIVE_PATHS } = require('../../../config/paths');
 const {
   normalizeCost,
   normalizeUsage,
+  usageFieldPaths,
+  createSelectiveJsonLineParser,
   readJsonLines,
   walkFiles,
   createScannedFileCursor,
@@ -16,6 +18,19 @@ const { calculateUsageCost } = require('../../../server/services/usage-log-utils
 
 const MAX_WHOLE_JSON_BYTES = 16 * 1024 * 1024;
 const MIN_WHOLE_JSON_PARSE_INTERVAL_MS = 15 * 1000;
+
+const GEMINI_SELECTED_FIELDS = [
+  '$set.sessionId', '$set.provider', '$set.model', '$set.lastUpdated',
+  'id', 'messageId', 'uuid', 'model', 'timestamp', 'createdAt', 'provider', 'cost', 'channelId', 'channel',
+  'tokens', 'usage',
+  'message.id', 'message.messageId', 'message.uuid', 'message.model', 'message.timestamp',
+  'message.createdAt', 'message.provider', 'message.cost', 'message.channelId', 'message.channel',
+  'message.tokens', 'message.usage',
+  ...usageFieldPaths('tokens'),
+  ...usageFieldPaths('usage'),
+  ...usageFieldPaths('message.tokens'),
+  ...usageFieldPaths('message.usage')
+];
 
 function parseSession(filePath, fsImpl) {
   let content;
@@ -64,7 +79,8 @@ function parseGeminiJsonlLine(filePath, record, state) {
   const message = record?.message && typeof record.message === 'object' ? record.message : record;
   const usage = message?.tokens || message?.usage;
   if (!usage || typeof usage !== 'object') return null;
-  const messageId = message.id || message.messageId || message.uuid || `line-${state.entryIndex}`;
+  const messageId = message.id || message.messageId || message.uuid
+    || record?.id || record?.messageId || record?.uuid || `line-${state.entryIndex}`;
   const model = message.model || state.metadata.model || '';
   const sessionId = state.metadata.sessionId || path.basename(filePath);
   return {
@@ -89,7 +105,7 @@ function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
   return {
     platform: 'gemini',
     capability: 'nativeLogs',
-    createNativeLogCursor({ fs: cursorFs = fsImpl, skipInitialParse = false } = {}) {
+    createNativeLogCursor({ fs: cursorFs = fsImpl, skipInitialParse = false, onDiagnostic } = {}) {
       const jsonlFiles = () => walkFiles(resolvedNativeRoot, name => /^session-.*\.jsonl$/.test(name), cursorFs);
       const jsonFiles = () => walkFiles(resolvedNativeRoot, name => /^session-.*\.json$/.test(name), cursorFs);
       const jsonlCursor = createIncrementalJsonlCursor({
@@ -98,6 +114,8 @@ function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
         parseLine: parseGeminiJsonlLine,
         fsImpl: cursorFs,
         skipInitialParse,
+        createLongLineParser: () => createSelectiveJsonLineParser(GEMINI_SELECTED_FIELDS),
+        onDiagnostic,
         onError: (error, filePath) => {
           console.warn('[Gemini Native Logs] Failed to read changed JSONL events:', filePath, error.message);
         }

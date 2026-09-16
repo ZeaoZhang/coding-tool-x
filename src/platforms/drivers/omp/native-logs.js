@@ -22,8 +22,8 @@ function createDriver({ pathContext } = {}) {
   return {
     platform: 'omp',
     capability: 'nativeLogs',
-    createNativeLogCursor({ skipInitialParse = false } = {}) {
-      const native = createOmpUsageEventCursor(getOmpSessionPaths().sessions, { skipInitialParse });
+    createNativeLogCursor({ skipInitialParse = false, onDiagnostic } = {}) {
+      const native = createOmpUsageEventCursor(getOmpSessionPaths().sessions, { skipInitialParse, onDiagnostic });
       return {
         initialize() { native.read(); },
         readNewEvents() {

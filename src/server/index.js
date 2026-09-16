@@ -456,5 +456,5 @@ async function performStartupHealthCheck({ config = loadConfig() } = {}) {
 
 module.exports = {
   startServer,
-  _test: { autoRestoreProxies, performStartupHealthCheck }
+  _test: { autoRestoreProxies, performStartupHealthCheck, traceStartupMemory }
 };

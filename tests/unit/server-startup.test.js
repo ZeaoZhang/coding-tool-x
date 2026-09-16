@@ -44,3 +44,20 @@ test('autoRestoreProxies restores platforms sequentially and continues after fai
   expect(result).toEqual({ attempted: 3, restored: 2, failed: 1 });
   expect(drivers.codex.restoreOnBoot).toHaveBeenCalledWith({ config: { marker: 'shared-config' } });
 });
+
+test('startup memory tracing is opt-in and exposes the five V8/process memory counters', () => {
+  process.env.CC_TOOL_MEMORY_TRACE = '1';
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  _test.traceStartupMemory('unit-test');
+  const [line] = log.mock.calls[0];
+  const payload = JSON.parse(String(line).slice('[MEM] unit-test '.length));
+  expect(payload).toEqual(expect.objectContaining({
+    rss: expect.any(Number),
+    heapUsed: expect.any(Number),
+    heapTotal: expect.any(Number),
+    external: expect.any(Number),
+    arrayBuffers: expect.any(Number)
+  }));
+  log.mockRestore();
+  delete process.env.CC_TOOL_MEMORY_TRACE;
+});
