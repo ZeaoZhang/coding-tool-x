@@ -1,5 +1,5 @@
 import { flushPromises, shallowMount } from '@vue/test-utils'
-import { createRouter, createMemoryHistory } from 'vue-router'
+import { createRouter, createMemoryHistory, RouterLink } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
@@ -89,5 +89,26 @@ describe('Layout dynamic navigation', () => {
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('cli-projects')
     expect(router.currentRoute.value.params.platform).toBe('alpha-cli')
+  })
+
+  it('keeps the home title as a real route link from Analytics', async () => {
+    const router = createTestRouter()
+    await router.push('/analytics')
+    await router.isReady()
+    const wrapper = shallowMount(Layout, {
+      global: {
+        plugins: [router],
+        stubs: { RouterLink }
+      }
+    })
+    await flushPromises()
+
+    const logoLink = wrapper.find('.logo-section')
+    expect(logoLink.element.tagName).toBe('A')
+    expect(logoLink.attributes('href')).toBe('/')
+
+    await logoLink.trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('home')
   })
 })

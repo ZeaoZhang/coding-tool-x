@@ -47,7 +47,7 @@
 
     <!-- Global Header -->
     <header class="header">
-      <div class="logo-section" @click="goHome">
+      <router-link class="logo-section" :to="{ name: 'home' }" aria-label="返回首页">
         <div class="logo-wrapper">
           <img src="/logo.png" :alt="`${APP_NAME} logo`" class="logo-image" />
         </div>
@@ -55,7 +55,7 @@
           <h1 class="title-main">{{ APP_NAME }}</h1>
           <span class="title-sub">AI 编程工作台</span>
         </div>
-      </div>
+      </router-link>
 
       <!-- Navigation Tabs -->
       <div class="nav-tabs">
@@ -697,10 +697,6 @@ function toggleLogs() {
   savePanelSettings()
 }
 
-function goHome() {
-  router.push({ name: 'home' })
-}
-
 function openGithub() {
   window.open('https://github.com/ZeaoZhang/coding-tool', '_blank')
 }
@@ -960,6 +956,8 @@ function handleViewHistoryFromFavorites({ session, channel }) {
   align-items: center;
   gap: 14px;
   cursor: pointer;
+  color: inherit;
+  text-decoration: none;
   padding: 8px 14px;
   border-radius: 18px;
   margin-left: -8px;
