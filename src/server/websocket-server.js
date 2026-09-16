@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { loadConfig } = require('../config/loader');
 const { PATHS } = require('../config/paths');
+const eventBus = require('../plugins/event-bus');
 const {
   normalizeAddress,
   isLoopbackAddress,
@@ -11,19 +12,28 @@ const {
 } = require('./services/network-access');
 
 const MAX_PERSISTED_LOGS = 500;
+const LOG_PERSIST_DEBOUNCE_MS = 250;
+
+let maxLogsLimit = 100;
 
 function getMaxLogsLimit() {
+  return maxLogsLimit;
+}
+
+function refreshMaxLogsLimit(config = null) {
   try {
-    const config = loadConfig();
-    const limit = parseInt(config.maxLogs, 10);
+    const limit = parseInt((config || loadConfig()).maxLogs, 10);
     if (!Number.isFinite(limit)) {
-      return 100;
+      maxLogsLimit = 100;
+    } else {
+      maxLogsLimit = Math.min(Math.max(limit, 50), MAX_PERSISTED_LOGS);
     }
-    return Math.min(Math.max(limit, 50), MAX_PERSISTED_LOGS);
   } catch (err) {
     console.error('Failed to load log limit from config:', err);
-    return 100;
+    maxLogsLimit = 100;
   }
+  trimLogCache();
+  return maxLogsLimit;
 }
 
 let wss = null;
@@ -227,8 +237,7 @@ function filterTodayLogs(logs) {
   });
 }
 
-function enforcePerSourceLimit(logs) {
-  const limit = getMaxLogsLimit();
+function enforcePerSourceLimit(logs, limit = getMaxLogsLimit()) {
   if (!limit || limit <= 0) {
     return logs;
   }
@@ -263,21 +272,130 @@ function loadPersistedLogs() {
   return [];
 }
 
-// 保存日志到文件
-function saveLogsToFile(logs) {
+function serializeLogs(logs) {
   try {
-    const logsFile = getLogsFilePath();
-    // 只保留最新的 MAX_PERSISTED_LOGS 条，且仅保存今日日志
     const todayLogs = enforcePerSourceLimit(filterTodayLogs(logs));
     const logsToSave = todayLogs.slice(-MAX_PERSISTED_LOGS);
-    fs.writeFileSync(logsFile, JSON.stringify(logsToSave, null, 2), 'utf8');
+    return JSON.stringify(logsToSave, null, 2);
   } catch (err) {
-    console.error('Failed to save logs to file:', err);
+    console.error('Failed to serialize logs:', err);
+    return '[]';
   }
 }
 
 // 内存中的日志缓存
 let logsCache = [];
+let logSourceCounts = new Map();
+let cacheDayStartMs = null;
+let persistTimer = null;
+let persistGeneration = 0;
+let persistedGeneration = 0;
+let enqueuedGeneration = 0;
+let persistChain = Promise.resolve();
+let configSavedListener = null;
+
+function rebuildLogSourceCounts() {
+  logSourceCounts = new Map();
+  logsCache.forEach(log => {
+    const source = log.source || 'claude';
+    logSourceCounts.set(source, (logSourceCounts.get(source) || 0) + 1);
+  });
+}
+
+function removeLogAt(index) {
+  if (index < 0 || index >= logsCache.length) return;
+  const [removed] = logsCache.splice(index, 1);
+  const source = removed?.source || 'claude';
+  const count = (logSourceCounts.get(source) || 1) - 1;
+  if (count > 0) logSourceCounts.set(source, count);
+  else logSourceCounts.delete(source);
+}
+
+function trimLogCache() {
+  const { startMs, endMs } = getTodayRange();
+  if (cacheDayStartMs !== startMs) {
+    logsCache = logsCache.filter(log => {
+      let timestamp = typeof log.timestamp === 'number' ? log.timestamp : Date.parse(log.timestamp);
+      if (!Number.isFinite(timestamp)) timestamp = Date.now();
+      log.timestamp = timestamp;
+      log.source = inferSource(log);
+      return timestamp >= startMs && timestamp < endMs;
+    });
+    cacheDayStartMs = startMs;
+    rebuildLogSourceCounts();
+  }
+
+  const limit = getMaxLogsLimit();
+  if (limit > 0) {
+    for (const [source, count] of [...logSourceCounts]) {
+      let remaining = count - limit;
+      if (remaining <= 0) continue;
+      for (let index = 0; index < logsCache.length && remaining > 0; index += 1) {
+        if (logsCache[index].source === source) {
+          removeLogAt(index);
+          index -= 1;
+          remaining -= 1;
+        }
+      }
+    }
+  }
+  while (logsCache.length > MAX_PERSISTED_LOGS) removeLogAt(0);
+}
+
+function appendLogToCache(payload) {
+  trimLogCache();
+  logsCache.push(payload);
+  const source = payload.source || 'claude';
+  logSourceCounts.set(source, (logSourceCounts.get(source) || 0) + 1);
+  trimLogCache();
+}
+
+function enqueueLogPersistence(data, generation) {
+  enqueuedGeneration = Math.max(enqueuedGeneration, generation);
+  persistChain = persistChain
+    .catch(() => {})
+    .then(async () => {
+      await fs.promises.writeFile(getLogsFilePath(), data, 'utf8');
+      persistedGeneration = Math.max(persistedGeneration, generation);
+    })
+    .catch((error) => {
+      console.error('Failed to save logs to file:', error);
+    });
+  return persistChain;
+}
+
+function scheduleLogPersistence({ markDirty = true } = {}) {
+  if (markDirty) persistGeneration += 1;
+  if (persistTimer) return;
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    flushPendingLogs();
+  }, LOG_PERSIST_DEBOUNCE_MS);
+  if (typeof persistTimer.unref === 'function') persistTimer.unref();
+}
+
+function flushPendingLogs() {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  if (persistGeneration <= persistedGeneration || persistGeneration <= enqueuedGeneration) {
+    return persistChain;
+  }
+  const generation = persistGeneration;
+  const data = serializeLogs(logsCache.slice());
+  return enqueueLogPersistence(data, generation).then(() => {
+    if (persistGeneration > generation && persistGeneration > enqueuedGeneration) {
+      scheduleLogPersistence({ markDirty: false });
+    }
+  });
+}
+
+function ensureConfigListener() {
+  if (configSavedListener) return;
+  configSavedListener = ({ config } = {}) => refreshMaxLogsLimit(config);
+  eventBus.on('config:saved', configSavedListener);
+}
 
 // 启动 WebSocket 服务器（附加到现有的 HTTP 服务器）
 function startWebSocketServer(httpServer, options = {}) {
@@ -290,8 +408,12 @@ function startWebSocketServer(httpServer, options = {}) {
     host: options.host || '127.0.0.1'
   };
 
+  ensureConfigListener();
+  refreshMaxLogsLimit();
   // 加载持久化的日志到缓存
   logsCache = loadPersistedLogs();
+  cacheDayStartMs = getTodayRange().startMs;
+  rebuildLogSourceCounts();
   const counts = logsCache.reduce((acc, log) => {
     const source = log.source || 'unknown';
     acc[source] = (acc[source] || 0) + 1;
@@ -389,7 +511,7 @@ function startWebSocketServer(httpServer, options = {}) {
 // 停止 WebSocket 服务器
 function stopWebSocketServer() {
   if (!wss) {
-    return;
+    return flushPendingLogs();
   }
 
   // 清除心跳定时器
@@ -410,6 +532,7 @@ function stopWebSocketServer() {
   });
 
   wss = null;
+  return flushPendingLogs();
 }
 
 // 广播日志消息
@@ -422,16 +545,9 @@ function broadcastLog(logData) {
 
   payload.source = payload.source || inferSource(payload);
 
-  // 添加到缓存
-  logsCache.push(payload);
-  logsCache = enforcePerSourceLimit(filterTodayLogs(logsCache));
-
-  if (logsCache.length > MAX_PERSISTED_LOGS) {
-    logsCache = logsCache.slice(-MAX_PERSISTED_LOGS);
-  }
-
-  // 保存到文件
-  saveLogsToFile(logsCache);
+  // 添加到有界内存缓存，持久化由防抖队列合并处理。
+  appendLogToCache(payload);
+  scheduleLogPersistence();
 
   // 广播给所有连接的客户端
   if (wss && wsClients.size > 0) {
@@ -448,8 +564,17 @@ function broadcastLog(logData) {
 // 清空所有日志
 function clearAllLogs() {
   logsCache = [];
-  saveLogsToFile([]);
+  logSourceCounts = new Map();
+  cacheDayStartMs = getTodayRange().startMs;
+  persistGeneration += 1;
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  const generation = persistGeneration;
+  enqueueLogPersistence('[]', generation);
   console.log('[OK] All logs cleared');
+  return persistChain;
 }
 
 // 复制渠道状态，保留 API key 供前端展示
@@ -530,6 +655,7 @@ module.exports = {
   stopWebSocketServer,
   broadcastLog,
   clearAllLogs,
+  flushPendingLogs,
   broadcastProxyState,
   broadcastSchedulerState,
   broadcastBrowserNotification

@@ -52,7 +52,7 @@ function createDriver(context = {}) {
         return {
           success: true,
           timestamp: new Date().toISOString(),
-          ...healthCheckAllProjects(projects)
+          ...healthCheckAllProjects(projects, { includeResults: true })
         };
       }
     }

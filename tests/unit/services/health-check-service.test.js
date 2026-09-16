@@ -92,6 +92,13 @@ describe('healthCheckAllProjects', () => {
     expect(result.results).toEqual([]);
   });
 
+  test('summary mode omits per-project results', () => {
+    const result = healthCheckAllProjects([{ fullPath: testDir }], { includeResults: false });
+
+    expect(result.summary).toEqual({ total: 1, created: 1, errors: 0, healthy: 1 });
+    expect(result).not.toHaveProperty('results');
+  });
+
   test('projects without fullPath are skipped', () => {
     const projects = [
       { name: 'no-path' },

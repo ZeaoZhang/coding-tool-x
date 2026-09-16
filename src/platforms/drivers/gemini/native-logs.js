@@ -4,8 +4,18 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { NATIVE_PATHS } = require('../../../config/paths');
-const { normalizeCost, normalizeUsage, readJsonLines, walkFiles, createScannedFileCursor } = require('../native-log-utils');
+const {
+  normalizeCost,
+  normalizeUsage,
+  readJsonLines,
+  walkFiles,
+  createScannedFileCursor,
+  createIncrementalJsonlCursor
+} = require('../native-log-utils');
 const { calculateUsageCost } = require('../../../server/services/usage-log-utils');
+
+const MAX_WHOLE_JSON_BYTES = 16 * 1024 * 1024;
+const MIN_WHOLE_JSON_PARSE_INTERVAL_MS = 15 * 1000;
 
 function parseSession(filePath, fsImpl) {
   let content;
@@ -47,6 +57,31 @@ function parseSession(filePath, fsImpl) {
   });
 }
 
+function parseGeminiJsonlLine(filePath, record, state) {
+  if (record?.$set && typeof record.$set === 'object') {
+    Object.assign(state.metadata, record.$set);
+  }
+  const message = record?.message && typeof record.message === 'object' ? record.message : record;
+  const usage = message?.tokens || message?.usage;
+  if (!usage || typeof usage !== 'object') return null;
+  const messageId = message.id || message.messageId || message.uuid || `line-${state.entryIndex}`;
+  const model = message.model || state.metadata.model || '';
+  const sessionId = state.metadata.sessionId || path.basename(filePath);
+  return {
+    id: `${path.basename(filePath)}:${messageId}`,
+    source: 'gemini',
+    sessionId,
+    timestamp: message.timestamp || message.createdAt || state.metadata.lastUpdated,
+    provider: message.provider || state.metadata.provider || '',
+    model,
+    tokens: normalizeUsage(usage),
+    cost: normalizeCost(message.cost ?? usage.cost)
+      || calculateUsageCost('gemini', model, normalizeUsage(usage)),
+    channelId: message.channelId,
+    channel: message.channel
+  };
+}
+
 function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
   const resolvedNativeRoot = pathContext?.customized
     ? (pathContext.native?.tmp || nativeRoot || NATIVE_PATHS.gemini.tmp)
@@ -55,14 +90,70 @@ function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
     platform: 'gemini',
     capability: 'nativeLogs',
     createNativeLogCursor({ fs: cursorFs = fsImpl, skipInitialParse = false } = {}) {
-      const scanFiles = () => walkFiles(resolvedNativeRoot, name => /^session-.*\.(json|jsonl)$/.test(name), cursorFs);
-      return createScannedFileCursor({
-        scanFiles,
-        parseFile: filePath => parseSession(filePath, cursorFs),
+      const jsonlFiles = () => walkFiles(resolvedNativeRoot, name => /^session-.*\.jsonl$/.test(name), cursorFs);
+      const jsonFiles = () => walkFiles(resolvedNativeRoot, name => /^session-.*\.json$/.test(name), cursorFs);
+      const jsonlCursor = createIncrementalJsonlCursor({
+        scanFiles: jsonlFiles,
+        createFileState: () => ({ metadata: {} }),
+        parseLine: parseGeminiJsonlLine,
+        fsImpl: cursorFs,
+        skipInitialParse,
+        onError: (error, filePath) => {
+          console.warn('[Gemini Native Logs] Failed to read changed JSONL events:', filePath, error.message);
+        }
+      });
+      let lastWholeJsonParse = new Map();
+      let oversizeWarned = new Set();
+      let initializedWholeJsonFiles = new Set();
+      const jsonCursor = createScannedFileCursor({
+        scanFiles: jsonFiles,
+        parseFile: filePath => {
+          return parseSession(filePath, cursorFs);
+        },
+        shouldParseFile: (filePath, stat, { isInitialRead, skipInitialParse }) => {
+          if (stat.size > MAX_WHOLE_JSON_BYTES) {
+            if (!oversizeWarned.has(filePath)) {
+              oversizeWarned.add(filePath);
+              console.warn(`[Gemini Native Logs] Skipping oversized JSON session (${stat.size} bytes): ${filePath}`);
+            }
+            return false;
+          }
+          if (skipInitialParse) {
+            return true;
+          }
+          if (isInitialRead || !initializedWholeJsonFiles.has(filePath)) {
+            initializedWholeJsonFiles.add(filePath);
+            lastWholeJsonParse.set(filePath, Date.now());
+            return true;
+          }
+          const now = Date.now();
+          const allowed = now - (lastWholeJsonParse.get(filePath) || 0) >= MIN_WHOLE_JSON_PARSE_INTERVAL_MS;
+          if (allowed) lastWholeJsonParse.set(filePath, now);
+          return allowed;
+        },
         normalizeEvent: event => event,
         fsImpl: cursorFs,
         skipInitialParse
       });
+      return {
+        initialize() { jsonlCursor.initialize(); jsonCursor.initialize(); },
+        readNewEvents() { return [...jsonlCursor.readNewEvents(), ...jsonCursor.readNewEvents()]; },
+        read() { return this.readNewEvents(); },
+        reset() {
+          jsonlCursor.reset();
+          jsonCursor.reset();
+          lastWholeJsonParse = new Map();
+          oversizeWarned = new Set();
+          initializedWholeJsonFiles = new Set();
+        },
+        close() {
+          jsonlCursor.close();
+          jsonCursor.close();
+          lastWholeJsonParse.clear();
+          oversizeWarned.clear();
+          initializedWholeJsonFiles.clear();
+        }
+      };
     },
     createCursor(options) { return this.createNativeLogCursor(options); }
   };

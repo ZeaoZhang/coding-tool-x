@@ -12,6 +12,7 @@ let enabled = false;
 let intervalMs = DEFAULT_INTERVAL_MS;
 let cursors = new Map();
 let configSavedListener = null;
+let lifecycleState = 'stopped';
 
 function normalizeInterval(value) {
   const seconds = Number(value);
@@ -23,6 +24,7 @@ function normalizeInterval(value) {
 function getStatus() {
   return {
     running: Boolean(pollTimer),
+    state: lifecycleState,
     enabled,
     intervalMs,
     platforms: [...cursors.keys()]
@@ -152,12 +154,17 @@ function ensureConfigListener(options) {
   if (configSavedListener) return;
   configSavedListener = ({ config } = {}) => {
     const next = config?.nativeCliLogs || {};
-    configureNativeCliLogObserver({ ...options, enabled: next.enabled, intervalSeconds: next.intervalSeconds });
+    const nextOptions = { ...options, enabled: next.enabled, intervalSeconds: next.intervalSeconds };
+    if (lifecycleState === 'running') {
+      configureNativeCliLogObserver(nextOptions);
+    } else {
+      prepareNativeCliLogObserver(nextOptions);
+    }
   };
   eventBus.on('config:saved', configSavedListener);
 }
 
-function configureNativeCliLogObserver({
+function prepareNativeCliLogObserver({
   enabled: nextEnabled = true,
   intervalSeconds = 5,
   runtime = getPlatformRuntime(),
@@ -165,18 +172,45 @@ function configureNativeCliLogObserver({
 } = {}) {
   ensureConfigListener({ runtime, registry });
   enabled = nextEnabled !== false;
-  const nextInterval = normalizeInterval(intervalSeconds);
-  const changed = nextInterval !== intervalMs;
-  intervalMs = nextInterval;
+  intervalMs = normalizeInterval(intervalSeconds);
   if (!enabled) {
     clearTimer();
     for (const cursor of cursors.values()) closeCursor(cursor);
     cursors = new Map();
+    lifecycleState = 'stopped';
     return getStatus();
   }
   resolveCursors(runtime, registry);
-  if (!pollTimer || changed) startTimer({ runtime, registry });
+  if (pollTimer) clearTimer();
+  lifecycleState = 'prepared';
   return getStatus();
+}
+
+function startNativeCliLogObserver({
+  runtime = getPlatformRuntime(),
+  registry = getPlatformRegistry(),
+  pollImmediately = true
+} = {}) {
+  if (!enabled) return getStatus();
+  resolveCursors(runtime, registry);
+  if (pollImmediately) {
+    try { pollNativeCliLogs({ runtime, registry }); } catch (error) {
+      console.warn('[Native Logs] Initial poll failed:', error.message);
+    }
+  }
+  startTimer({ runtime, registry });
+  lifecycleState = 'running';
+  return getStatus();
+}
+
+function configureNativeCliLogObserver(options = {}) {
+  prepareNativeCliLogObserver(options);
+  return startNativeCliLogObserver({
+    ...options,
+    // Preserve the legacy configure() behavior: it starts the interval but
+    // does not synchronously consume a new batch of native logs.
+    pollImmediately: options.pollImmediately === true
+  });
 }
 
 function shutdownNativeCliLogObserver() {
@@ -185,6 +219,7 @@ function shutdownNativeCliLogObserver() {
   cursors = new Map();
   enabled = false;
   intervalMs = DEFAULT_INTERVAL_MS;
+  lifecycleState = 'stopped';
   if (configSavedListener) {
     eventBus.off('config:saved', configSavedListener);
     configSavedListener = null;
@@ -193,6 +228,8 @@ function shutdownNativeCliLogObserver() {
 }
 
 module.exports = {
+  prepareNativeCliLogObserver,
+  startNativeCliLogObserver,
   configureNativeCliLogObserver,
   shutdownNativeCliLogObserver,
   pollNativeCliLogs,

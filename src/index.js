@@ -212,6 +212,11 @@ function shutdownProcess(code = 0, error = null) {
     eventBus.emitSync('cli:shutdown', {});
     PluginManager.shutdownPlugins();
     try {
+      await require('./server/websocket-server').flushPendingLogs();
+    } catch (flushError) {
+      console.error(`[WARN] Log persistence flush failed during shutdown: ${flushError.message}`);
+    }
+    try {
       await require('./server/services/statistics-service').shutdownStatistics();
     } catch (flushError) {
       console.error(`[WARN] Statistics flush failed during shutdown: ${flushError.message}`);

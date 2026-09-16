@@ -25,6 +25,7 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.OPENCODE_DB_PATH;
   fs.rmSync(testDir, { recursive: true, force: true });
+  vi.useRealTimers();
 });
 
 describe('file-backed native log cursors', () => {
@@ -110,12 +111,17 @@ describe('file-backed native log cursors', () => {
       type: 'event_msg',
       payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 100, total_tokens: 100 } } }
     }]);
-    let reads = 0;
+    let fullReads = 0;
+    let chunkReads = 0;
     const trackedFs = {
       ...fs,
       readFileSync(...args) {
-        reads += 1;
+        fullReads += 1;
         return fs.readFileSync(...args);
+      },
+      readSync(...args) {
+        chunkReads += 1;
+        return fs.readSync(...args);
       }
     };
     const cursor = codexDriver.createDriver({
@@ -124,16 +130,18 @@ describe('file-backed native log cursors', () => {
     }).createNativeLogCursor({ fs: trackedFs, skipInitialParse: true });
 
     cursor.initialize();
-    expect(reads).toBe(0);
+    expect(fullReads).toBe(0);
+    expect(chunkReads).toBeGreaterThan(0);
 
     fs.appendFileSync(filePath, JSON.stringify({
       type: 'event_msg',
       payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 150, total_tokens: 150 } } }
     }) + '\n');
     expect(cursor.readNewEvents()).toEqual([expect.objectContaining({
-      tokens: expect.objectContaining({ input: 150, total: 150 })
+      tokens: expect.objectContaining({ input: 50, total: 50 })
     })]);
-    expect(reads).toBeGreaterThan(0);
+    expect(fullReads).toBe(0);
+    expect(chunkReads).toBeGreaterThan(0);
   });
 
   test('Codex normalizes cached_input_tokens as a separately billable cache read', () => {
@@ -176,9 +184,12 @@ describe('file-backed native log cursors', () => {
     const first = { sessionId: 'gemini-session', messages: [{ id: 'message-1', model: 'gemini-pro', usage: { input_tokens: 8, output_tokens: 2 } }] };
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, JSON.stringify(first));
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-14T00:00:00.000Z'));
     const cursor = geminiDriver.createDriver({ nativeRoot: path.dirname(filePath) }).createNativeLogCursor();
     cursor.initialize();
 
+    vi.advanceTimersByTime(15 * 1000);
     fs.writeFileSync(filePath, JSON.stringify({
       ...first,
       messages: [...first.messages, { id: 'message-2', usage: { input_tokens: 3, output_tokens: 1 } }]
@@ -194,9 +205,12 @@ describe('file-backed native log cursors', () => {
       sessionId: 'gemini-session-b',
       messages: [{ model: 'gemini-pro', usage: { input_tokens: 4, output_tokens: 1 } }]
     }));
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-14T00:00:00.000Z'));
     const cursor = geminiDriver.createDriver({ nativeRoot: path.dirname(filePath) }).createNativeLogCursor();
     cursor.initialize();
 
+    vi.advanceTimersByTime(15 * 1000);
     fs.writeFileSync(filePath, JSON.stringify({
       sessionId: 'gemini-session-b',
       messages: [
@@ -227,8 +241,11 @@ describe('file-backed native log cursors', () => {
       }]
     }));
 
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-14T00:00:00.000Z'));
     const cursor = geminiDriver.createDriver({ nativeRoot: path.dirname(filePath) }).createNativeLogCursor();
     cursor.initialize();
+    vi.advanceTimersByTime(15 * 1000);
     fs.writeFileSync(filePath, JSON.stringify({
       sessionId: 'gemini-session-metadata',
       messages: [{
@@ -263,6 +280,59 @@ describe('file-backed native log cursors', () => {
       reasoning: 10,
       total: 250
     }));
+  });
+
+  test('Gemini JSONL reads only appended complete rows, including split UTF-8', () => {
+    const filePath = path.join(testDir, 'gemini', 'session-incremental.jsonl');
+    writeJsonLines(filePath, [{ id: 'old', usage: { input_tokens: 1, output_tokens: 1 } }]);
+    const cursor = geminiDriver.createDriver({ nativeRoot: path.dirname(filePath) }).createNativeLogCursor();
+    cursor.initialize();
+
+    const row = Buffer.from(JSON.stringify({
+      id: 'new',
+      content: '你好',
+      usage: { input_tokens: 4, output_tokens: 2 }
+    }));
+    const splitAt = row.indexOf(Buffer.from('你')) + 1;
+    fs.appendFileSync(filePath, row.subarray(0, splitAt));
+    expect(cursor.readNewEvents()).toEqual([]);
+
+    fs.appendFileSync(filePath, Buffer.concat([row.subarray(splitAt), Buffer.from('\n')]));
+    expect(cursor.readNewEvents()).toEqual([
+      expect.objectContaining({
+        id: 'session-incremental.jsonl:new',
+        tokens: expect.objectContaining({ input: 4, output: 2, total: 6 })
+      })
+    ]);
+    expect(cursor.readNewEvents()).toEqual([]);
+  });
+
+  test('Gemini oversized JSON sessions are not parsed and warn only once', () => {
+    const filePath = path.join(testDir, 'gemini', 'session-oversized.json');
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, '');
+    fs.truncateSync(filePath, 16 * 1024 * 1024 + 1);
+    let fullReads = 0;
+    const trackedFs = {
+      ...fs,
+      readFileSync(...args) {
+        fullReads += 1;
+        return fs.readFileSync(...args);
+      }
+    };
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const cursor = geminiDriver.createDriver({
+      nativeRoot: path.dirname(filePath),
+      fsImpl: trackedFs
+    }).createNativeLogCursor({ fs: trackedFs, skipInitialParse: true });
+
+    cursor.initialize();
+    expect(cursor.readNewEvents()).toEqual([]);
+    fs.appendFileSync(filePath, 'x');
+    expect(cursor.readNewEvents()).toEqual([]);
+    expect(fullReads).toBe(0);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 });
 

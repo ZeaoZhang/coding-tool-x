@@ -151,6 +151,26 @@ test('discovers native log cursors from registry capabilities and polls them', (
   expect(broadcastLog).toHaveBeenCalledTimes(1);
 });
 
+test('prepares cursors without polling and starts them only when requested', () => {
+  const statistics = { recordRequest: vi.fn() };
+  const cursor = {
+    initialize: vi.fn(),
+    readNewEvents: vi.fn(() => []),
+    close: vi.fn()
+  };
+  const nativeDriver = { createNativeLogCursor: vi.fn(() => cursor) };
+  const runtime = makeRuntime(statistics, nativeDriver);
+  const registry = { list: vi.fn(() => [{ key: 'claude' }]) };
+
+  const prepared = observer.prepareNativeCliLogObserver({ enabled: true, runtime, registry });
+  expect(prepared.state).toBe('prepared');
+  expect(cursor.readNewEvents).not.toHaveBeenCalled();
+
+  const started = observer.startNativeCliLogObserver({ runtime, registry, pollImmediately: true });
+  expect(started.state).toBe('running');
+  expect(cursor.readNewEvents).toHaveBeenCalledTimes(1);
+});
+
 test('does not publish or record zero-usage native records', () => {
   const statistics = { recordRequest: vi.fn() };
   const runtime = makeRuntime(statistics);

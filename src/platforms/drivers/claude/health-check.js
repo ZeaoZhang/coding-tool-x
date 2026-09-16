@@ -47,8 +47,8 @@ function ensureProjectClaudeDir(projectPath) {
  * @param {Array} projects - 项目列表
  * @returns {Object} 汇总结果
  */
-function healthCheckAllProjects(projects) {
-  const results = [];
+function healthCheckAllProjects(projects, { includeResults = true } = {}) {
+  const results = includeResults ? [] : null;
   let checkedCount = 0;
   let createdCount = 0;
   let errorCount = 0;
@@ -57,7 +57,7 @@ function healthCheckAllProjects(projects) {
     if (!project.fullPath) continue;
 
     const result = ensureProjectClaudeDir(project.fullPath);
-    results.push(result);
+    if (results) results.push(result);
     checkedCount++;
 
     if (result.created) {
@@ -75,7 +75,7 @@ function healthCheckAllProjects(projects) {
       errors: errorCount,
       healthy: checkedCount - errorCount
     },
-    results
+    ...(results ? { results } : {})
   };
 }
 

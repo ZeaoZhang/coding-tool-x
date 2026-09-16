@@ -22,7 +22,10 @@ const { createApiRequestLogger } = require('./services/request-logger');
 const { inspectWebBuildState, ensureWebDistReady } = require('./services/web-build');
 const { ensureHttpsCredentials } = require('./services/https-cert');
 const notificationHooks = require('../platforms/notification-hooks');
-const { configureNativeCliLogObserver } = require('./services/native-log-observer');
+const {
+  prepareNativeCliLogObserver,
+  startNativeCliLogObserver
+} = require('./services/native-log-observer');
 
 function getInquirer() {
   return require('inquirer');
@@ -36,6 +39,18 @@ function isInteractivePortConflictMode(options = {}) {
     return false;
   }
   return Boolean(process.stdin && process.stdin.isTTY && process.stdout && process.stdout.isTTY);
+}
+
+function traceStartupMemory(stage) {
+  if (process.env.CC_TOOL_MEMORY_TRACE !== '1') return;
+  const usage = process.memoryUsage();
+  console.log(`[MEM] ${stage} ${JSON.stringify({
+    rss: usage.rss,
+    heapUsed: usage.heapUsed,
+    heapTotal: usage.heapTotal,
+    external: usage.external,
+    arrayBuffers: usage.arrayBuffers
+  })}`);
 }
 
 function printPortConflictHelp(port) {
@@ -291,10 +306,13 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   // 附加 WebSocket 服务器到同一个端口
   attachWebSocketServer(server, { host });
   const nativeCliLogs = config.nativeCliLogs || {};
-  configureNativeCliLogObserver({
+  const nativeLogOptions = {
     enabled: nativeCliLogs.enabled !== false,
     intervalSeconds: Number.isInteger(nativeCliLogs.intervalSeconds) ? nativeCliLogs.intervalSeconds : 5
-  });
+  };
+  traceStartupMemory('http-ready');
+  prepareNativeCliLogObserver(nativeLogOptions);
+  traceStartupMemory('log-baseline-ready');
   console.log(`   ${wsProtocol}://localhost:${port}/ws\n`);
 
   if (useHttps) {
@@ -310,16 +328,24 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
     }
   }
   // 自动恢复代理状态
-  autoRestoreProxies({ ...platformContext, config });
-
-  // 延迟执行健康检查，避免阻塞启动
-  setTimeout(() => performStartupHealthCheck(), 2000);
-
-  return server;
+  try {
+    await autoRestoreProxies({ ...platformContext, config });
+    traceStartupMemory('proxy-restore-complete');
+    await performStartupHealthCheck({ config });
+    traceStartupMemory('health-check-complete');
+    return server;
+  } finally {
+    try {
+      startNativeCliLogObserver({ pollImmediately: true });
+    } catch (error) {
+      console.error(chalk.yellow(`[WARN] 原生日志轮询启动失败: ${error.message}`));
+    }
+    traceStartupMemory('native-log-poll-started');
+  }
 }
 
 // 自动恢复代理状态
-function autoRestoreProxies({ registry, runtime, config, fsImpl = require('fs') } = {}) {
+async function autoRestoreProxies({ registry, runtime, config, fsImpl = require('fs') } = {}) {
   const resolvedRegistry = registry || require('../platforms/runtime').getPlatformRegistry();
   const resolvedRuntime = runtime || require('../platforms/runtime').getPlatformRuntime();
   const resolvedConfig = config || loadConfig();
@@ -327,6 +353,7 @@ function autoRestoreProxies({ registry, runtime, config, fsImpl = require('fs') 
     ? resolvedRegistry.list({ enabledOnly: true })
     : [];
 
+  const summary = { attempted: 0, restored: 0, failed: 0 };
   for (const platform of platforms) {
     const key = platform && platform.key;
     const markerPath = key && getPlatformStatePath('activeChannel', key);
@@ -340,63 +367,75 @@ function autoRestoreProxies({ registry, runtime, config, fsImpl = require('fs') 
       continue;
     }
     if (!driver || typeof driver.restoreOnBoot !== 'function') continue;
+    summary.attempted += 1;
 
     const serviceLabel = platform.proxyLabels?.serviceLabel || `${platform.label || key} 代理服务`;
     console.log(chalk.cyan(`\n[SYNC] 检测到 ${serviceLabel} 状态文件，正在自动恢复...`));
-    Promise.resolve(driver.restoreOnBoot({ config: resolvedConfig }))
-      .then((result) => {
-        if (!result || result.status === 'ok') {
-          const port = result?.port;
-          const suffix = port
-            ? platform.proxyMode === 'managed'
-              ? `: http://127.0.0.1:${port}`
-              : `，端口: ${port}`
-            : '';
-          const action = platform.proxyMode === 'managed' ? '动态网关已自动恢复' : '代理已自动启动';
-          console.log(chalk.green(`[OK] ${platform.label || key} ${action}${suffix}`));
-          return;
-        }
+    try {
+      const result = await driver.restoreOnBoot({ config: resolvedConfig });
+      if (!result || result.status === 'ok') {
+        const port = result?.port;
+        const suffix = port
+          ? platform.proxyMode === 'managed'
+            ? `: http://127.0.0.1:${port}`
+            : `，端口: ${port}`
+          : '';
+        const action = platform.proxyMode === 'managed' ? '动态网关已自动恢复' : '代理已自动启动';
+        console.log(chalk.green(`[OK] ${platform.label || key} ${action}${suffix}`));
+        summary.restored += 1;
+      } else {
+        summary.failed += 1;
         console.error(chalk.red(`[ERROR] ${platform.label || key} 代理恢复失败: ${result.error || result.status}`));
-      })
-      .catch((error) => {
-        console.error(chalk.red(`[ERROR] ${platform.label || key} 代理恢复失败: ${error.message}`));
-      });
+      }
+    } catch (error) {
+      summary.failed += 1;
+      console.error(chalk.red(`[ERROR] ${platform.label || key} 代理恢复失败: ${error.message}`));
+    }
   }
+  return summary;
 }
 
 // 启动时执行健康检查
-async function performStartupHealthCheck() {
+async function performStartupHealthCheck({ config = loadConfig() } = {}) {
   try {
     console.log(chalk.cyan('\n[SEARCH] 正在进行启动健康检查...'));
 
     const { getPlatformCatalog } = require('./services/platform-catalog');
     const catalog = getPlatformCatalog();
     const platforms = catalog.list({ capability: 'health' });
+    const summary = { total: 0, created: 0, errors: 0, healthy: 0 };
     if (platforms.length === 0) {
       console.log(chalk.gray('   未配置健康检查能力，跳过健康检查'));
-      return;
+      return { success: true, summary };
     }
 
-    const results = [];
     for (const platform of platforms) {
-      const driver = catalog.driver(platform.key, 'health');
-      if (!driver || typeof driver.healthCheck !== 'function') continue;
-      const result = await driver.healthCheck({ config: loadConfig() });
-      if (result?.success !== false) {
-        results.push({ platform, result });
-      } else {
-        console.error(chalk.yellow(`   [!] ${platform.label || platform.key} 健康检查失败: ${result.error || 'unknown error'}`));
+      try {
+        const driver = catalog.driver(platform.key, 'health');
+        if (!driver || typeof driver.healthCheck !== 'function') continue;
+        const result = await driver.healthCheck({ config, detail: false });
+        if (result?.success === false) {
+          summary.errors += 1;
+          console.error(chalk.yellow(`   [!] ${platform.label || platform.key} 健康检查失败: ${result.error || 'unknown error'}`));
+          continue;
+        }
+        const platformSummary = result?.summary || {};
+        summary.total += Number(platformSummary.total || 0);
+        summary.created += Number(platformSummary.created || 0);
+        summary.errors += Number(platformSummary.errors || 0);
+        summary.healthy += Number(platformSummary.healthy || 0);
+      } catch (error) {
+        summary.errors += 1;
+        console.error(chalk.yellow(`   [!] ${platform.label || platform.key} 健康检查失败: ${error.message}`));
       }
     }
 
-    if (results.length === 0) {
+    if (summary.total === 0 && summary.errors === 0) {
       console.log(chalk.gray('   没有可执行的健康检查'));
-      return;
+      return { success: true, summary };
     }
 
-    const created = results.reduce((total, item) => total + Number(item.result.summary?.created || 0), 0);
-    const errors = results.reduce((total, item) => total + Number(item.result.summary?.errors || 0), 0);
-    const healthy = results.reduce((total, item) => total + Number(item.result.summary?.healthy || 0), 0);
+    const { created, errors, healthy } = summary;
 
     if (created > 0) {
       console.log(chalk.green(`   [v] 已为 ${created} 个项目创建缺失的配置目录`));
@@ -408,12 +447,14 @@ async function performStartupHealthCheck() {
       console.log(chalk.green(`   [v] 所有 ${healthy} 个项目状态正常`));
     }
     console.log('');
+    return { success: true, summary };
   } catch (err) {
     console.error(chalk.red('   [x] 健康检查失败:'), err.message);
+    return { success: false, error: err.message, summary: { total: 0, created: 0, errors: 1, healthy: 0 } };
   }
 }
 
 module.exports = {
   startServer,
-  _test: { autoRestoreProxies }
+  _test: { autoRestoreProxies, performStartupHealthCheck }
 };
