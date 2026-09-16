@@ -133,4 +133,13 @@ describe('sqlite-connection', () => {
     db.exec('CREATE TABLE child (id INTEGER PRIMARY KEY, pid INTEGER REFERENCES parent(id))');
     expect(() => db.exec('INSERT INTO child (pid) VALUES (999)')).toThrow();
   });
+
+  it('uses bounded cache and WAL checkpoints for writable connections', () => {
+    const p = tempDbPath('memory-policy');
+    trackTempDb(p);
+    const db = openDatabase(p);
+
+    expect(db.prepare('PRAGMA cache_size').get().cache_size).toBe(-16384);
+    expect(db.prepare('PRAGMA wal_autocheckpoint').get().wal_autocheckpoint).toBe(1000);
+  });
 });

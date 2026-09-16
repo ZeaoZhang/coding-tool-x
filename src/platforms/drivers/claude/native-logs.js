@@ -19,7 +19,7 @@ function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
   return {
     platform: 'claude',
     capability: 'nativeLogs',
-    createNativeLogCursor({ fs: cursorFs = fsImpl } = {}) {
+    createNativeLogCursor({ fs: cursorFs = fsImpl, skipInitialParse = false } = {}) {
       const scanFiles = () => walkFiles(resolvedNativeRoot, name => name.endsWith('.jsonl') && !name.startsWith('agent-'), cursorFs);
       const parseFile = filePath => readJsonLines(filePath, cursorFs).flatMap(record => {
         const message = record.message && typeof record.message === 'object' ? record.message : {};
@@ -48,7 +48,8 @@ function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
         scanFiles,
         parseFile,
         normalizeEvent: event => event,
-        fsImpl: cursorFs
+        fsImpl: cursorFs,
+        skipInitialParse
       });
     },
     createCursor(options) { return this.createNativeLogCursor(options); }

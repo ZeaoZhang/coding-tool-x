@@ -11,7 +11,9 @@ import {
   saveSessionOrder as saveSessionOrderApi
 } from '../api/sessions'
 
+const PROJECTS_CACHE_TTL = 20 * 1000
 const SESSIONS_CACHE_TTL = 20 * 1000
+const projectsCache = new Map()
 const sessionsCache = new Map()
 const projectRefreshTimers = new Map()
 const sessionRefreshTimers = new Map()
@@ -24,6 +26,27 @@ const sessionRefreshStartedAt = new Map()
 
 function getSessionCacheKey(channel, projectName) {
   return `${channel}:${projectName}`
+}
+
+function getCachedProjects(channel) {
+  const entry = projectsCache.get(channel)
+  if (!entry) return null
+  if ((Date.now() - entry.timestamp) > PROJECTS_CACHE_TTL) {
+    projectsCache.delete(channel)
+    return null
+  }
+  return entry.payload
+}
+
+function setCachedProjects(channel, payload) {
+  projectsCache.set(channel, {
+    timestamp: Date.now(),
+    payload
+  })
+}
+
+function invalidateProjectsCache(channel) {
+  projectsCache.delete(channel)
 }
 
 function getCachedSessions(channel, projectName) {
@@ -97,6 +120,7 @@ export const useSessionsStore = defineStore('sessions', () => {
   const loading = ref(false)
   const error = ref(null)
   const currentChannel = ref('claude') // 当前渠道
+  const projectsInflight = new Map()
 
   // Computed
   const sessionsWithAlias = computed(() => {
@@ -151,6 +175,13 @@ export const useSessionsStore = defineStore('sessions', () => {
     currentProjectInfo.value = null
     sessionsMeta.value = null
     error.value = null
+
+    const cachedProjects = getCachedProjects(channel)
+    if (cachedProjects) {
+      projects.value = cachedProjects.projects || []
+      currentProject.value = cachedProjects.currentProject || projects.value[0]?.name || null
+      projectsMeta.value = cachedProjects.meta || null
+    }
   }
 
   function clearProjectRefreshTimer(channel) {
@@ -211,7 +242,35 @@ export const useSessionsStore = defineStore('sessions', () => {
     try {
 
       const channel = currentChannel.value
-      const data = await getProjects(channel, { fresh: force || fresh })
+
+      if (!force && !fresh) {
+        const cached = getCachedProjects(channel)
+        // A cached stale result that was still refreshing must be rechecked
+        // when the user returns to this channel, otherwise its poll cycle
+        // would be lost when setChannel() clears the old timer.
+        if (cached && !cached.meta?.refreshing) {
+          projects.value = cached.projects || []
+          currentProject.value = cached.currentProject || projects.value[0]?.name || null
+          projectsMeta.value = cached.meta || null
+          if (!silent) loading.value = false
+          return
+        }
+      }
+
+      const shareRequest = !force && !fresh
+      let request = shareRequest ? projectsInflight.get(channel) : null
+      if (!request) {
+        request = getProjects(channel, { fresh: force || fresh })
+        if (shareRequest) projectsInflight.set(channel, request)
+      }
+      let data
+      try {
+        data = await request
+      } finally {
+        if (shareRequest && projectsInflight.get(channel) === request) {
+          projectsInflight.delete(channel)
+        }
+      }
       if (currentChannel.value !== channel) return
       const nextProjects = Array.isArray(data.projects) ? data.projects : []
       const shouldApplyProjects = nextProjects.length > 0 || projects.value.length === 0 || data.meta?.fallback !== true
@@ -225,6 +284,11 @@ export const useSessionsStore = defineStore('sessions', () => {
         currentProject.value = data.currentProject || (nextProjects[0]?.name || null)
         if (data.meta?.fallback !== true) {
           invalidateSessionsCache(channel)
+          setCachedProjects(channel, {
+            projects: nextProjects,
+            currentProject: currentProject.value,
+            meta: data.meta || null
+          })
         }
       }
 
@@ -427,6 +491,11 @@ export const useSessionsStore = defineStore('sessions', () => {
       // Add any new projects not in order
       const remaining = projects.value.filter(p => !order.includes(p.name))
       projects.value = [...orderedProjects, ...remaining]
+      setCachedProjects(currentChannel.value, {
+        projects: projects.value,
+        currentProject: currentProject.value,
+        meta: projectsMeta.value
+      })
     } catch (err) {
       error.value = err.message
       throw err
@@ -440,6 +509,7 @@ export const useSessionsStore = defineStore('sessions', () => {
       if (currentProject.value === projectName) {
         currentProject.value = null
       }
+      invalidateProjectsCache(currentChannel.value)
       invalidateSessionsCache(currentChannel.value, projectName)
     } catch (err) {
       error.value = err.message

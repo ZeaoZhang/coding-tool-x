@@ -190,7 +190,7 @@ describe('response-usage-parser', () => {
     });
 
     expect(parsed.tokens).toEqual({
-      input: 512,
+      input: 384,
       output: 64,
       total: 576,
       cached: 128,

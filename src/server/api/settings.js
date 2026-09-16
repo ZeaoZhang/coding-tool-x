@@ -162,7 +162,7 @@ function handleSaveModelSettings(req, res) {
           return res.status(400).json({ error: `${modelId}: metadata must be an object` });
         }
         if (meta.limit !== undefined) {
-          if (typeof meta.limit !== 'object') {
+          if (!isPlainObject(meta.limit)) {
             return res.status(400).json({ error: `${modelId}: limit must be an object` });
           }
           if (meta.limit.context !== undefined && (typeof meta.limit.context !== 'number' || meta.limit.context <= 0)) {
@@ -173,10 +173,10 @@ function handleSaveModelSettings(req, res) {
           }
         }
         if (meta.pricing !== undefined) {
-          if (typeof meta.pricing !== 'object') {
+          if (!isPlainObject(meta.pricing)) {
             return res.status(400).json({ error: `${modelId}: pricing must be an object` });
           }
-          for (const field of ['input', 'output']) {
+          for (const field of ['input', 'output', 'cacheCreation', 'cacheRead']) {
             if (meta.pricing[field] !== undefined && (typeof meta.pricing[field] !== 'number' || meta.pricing[field] < 0)) {
               return res.status(400).json({ error: `${modelId}: pricing.${field} must be a non-negative number` });
             }

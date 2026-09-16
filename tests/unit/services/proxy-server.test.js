@@ -89,9 +89,6 @@ function createStubs() {
       loadConfig
     }],
     ['../../../src/config/default', {
-      pricing: {
-        claude: { input: 3, output: 15, cacheCreation: 3.75, cacheRead: 0.3 }
-      },
       ports: { proxy: proxyPort }
     }],
     ['../../../src/server/utils/pricing', {

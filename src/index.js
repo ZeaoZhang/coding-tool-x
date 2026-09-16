@@ -216,6 +216,12 @@ function shutdownProcess(code = 0, error = null) {
     } catch (flushError) {
       console.error(`[WARN] Statistics flush failed during shutdown: ${flushError.message}`);
     }
+    try {
+      require('./server/services/session-history-index').closeSessionHistoryIndex();
+      require('./server/services/sqlite-connection').closeAllDatabases();
+    } catch (databaseError) {
+      console.error(chalk.yellow(`[WARN] SQLite 退出清理失败: ${databaseError.message}`));
+    }
     if (error) {
       console.error(error);
     }

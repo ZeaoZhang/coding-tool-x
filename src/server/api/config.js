@@ -8,50 +8,6 @@ function getModelCatalogKey(platform) {
   return getPlatformCatalog().get(platform)?.modelConfig?.catalogKey || platform;
 }
 
-function clampNumber(value, fallback) {
-  const num = typeof value === 'number' ? value : parseFloat(value);
-  if (!Number.isFinite(num)) {
-    return fallback;
-  }
-  if (num < 0) return 0;
-  if (num > 1000) return 1000;
-  return Math.round(num * 1000000) / 1000000;
-}
-
-function sanitizePricing(inputPricing, currentPricing, supportedPlatforms = getPlatformCatalog().keys({ capability: 'channels' })) {
-  const defaults = DEFAULT_CONFIG.pricing || {};
-  const current = currentPricing && typeof currentPricing === 'object' ? currentPricing : {};
-  const input = inputPricing && typeof inputPricing === 'object' ? inputPricing : {};
-  const supported = new Set(supportedPlatforms);
-
-  for (const toolKey of Object.keys(input)) {
-    if (!supported.has(toolKey) && !Object.prototype.hasOwnProperty.call(current, toolKey)) {
-      throw new TypeError(`Invalid pricing platform: ${toolKey}`);
-    }
-  }
-
-  const sanitized = {};
-  const platformKeys = new Set([...Object.keys(current), ...supported]);
-  for (const toolKey of platformKeys) {
-    const defaultValue = defaults[toolKey] || {};
-    const existingValue = current[toolKey] && typeof current[toolKey] === 'object' ? current[toolKey] : {};
-    const payload = input[toolKey] && typeof input[toolKey] === 'object' ? input[toolKey] : {};
-    const merged = { ...existingValue, ...payload };
-    const mode = payload.mode === 'custom'
-      ? 'custom'
-      : (existingValue.mode || defaultValue.mode || 'auto');
-
-    sanitized[toolKey] = { ...merged, mode };
-    for (const [rateKey, defaultRate] of Object.entries(defaultValue)) {
-      if (rateKey === 'mode' || rateKey === 'models') continue;
-      const fallback = existingValue[rateKey] !== undefined ? existingValue[rateKey] : defaultRate;
-      sanitized[toolKey][rateKey] = clampNumber(payload[rateKey], fallback);
-    }
-  }
-
-  return sanitized;
-}
-
 function normalizeModelDiscovery(modelDiscovery, currentValue = DEFAULT_CONFIG.modelDiscovery) {
   const defaultModelDiscovery = DEFAULT_CONFIG.modelDiscovery && typeof DEFAULT_CONFIG.modelDiscovery === 'object'
     ? DEFAULT_CONFIG.modelDiscovery
@@ -454,8 +410,7 @@ router.get('/advanced', (req, res) => {
       statsInterval: config.statsInterval || 30,
       enableSessionBinding: config.enableSessionBinding !== false, // 默认开启
       modelDiscovery,
-      nativeCliLogs: normalizeNativeCliLogs(config.nativeCliLogs),
-      pricing: config.pricing || DEFAULT_CONFIG.pricing
+      nativeCliLogs: normalizeNativeCliLogs(config.nativeCliLogs)
     });
   } catch (error) {
     console.error('[Config API] Failed to get advanced config:', error);
@@ -474,7 +429,6 @@ router.post('/advanced', (req, res) => {
       ports,
       maxLogs,
       statsInterval,
-      pricing,
       enableSessionBinding,
       modelDiscovery,
       nativeCliLogs
@@ -526,14 +480,6 @@ router.post('/advanced', (req, res) => {
       ? normalizeNativeCliLogs(nativeCliLogs, currentNativeCliLogs)
       : currentNativeCliLogs;
 
-    const channelPlatforms = getPlatformCatalog().keys({ capability: 'channels' });
-    for (const pricingPlatform of Object.keys(pricing || {})) {
-      if (!channelPlatforms.includes(pricingPlatform)
-        && !Object.prototype.hasOwnProperty.call(config.pricing || {}, pricingPlatform)) {
-        return res.status(400).json({ error: `Invalid pricing platform: ${pricingPlatform}` });
-      }
-    }
-    const sanitizedPricing = sanitizePricing(pricing, config.pricing, channelPlatforms);
     const normalizedModelDiscovery = normalizeModelDiscovery(
       modelDiscovery,
       config.modelDiscovery || DEFAULT_CONFIG.modelDiscovery
@@ -556,8 +502,7 @@ router.post('/advanced', (req, res) => {
       statsInterval: statsInterval !== undefined ? parseInt(statsInterval) : config.statsInterval,
       enableSessionBinding: enableSessionBinding !== undefined ? enableSessionBinding : (config.enableSessionBinding !== false),
       modelDiscovery: normalizedModelDiscovery,
-      nativeCliLogs: normalizedNativeCliLogs,
-      pricing: sanitizedPricing
+      nativeCliLogs: normalizedNativeCliLogs
     };
 
     // 保存配置
@@ -571,8 +516,7 @@ router.post('/advanced', (req, res) => {
         statsInterval: newConfig.statsInterval,
         enableSessionBinding: newConfig.enableSessionBinding,
         modelDiscovery: newConfig.modelDiscovery,
-        nativeCliLogs: newConfig.nativeCliLogs,
-        pricing: newConfig.pricing
+        nativeCliLogs: newConfig.nativeCliLogs
       }
     });
   } catch (error) {

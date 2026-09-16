@@ -54,13 +54,14 @@ function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
   return {
     platform: 'gemini',
     capability: 'nativeLogs',
-    createNativeLogCursor({ fs: cursorFs = fsImpl } = {}) {
+    createNativeLogCursor({ fs: cursorFs = fsImpl, skipInitialParse = false } = {}) {
       const scanFiles = () => walkFiles(resolvedNativeRoot, name => /^session-.*\.(json|jsonl)$/.test(name), cursorFs);
       return createScannedFileCursor({
         scanFiles,
         parseFile: filePath => parseSession(filePath, cursorFs),
         normalizeEvent: event => event,
-        fsImpl: cursorFs
+        fsImpl: cursorFs,
+        skipInitialParse
       });
     },
     createCursor(options) { return this.createNativeLogCursor(options); }

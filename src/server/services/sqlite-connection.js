@@ -39,7 +39,17 @@ function openDatabase(filePath, options = {}) {
   });
 
   if (!options.readOnly) {
-    db.exec('PRAGMA foreign_keys = ON');
+    // Keep the per-process SQLite footprint bounded. The session history
+    // database can contain hundreds of thousands of messages, and the
+    // default page cache plus an unbounded WAL made repeated inventories
+    // compete with the Node heap for memory and disk space.
+    db.exec(`
+      PRAGMA foreign_keys = ON;
+      PRAGMA journal_mode = WAL;
+      PRAGMA synchronous = NORMAL;
+      PRAGMA wal_autocheckpoint = 1000;
+      PRAGMA cache_size = -16384;
+    `);
   }
 
   _connections.set(key, db);
@@ -57,8 +67,13 @@ function closeDatabase(filePath) {
   if (!db) {
     return;
   }
-  db.close();
-  _connections.delete(key);
+  try {
+    // A clean shutdown should not leave a multi-gigabyte WAL behind. This is
+    // best effort because another process may still be using the database.
+    try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch (_err) {}
+  } finally {
+    try { db.close(); } finally { _connections.delete(key); }
+  }
 }
 
 /**
@@ -67,6 +82,7 @@ function closeDatabase(filePath) {
 function closeAllDatabases() {
   for (const db of _connections.values()) {
     try {
+      try { db.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch (_err) {}
       db.close();
     } catch (_err) {
       // swallow — best-effort teardown

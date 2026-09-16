@@ -154,6 +154,17 @@ describe('recordRequest', () => {
     expect(stats.global.totalCost).toBeCloseTo(0.01);
   });
 
+  test('does not add cached or reasoning detail fields twice when total is absent', () => {
+    const mod = loadService();
+    mod.recordRequest(makeRequest({
+      tokens: { input: 80, output: 20, cached: 20, reasoning: 5 }
+    }));
+
+    const stats = mod.getStatistics();
+    expect(stats.global.totalTokens).toBe(120);
+    expect(stats.byToolType['claude-code'].tokens.total).toBe(120);
+  });
+
   test('updates byToolType stats', () => {
     const mod = loadService();
     mod.recordRequest(makeRequest({ toolType: 'claude-code' }));

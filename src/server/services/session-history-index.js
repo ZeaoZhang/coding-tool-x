@@ -17,6 +17,12 @@ const INDEX_INVENTORY_TTL_MS = 30000;
 
 /** @type {number} Maximum time a cold stale-ok read waits for inventory */
 const INDEX_COLD_WAIT_MS = 1500;
+/** @type {number} Maximum age for a lock whose owner cannot be inspected */
+const INVENTORY_LOCK_STALE_MS = 30 * 60 * 1000;
+/** @type {number} Number of files parsed before results are released */
+const INVENTORY_PARSE_BATCH_SIZE = 8;
+/** @type {number} Maximum number of files parsed concurrently */
+const INVENTORY_PARSE_CONCURRENCY = 2;
 const BUILTIN_SESSION_SOURCES = new Set(['claude', 'codex', 'gemini', 'omp']);
 // Keep synchronized with the parserVersion exposed by the built-in session drivers.
 const BUILTIN_SESSION_PARSER_VERSIONS = Object.freeze({ claude: 2, codex: 2, gemini: 2, omp: 2 });
@@ -26,6 +32,73 @@ function _parserVersionForDriver(driver) {
 }
 function _isUsableRuntime(runtime) {
   return !!runtime && typeof runtime === 'object' && typeof runtime.getDriver === 'function';
+}
+
+function _inventoryLockPath(dbPath, source) {
+  const sourceKey = Buffer.from(String(source), 'utf8').toString('hex');
+  return `${dbPath}.${sourceKey}.inventory.lock`;
+}
+
+function _isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error && error.code === 'EPERM';
+  }
+}
+
+/**
+ * Acquire a durable per-database/source lock. The in-memory single-flight
+ * map only protects requests inside one Node process; production indexing is
+ * deliberately performed in child processes, so it cannot prevent two
+ * workers from rebuilding the same source after a parent restart.
+ */
+function _tryAcquireInventoryLock(dbPath, source) {
+  const lockPath = _inventoryLockPath(dbPath, source);
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let fd;
+    try {
+      fd = fs.openSync(lockPath, 'wx');
+      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, startedAt: Date.now() }), 'utf8');
+      return { fd, lockPath };
+    } catch (error) {
+      if (fd !== undefined) {
+        try { fs.closeSync(fd); } catch (_err) {}
+      }
+      if (error?.code !== 'EEXIST') throw error;
+    }
+
+    let owner = null;
+    let ageMs = 0;
+    try {
+      owner = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+      ageMs = Math.max(0, Date.now() - fs.statSync(lockPath).mtimeMs);
+    } catch (error) {
+      if (error?.code === 'ENOENT') continue;
+    }
+
+    const ownerPid = Number(owner?.pid);
+    if (_isProcessAlive(ownerPid) || (!Number.isFinite(ageMs) || ageMs < INVENTORY_LOCK_STALE_MS)) {
+      return null;
+    }
+
+    try {
+      fs.unlinkSync(lockPath);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') return null;
+    }
+  }
+
+  return null;
+}
+
+function _releaseInventoryLock(lock) {
+  if (!lock) return;
+  try { fs.closeSync(lock.fd); } catch (_err) {}
+  try { fs.unlinkSync(lock.lockPath); } catch (_err) {}
 }
 
 
@@ -442,12 +515,13 @@ function createSessionHistoryIndex(opts = {}) {
 
   /**
    * @param {string} source
-   * @param {{ force?: boolean, consistency?: string }} [options]
+   * @param {{ force?: boolean, consistency?: string, allowStaleData?: boolean }} [options]
    * @returns {Promise<void>}
    */
   async function ensureSourceIndexed(source, options = {}) {
     const consistency = options.consistency || 'stale-ok';
     const force = options.force === true;
+    const allowStaleData = options.allowStaleData === true;
     const key = `ensure:${source}`;
 
     if (!force && _isSourceFresh(source)) {
@@ -458,7 +532,10 @@ function createSessionHistoryIndex(opts = {}) {
       if (consistency === 'complete') {
         return _inflight.get(key);
       }
-      if (_hasUsableIndexedData(source)) {
+      // The project directory can safely use the previous rows while a
+      // parser migration or inventory refresh is running. Session reads
+      // retain their existing behavior and wait for migration completion.
+      if (allowStaleData ? _hasIndexedData(source) : _hasUsableIndexedData(source)) {
         return;
       }
       return _inflight.get(key);
@@ -480,7 +557,7 @@ function createSessionHistoryIndex(opts = {}) {
       }
     }).catch(() => {});
 
-    if (consistency === 'stale-ok' && _hasUsableIndexedData(source)) {
+    if (consistency === 'stale-ok' && (allowStaleData ? _hasIndexedData(source) : _hasUsableIndexedData(source))) {
       return;
     }
 
@@ -521,6 +598,13 @@ function createSessionHistoryIndex(opts = {}) {
 
   async function _runInventory(source, { force = false, config = indexConfig } = {}) {
     const db = _getDb();
+    const inventoryLock = _tryAcquireInventoryLock(dbPath, source);
+    if (!inventoryLock) {
+      // Another process is already doing the expensive work. Existing rows
+      // remain readable, and the next scheduled inventory will observe the
+      // new source_state timestamp once that worker finishes.
+      return;
+    }
     let errorMsg = null;
     let stateToRecord = null;
 
@@ -626,30 +710,6 @@ function createSessionHistoryIndex(opts = {}) {
         };
       };
 
-      const parsed = new Array(toParse.length);
-      let next = 0;
-      const parseWorker = async () => {
-        while (true) {
-          const index = next++;
-          if (index >= toParse.length) return;
-          const descriptor = toParse[index];
-          try {
-            parsed[index] = { descriptor, value: await parseDescriptor(descriptor) };
-          } catch (error) {
-            parsed[index] = { descriptor, error };
-          }
-        }
-      };
-      await Promise.all(Array.from({ length: Math.min(4, toParse.length) }, parseWorker));
-
-      for (const item of parsed) {
-        if (item?.error) {
-          errorMsg = errorMsg
-            ? `${errorMsg}; ${item.descriptor.filePath}: ${item.error.message}`
-            : `${item.descriptor.filePath}: ${item.error.message}`;
-        }
-      }
-
       const deletePath = db.prepare('DELETE FROM session_file WHERE source = ? AND file_path = ?');
       const deleteSession = db.prepare('DELETE FROM session_file WHERE source = ? AND session_id = ?');
       const insertFile = db.prepare(`
@@ -673,16 +733,55 @@ function createSessionHistoryIndex(opts = {}) {
         for (const filePath of indexedFiles.keys()) {
           if (!activePaths.has(filePath)) deletePath.run(source, filePath);
         }
-        for (const item of parsed) {
-          if (item?.value) {
-            const { descriptor, parseResult } = item.value;
-            _insertSession({ deletePath, deleteSession, insertFile, insertMessage }, source, descriptor, parseResult.session, parseResult.messages, parserVersion);
-          }
-        }
         db.exec('COMMIT');
       } catch (error) {
         try { db.exec('ROLLBACK'); } catch (_) {}
         throw error;
+      }
+
+      const recordParseError = (descriptor, error) => {
+        const detail = `${descriptor.filePath}: ${error.message}`;
+        errorMsg = errorMsg ? `${errorMsg}; ${detail}` : detail;
+      };
+
+      for (let batchStart = 0; batchStart < toParse.length; batchStart += INVENTORY_PARSE_BATCH_SIZE) {
+        const batch = toParse.slice(batchStart, batchStart + INVENTORY_PARSE_BATCH_SIZE);
+        const parsed = new Array(batch.length);
+        let next = 0;
+        const parseWorker = async () => {
+          while (true) {
+            const index = next++;
+            if (index >= batch.length) return;
+            const descriptor = batch[index];
+            try {
+              parsed[index] = { descriptor, value: await parseDescriptor(descriptor) };
+            } catch (error) {
+              parsed[index] = { descriptor, error };
+            }
+          }
+        };
+        await Promise.all(Array.from({ length: Math.min(INVENTORY_PARSE_CONCURRENCY, batch.length) }, parseWorker));
+
+        for (const item of parsed) {
+          if (item?.error) recordParseError(item.descriptor, item.error);
+        }
+
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          for (const item of parsed) {
+            if (item?.value) {
+              const { descriptor, parseResult } = item.value;
+              _insertSession({ deletePath, deleteSession, insertFile, insertMessage }, source, descriptor, parseResult.session, parseResult.messages, parserVersion);
+            }
+          }
+          db.exec('COMMIT');
+        } catch (error) {
+          try { db.exec('ROLLBACK'); } catch (_) {}
+          throw error;
+        }
+        // Drop the batch references before parsing the next group. This is
+        // the key difference from the old whole-inventory array: large
+        // session payloads no longer accumulate until the final COMMIT.
       }
 
       stateToRecord = {
@@ -702,6 +801,7 @@ function createSessionHistoryIndex(opts = {}) {
           _recordSourceState(db, source, stateToRecord.lastInventoryMs, stateToRecord.lastError);
         } catch (_err) {}
       }
+      _releaseInventoryLock(inventoryLock);
     }
   }
 
@@ -765,6 +865,7 @@ function createSessionHistoryIndex(opts = {}) {
     await ensureSourceIndexed(source, {
       force: options.force === true,
       consistency: options.consistency || 'stale-ok',
+      allowStaleData: true,
       config: options.config
     });
     const db = _getDb();

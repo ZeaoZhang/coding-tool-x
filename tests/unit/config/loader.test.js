@@ -393,25 +393,14 @@ describe('projectsDir helpers', () => {
   });
 });
 
-// ─── pricing merge ────────────────────────────────────────────────────────────
-
-describe('loadConfig - pricing merge', () => {
-  it('preserves default pricing keys when user provides no pricing', () => {
-    writeConfig({ maxLogs: 1 });
-    const config = loadConfig();
-    expect(config.pricing.claude).toBeDefined();
-    expect(config.pricing.claude.input).toBe(DEFAULT_CONFIG.pricing.claude.input);
-  });
-
-  it('user pricing fields override defaults', () => {
+describe('loadConfig - removed platform pricing', () => {
+  it('ignores legacy platform pricing from config.json', () => {
     writeConfig({ pricing: { claude: { input: 999, output: 888 } } });
-    const config = loadConfig();
-    expect(config.pricing.claude.input).toBe(999);
-    expect(config.pricing.claude.output).toBe(888);
+    expect(loadConfig()).not.toHaveProperty('pricing');
   });
 
-  it('pricing entries without mode default to "auto"', () => {
-    writeConfig({ pricing: { claude: { input: 1 } } });
-    expect(loadConfig().pricing.claude.mode).toBe('auto');
+  it('does not persist removed platform pricing', () => {
+    const config = { pricing: { claude: { input: 999 } }, modelMetadataOverrides: {} };
+    expect(normalizeConfigForSave(config)).not.toHaveProperty('pricing');
   });
 });

@@ -413,6 +413,24 @@ describe('settings API router', () => {
     expect(res._data.error).toMatch(/pricing\.output must be a non-negative number/i);
   });
 
+  it('POST /model-settings returns 400 when pricing.cacheRead is negative', () => {
+    const router = loadRouter();
+    const handler = findHandler(router, 'post', '/model-settings');
+    const req = mockReq({
+      body: {
+        overrides: {
+          'my-model': { pricing: { input: 1, output: 2, cacheRead: -0.1 } },
+        },
+      },
+    });
+    const res = mockRes();
+
+    handler(req, res);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res._data.error).toMatch(/pricing\.cacheRead must be a non-negative number/i);
+  });
+
   it('POST /model-settings allows zero pricing (non-negative = valid)', () => {
     const router = loadRouter();
     const handler = findHandler(router, 'post', '/model-settings');

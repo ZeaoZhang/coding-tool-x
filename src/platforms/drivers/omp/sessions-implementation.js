@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { PATHS, HOME_DIR } = require('../../../config/paths');
 const ompConfig = require('./config');
+const { normalizeUsage: normalizeNativeUsage } = require('../native-log-utils');
 let sessionHistoryIndex = null;
 let ompSessionPathsOverride = null;
 
@@ -135,16 +136,20 @@ function extractMessageText(message = {}) {
 }
 
 function parseUsage(usage = {}) {
-  const input = Number(usage.input ?? usage.inputTokens ?? usage.input_tokens ?? usage.prompt_tokens ?? usage.promptTokens ?? 0) || 0;
-  const output = Number(usage.output ?? usage.outputTokens ?? usage.output_tokens ?? usage.completion_tokens ?? usage.completionTokens ?? 0) || 0;
-  const cacheRead = Number(usage.cacheRead ?? usage.cache_read ?? usage.cachedTokens ?? usage.cached_tokens ?? usage.cache_read_input_tokens ?? 0) || 0;
-  const cacheWrite = Number(usage.cacheWrite ?? usage.cache_write ?? usage.cacheCreation ?? usage.cache_creation ?? usage.cache_creation_input_tokens ?? 0) || 0;
-  const reasoning = Number(usage.reasoningTokens ?? usage.reasoning_tokens ?? 0) || 0;
-  const total = Number(usage.totalTokens ?? usage.total_tokens ?? (input + output + cacheRead + cacheWrite + reasoning)) || 0;
+  const normalized = normalizeNativeUsage(usage);
+  const input = normalized.input;
+  const output = normalized.output;
+  const cacheRead = normalized.cacheRead;
+  const cacheWrite = normalized.cacheCreation;
+  const reasoning = normalized.reasoning;
+  const total = normalized.total;
   const cost = typeof usage.cost === 'number'
     ? usage.cost
     : Number(usage.cost?.total ?? usage.cost?.usd ?? 0) || 0;
-  return { input, output, cached: cacheRead, cacheRead, cacheWrite, reasoning, total, cost };
+  return {
+    input, output, cached: normalized.cached, cacheRead, cacheWrite,
+    cacheCreation: normalized.cacheCreation, reasoning, total, cost
+  };
 }
 
 function readJsonLines(filePath) {
@@ -499,7 +504,7 @@ function isCursorFileReplaced(filePath, state, stat) {
   return false;
 }
 
-function createOmpUsageEventCursor(rootDir = null) {
+function createOmpUsageEventCursor(rootDir = null, { skipInitialParse = false } = {}) {
   let fileStates = new Map();
   let initialized = false;
 
@@ -512,6 +517,7 @@ function createOmpUsageEventCursor(rootDir = null) {
       });
 
       const events = [];
+      const isInitialRead = !initialized;
       files.forEach((filePath) => {
         try {
           const stat = fs.statSync(filePath);
@@ -519,6 +525,22 @@ function createOmpUsageEventCursor(rootDir = null) {
           if (!state || isCursorFileReplaced(filePath, state, stat)) {
             state = createCursorFileState(filePath, stat);
             fileStates.set(filePath, state);
+          }
+
+          if (isInitialRead && skipInitialParse) {
+            state.offset = stat.size;
+            state.size = stat.size;
+            state.device = stat.dev;
+            state.inode = stat.ino;
+            state.mtimeMs = stat.mtimeMs;
+            state.ctimeMs = stat.ctimeMs;
+            state.prefixBytes = readCursorAnchor(filePath, 0, Math.min(stat.size, CURSOR_ANCHOR_BYTES));
+            state.tailBytes = readCursorAnchor(
+              filePath,
+              Math.max(0, stat.size - CURSOR_ANCHOR_BYTES),
+              Math.min(stat.size, CURSOR_ANCHOR_BYTES)
+            );
+            return;
           }
 
           const bytesToRead = Math.max(0, stat.size - state.offset);

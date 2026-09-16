@@ -509,4 +509,25 @@ onUnmounted(() => {
   .toolbar-label { font-size: 11px; }
   .logs-section { flex: 0 0 260px; min-height: 260px; max-height: 260px; }
 }
+
+/*
+ * The log panel has a fixed height on purpose, but it must not be allowed to
+ * collapse the channel manager on short viewports. Stack both sections and
+ * let the right panel scroll instead of hiding the first section underneath
+ * the log panel.
+ */
+@media (max-height: 600px) {
+  .right-panel {
+    overflow-y: auto;
+  }
+
+  .channels-section {
+    flex: 0 0 360px;
+    min-height: 360px;
+  }
+
+  .logs-section {
+    flex: 0 0 260px;
+  }
+}
 </style>

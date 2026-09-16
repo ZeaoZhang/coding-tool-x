@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -69,8 +69,30 @@ describe('production web build', () => {
       runProductionBuild(outputDir)
       const initialAssets = getInitialJavaScriptAssets(outputDir)
 
-      expect(initialAssets.some(assetPath => /(?:Analytics|ChatHistoryDrawer|RightPanel|SettingsDrawer|markdown)-/.test(assetPath))).toBe(false)
-      expect(getInitialJavaScriptBytes(outputDir, initialAssets)).toBeLessThan(1_000_000)
+      expect(initialAssets.some(assetPath => /(?:Analytics|ChatHistoryDrawer|SettingsDrawer|markdown)-/.test(assetPath))).toBe(false)
+      // The global channel panel is intentionally part of the layout entry;
+      // leave room for its shell while keeping hidden drawers and route code
+      // out of the initial request.
+      expect(getInitialJavaScriptBytes(outputDir, initialAssets)).toBeLessThan(1_100_000)
+    } finally {
+      rmSync(outputDir, { recursive: true, force: true })
+    }
+  }, 15_000)
+
+  it('bundles the global right panel with the layout entry', () => {
+    const outputDir = mkdtempSync(resolve(tmpdir(), 'coding-tool-x-web-build-'))
+
+    try {
+      runProductionBuild(outputDir)
+      const html = readFileSync(resolve(outputDir, 'index.html'), 'utf8')
+      const entryAsset = html.match(/<script type="module"[^>]+src="\/assets\/([^\"]+\.js)"/)?.[1]
+      const panelAsset = readdirSync(resolve(outputDir, 'assets')).find(fileName => /^RightPanel-[^/]+\.js$/.test(fileName))
+
+      expect(entryAsset).toBeTruthy()
+      expect(panelAsset).toBeUndefined()
+
+      const entrySource = readFileSync(resolve(outputDir, 'assets', entryAsset), 'utf8')
+      expect(entrySource).toContain('right-panel')
     } finally {
       rmSync(outputDir, { recursive: true, force: true })
     }

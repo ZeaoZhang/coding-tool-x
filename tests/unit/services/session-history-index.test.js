@@ -558,6 +558,45 @@ describe('session-history-index', () => {
     expect(projects[0].name).toBe('cold-project');
   });
 
+  it('serves the previous project index while a parser migration is still running', async () => {
+    const fixture = setupIndex();
+    fixture.writeFixtureFile({
+      name: 'stale-project.jsonl',
+      content: 'stale project fixture\n',
+      session: makeSessionFixture('stale-project-session', 'stale-project'),
+      messages: makeMessageFixtures(2)
+    });
+
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+
+    // Simulate the persisted index from the previous parser version. The
+    // next inventory is deliberately left unresolved to model a slow worker.
+    fixture.adapter.parserVersion = 2;
+    index._getDb().prepare('UPDATE session_file SET parser_version = 1 WHERE source = ?').run('claude');
+    index._getDb().prepare('UPDATE source_state SET last_inventory_ms = ? WHERE source = ?').run(Date.now() - 60000, 'claude');
+
+    let releaseInventory;
+    fixture.adapter.inventory.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseInventory = resolve;
+    }));
+
+    const firstRequest = index.listProjects('claude');
+    await vi.waitFor(() => expect(fixture.adapter.inventory).toHaveBeenCalledTimes(2));
+
+    let secondSettled = false;
+    const secondRequest = index.listProjects('claude').then((projects) => {
+      secondSettled = true;
+      return projects;
+    });
+
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(secondSettled).toBe(true);
+    expect((await secondRequest)[0].name).toBe('stale-project');
+
+    releaseInventory([]);
+    expect((await firstRequest)[0].name).toBe('stale-project');
+  });
+
   it('waits for a cold inventory before returning a missing session detail', async () => {
     const fixture = setupIndex();
     const descriptor = fixture.writeFixtureFile({
@@ -1266,6 +1305,49 @@ describe('session-history-index', () => {
       else process.env.NODE_ENV = previousNodeEnv;
       if (previousChild === undefined) delete process.env.CC_TOOL_SESSION_HISTORY_CHILD;
       else process.env.CC_TOOL_SESSION_HISTORY_CHILD = previousChild;
+    }
+  });
+
+  it('does not run duplicate inventory work across index instances', async () => {
+    const fixture = setupIndex();
+    fixture.writeFixtureFile({
+      name: 'cross-process-lock.jsonl',
+      content: 'cross-process lock\n',
+      session: makeSessionFixture('cross-process-lock', 'lock-project'),
+      messages: makeMessageFixtures(2)
+    });
+
+    let releaseParse;
+    let parseStarted;
+    const parseStartedPromise = new Promise(resolve => { parseStarted = resolve; });
+    const parseReleasePromise = new Promise(resolve => { releaseParse = resolve; });
+    fixture.adapter.parse.mockImplementation(async descriptor => {
+      parseStarted();
+      await parseReleasePromise;
+      return {
+        session: makeSessionFixture(descriptor.sessionId, 'lock-project'),
+        messages: makeMessageFixtures(2)
+      };
+    });
+
+    const secondIndex = createSessionHistoryIndex({
+      dbPath: fixture.dbPath,
+      adapterRegistry: { claude: fixture.adapter },
+      workerRunner: vi.fn(async () => {}),
+      ftsEnabledOverride: false
+    });
+
+    try {
+      const firstRefresh = index.ensureSourceIndexed('claude', { consistency: 'complete' });
+      await parseStartedPromise;
+
+      await secondIndex.ensureSourceIndexed('claude', { consistency: 'complete' });
+      expect(fixture.adapter.parse).toHaveBeenCalledTimes(1);
+
+      releaseParse();
+      await firstRefresh;
+    } finally {
+      secondIndex.closeSessionHistoryIndex();
     }
   });
  });

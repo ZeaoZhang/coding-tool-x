@@ -10,10 +10,34 @@ function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
   const resolvedNativeRoot = pathContext?.customized
     ? (pathContext.native?.sessions || nativeRoot || NATIVE_PATHS.codex.sessions)
     : (nativeRoot || NATIVE_PATHS.codex.sessions);
-  const createRead = (cursorFs, state) => () => {
+  const createRead = (cursorFs, state, skipInitialParse) => () => {
     const scanFiles = () => walkFiles(resolvedNativeRoot, name => /^rollout-.*\.jsonl$/.test(name), cursorFs);
+    const files = scanFiles();
+    const isInitialRead = !state.initialized;
+    const currentFiles = new Set(files);
+    for (const filePath of state.fileStates.keys()) {
+      if (!currentFiles.has(filePath)) state.fileStates.delete(filePath);
+    }
     const latest = new Map();
-    for (const filePath of scanFiles()) {
+    for (const filePath of files) {
+      let stat;
+      try { stat = cursorFs.statSync(filePath); } catch (_) { continue; }
+      const previousState = state.fileStates.get(filePath);
+      const unchanged = previousState
+        && previousState.dev === stat.dev
+        && previousState.ino === stat.ino
+        && previousState.size === stat.size
+        && previousState.mtimeMs === stat.mtimeMs
+        && previousState.ctimeMs === stat.ctimeMs;
+      state.fileStates.set(filePath, {
+        dev: stat.dev,
+        ino: stat.ino,
+        size: stat.size,
+        mtimeMs: stat.mtimeMs,
+        ctimeMs: stat.ctimeMs
+      });
+      if (unchanged || (isInitialRead && skipInitialParse)) continue;
+
       const lines = readJsonLines(filePath, cursorFs);
       const meta = lines.find(line => line.type === 'session_meta')?.payload || {};
       let model = '';
@@ -63,15 +87,23 @@ function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
   return {
     platform: 'codex',
     capability: 'nativeLogs',
-    createNativeLogCursor({ fs: cursorFs = fsImpl } = {}) {
-      const state = { initialized: false, lastUsage: new Map() };
-      const read = createRead(cursorFs, state);
+    createNativeLogCursor({ fs: cursorFs = fsImpl, skipInitialParse = false } = {}) {
+      const state = { initialized: false, lastUsage: new Map(), fileStates: new Map() };
+      const read = createRead(cursorFs, state, skipInitialParse);
       return {
         initialize() { read(); },
         readNewEvents: read,
         read,
-        reset() { state.initialized = false; state.lastUsage = new Map(); },
-        close() { state.initialized = false; state.lastUsage.clear(); }
+        reset() {
+          state.initialized = false;
+          state.lastUsage = new Map();
+          state.fileStates = new Map();
+        },
+        close() {
+          state.initialized = false;
+          state.lastUsage.clear();
+          state.fileStates.clear();
+        }
       };
     },
     createCursor(options) { return this.createNativeLogCursor(options); }

@@ -256,7 +256,7 @@ describe('OMP session parser', () => {
           input: 3,
           output: 4,
           reasoning: 2,
-          total: 9,
+          total: 7,
           cost: 0.5
         })
       })
@@ -294,6 +294,31 @@ describe('OMP session parser', () => {
       })
     ]);
     expect(cursor.read()).toEqual([]);
+  });
+
+  test('can baseline existing files without reading their historical contents', () => {
+    const sessionFile = path.join(sessionDir, 'session-skip-history.jsonl');
+    writeJsonl(sessionFile, [
+      { type: 'session', version: 3, id: 'omp-session-skip-history' },
+      {
+        type: 'message',
+        id: 'old',
+        message: { role: 'assistant', usage: { input: 100, output: 10 } }
+      }
+    ]);
+    const { createOmpUsageEventCursor } = loadModule();
+    const cursor = createOmpUsageEventCursor(sessionDir, { skipInitialParse: true });
+
+    expect(cursor.read()).toEqual([]);
+    appendJsonl(sessionFile, [{
+      type: 'message',
+      id: 'new',
+      message: { role: 'assistant', usage: { input: 2, output: 3 } }
+    }]);
+
+    expect(cursor.read()).toEqual([
+      expect.objectContaining({ id: 'session-skip-history:new' })
+    ]);
   });
 
   test('emits all complete events from a file created after the baseline', () => {

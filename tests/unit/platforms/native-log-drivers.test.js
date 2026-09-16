@@ -9,6 +9,7 @@ const claudeDriver = require('../../../src/platforms/drivers/claude/native-logs'
 const codexDriver = require('../../../src/platforms/drivers/codex/native-logs');
 const geminiDriver = require('../../../src/platforms/drivers/gemini/native-logs');
 const opencodeDriver = require('../../../src/platforms/drivers/opencode/native-logs');
+const { createScannedFileCursor } = require('../../../src/platforms/drivers/native-log-utils');
 
 let testDir;
 
@@ -27,6 +28,29 @@ afterEach(() => {
 });
 
 describe('file-backed native log cursors', () => {
+  test('can establish a file baseline without parsing historical content', () => {
+    const filePath = path.join(testDir, 'claude', 'session.jsonl');
+    writeJsonLines(filePath, [{ id: 'old', tokens: { input: 1 } }]);
+    let parseCount = 0;
+    const cursor = createScannedFileCursor({
+      scanFiles: () => [filePath],
+      parseFile: () => {
+        parseCount += 1;
+        return [{ id: 'new', tokens: { input: 1, total: 1 } }];
+      },
+      normalizeEvent: event => event,
+      skipInitialParse: true
+    });
+
+    cursor.initialize();
+    expect(parseCount).toBe(0);
+    expect(cursor.readNewEvents()).toEqual([]);
+
+    fs.appendFileSync(filePath, JSON.stringify({ id: 'appended' }) + '\n');
+    expect(cursor.readNewEvents()).toEqual([expect.objectContaining({ id: 'new' })]);
+    expect(parseCount).toBe(1);
+  });
+
   test('Claude emits each assistant usage record once and handles partial JSONL writes', () => {
     const filePath = path.join(testDir, 'claude', 'session.jsonl');
     writeJsonLines(filePath, [{
@@ -80,6 +104,73 @@ describe('file-backed native log cursors', () => {
     expect(cursor.readNewEvents()).toEqual([expect.objectContaining({ tokens: expect.objectContaining({ input: 20, total: 20 }) })]);
   });
 
+  test('Codex can establish a baseline without loading historical rollout files', () => {
+    const filePath = path.join(testDir, 'codex', 'rollout-large.jsonl');
+    writeJsonLines(filePath, [{
+      type: 'event_msg',
+      payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 100, total_tokens: 100 } } }
+    }]);
+    let reads = 0;
+    const trackedFs = {
+      ...fs,
+      readFileSync(...args) {
+        reads += 1;
+        return fs.readFileSync(...args);
+      }
+    };
+    const cursor = codexDriver.createDriver({
+      nativeRoot: path.dirname(filePath),
+      fsImpl: trackedFs
+    }).createNativeLogCursor({ fs: trackedFs, skipInitialParse: true });
+
+    cursor.initialize();
+    expect(reads).toBe(0);
+
+    fs.appendFileSync(filePath, JSON.stringify({
+      type: 'event_msg',
+      payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 150, total_tokens: 150 } } }
+    }) + '\n');
+    expect(cursor.readNewEvents()).toEqual([expect.objectContaining({
+      tokens: expect.objectContaining({ input: 150, total: 150 })
+    })]);
+    expect(reads).toBeGreaterThan(0);
+  });
+
+  test('Codex normalizes cached_input_tokens as a separately billable cache read', () => {
+    const filePath = path.join(testDir, 'codex', 'rollout-cached.jsonl');
+    const makeRecords = ({ input, cached, output, total }) => [
+      { type: 'session_meta', payload: { id: 'session-cached', model_provider: 'openai' } },
+      { type: 'turn_context', payload: { model: 'gpt-5.5' } },
+      {
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: { total_token_usage: {
+            input_tokens: input,
+            cached_input_tokens: cached,
+            output_tokens: output,
+            total_tokens: total
+          } }
+        }
+      }
+    ];
+    writeJsonLines(filePath, makeRecords({ input: 100, cached: 80, output: 20, total: 120 }));
+
+    const cursor = codexDriver.createDriver({ nativeRoot: path.dirname(filePath) }).createNativeLogCursor();
+    cursor.initialize();
+    fs.writeFileSync(filePath, makeRecords({ input: 200, cached: 160, output: 40, total: 240 }).map(record => JSON.stringify(record)).join('\n') + '\n');
+
+    const [event] = cursor.readNewEvents();
+    expect(event.tokens).toEqual(expect.objectContaining({
+      input: 20,
+      cacheRead: 80,
+      cached: 80,
+      output: 20,
+      total: 120
+    }));
+    expect(event.cost).toBeCloseTo(0.00074, 8);
+  });
+
   test('Gemini does not replay old messages when the JSON session is rewritten', () => {
     const filePath = path.join(testDir, 'gemini', 'session-a.json');
     const first = { sessionId: 'gemini-session', messages: [{ id: 'message-1', model: 'gemini-pro', usage: { input_tokens: 8, output_tokens: 2 } }] };
@@ -116,6 +207,62 @@ describe('file-backed native log cursors', () => {
     const [event] = cursor.readNewEvents();
     expect(event.id).toMatch(/^session-b\.json:[a-f0-9]{40}$/);
     expect(cursor.readNewEvents()).toEqual([]);
+  });
+
+  test('Gemini normalizes usageMetadata cache and thinking fields', () => {
+    const filePath = path.join(testDir, 'gemini', 'session-metadata.json');
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify({
+      sessionId: 'gemini-session-metadata',
+      messages: [{
+        id: 'message-1',
+        model: 'gemini-2.5-pro',
+        usage: {
+          promptTokenCount: 100,
+          cachedContentTokenCount: 80,
+          candidatesTokenCount: 20,
+          thoughtsTokenCount: 5,
+          totalTokenCount: 125
+        }
+      }]
+    }));
+
+    const cursor = geminiDriver.createDriver({ nativeRoot: path.dirname(filePath) }).createNativeLogCursor();
+    cursor.initialize();
+    fs.writeFileSync(filePath, JSON.stringify({
+      sessionId: 'gemini-session-metadata',
+      messages: [{
+        id: 'message-1',
+        model: 'gemini-2.5-pro',
+        usage: {
+          promptTokenCount: 200,
+          cachedContentTokenCount: 180,
+          candidatesTokenCount: 40,
+          thoughtsTokenCount: 10,
+          totalTokenCount: 250
+        }
+      }, {
+        id: 'message-2',
+        model: 'gemini-2.5-pro',
+        usage: {
+          promptTokenCount: 200,
+          cachedContentTokenCount: 180,
+          candidatesTokenCount: 40,
+          thoughtsTokenCount: 10,
+          totalTokenCount: 250
+        }
+      }]
+    }));
+
+    const [event] = cursor.readNewEvents();
+    expect(event.tokens).toEqual(expect.objectContaining({
+      input: 20,
+      cacheRead: 180,
+      cached: 180,
+      output: 40,
+      reasoning: 10,
+      total: 250
+    }));
   });
 });
 

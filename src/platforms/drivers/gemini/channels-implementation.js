@@ -25,7 +25,6 @@ function configure({ pathContext } = {}) {
     channels: custom ? (pathContext.state?.channels || PATHS.channels?.gemini) : PATHS.channels?.gemini
   };
   require('../../native-oauth-adapters').configure?.({ pathContext });
-  if (service) service.channelsFilePath = configuredState.channels;
 }
 
 const GEMINI_API_FORMATS = new Set(['gemini_api', 'vertex_ai_v1']);
