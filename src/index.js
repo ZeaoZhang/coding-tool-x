@@ -212,9 +212,20 @@ function shutdownProcess(code = 0, error = null) {
     eventBus.emitSync('cli:shutdown', {});
     PluginManager.shutdownPlugins();
     try {
+      await require('./server/websocket-server').flushPendingLogs();
+    } catch (flushError) {
+      console.error(`[WARN] Log persistence flush failed during shutdown: ${flushError.message}`);
+    }
+    try {
       await require('./server/services/statistics-service').shutdownStatistics();
     } catch (flushError) {
       console.error(`[WARN] Statistics flush failed during shutdown: ${flushError.message}`);
+    }
+    try {
+      require('./server/services/session-history-index').closeSessionHistoryIndex();
+      require('./server/services/sqlite-connection').closeAllDatabases();
+    } catch (databaseError) {
+      console.error(chalk.yellow(`[WARN] SQLite 退出清理失败: ${databaseError.message}`));
     }
     if (error) {
       console.error(error);

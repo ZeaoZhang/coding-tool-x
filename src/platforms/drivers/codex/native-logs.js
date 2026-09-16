@@ -3,76 +3,118 @@
 const fs = require('fs');
 const path = require('path');
 const { NATIVE_PATHS } = require('../../../config/paths');
-const { normalizeCost, normalizeUsage, subtractUsage, readJsonLines, walkFiles } = require('../native-log-utils');
+const {
+  normalizeCost,
+  normalizeUsage,
+  subtractUsage,
+  readFileRange,
+  visitJsonLinesReverse,
+  walkFiles,
+  createIncrementalJsonlCursor
+} = require('../native-log-utils');
 const { calculateUsageCost } = require('../../../server/services/usage-log-utils');
+
+const BOOTSTRAP_READ_BYTES = 64 * 1024;
+
+function applyCodexRecord(state, record) {
+  if (record?.type === 'session_meta') {
+    state.sessionId = record.payload?.id || state.sessionId;
+    state.provider = record.payload?.model_provider || state.provider;
+    return;
+  }
+  if (record?.type === 'turn_context') {
+    state.model = record.payload?.model || state.model;
+    return;
+  }
+  if (record?.type !== 'event_msg' || record.payload?.type !== 'token_count') return;
+  const usage = record.payload?.info?.total_token_usage;
+  if (!usage || typeof usage !== 'object') return;
+  state.pendingUsage = normalizeUsage(usage);
+  state.pendingTimestamp = record.timestamp || state.pendingTimestamp;
+  state.pendingCost = normalizeCost(record.payload?.info?.cost ?? usage.cost);
+}
+
+function bootstrapCodexFile(filePath, state, stat, fsImpl) {
+  const head = readFileRange(filePath, 0, Math.min(stat.size, BOOTSTRAP_READ_BYTES), fsImpl).buffer.toString('utf8');
+  head.split(/\r?\n/).forEach((line) => {
+    if (!line.trim()) return;
+    try { applyCodexRecord(state, JSON.parse(line)); } catch (_) {}
+  });
+
+  let latestUsage = null;
+  visitJsonLinesReverse(filePath, (record) => {
+    if (record?.type === 'event_msg' && record.payload?.type === 'token_count' && !latestUsage) {
+      const usage = record.payload?.info?.total_token_usage;
+      if (usage && typeof usage === 'object') {
+        latestUsage = normalizeUsage(usage);
+        state.pendingTimestamp = record.timestamp || state.pendingTimestamp;
+        state.pendingCost = normalizeCost(record.payload?.info?.cost ?? usage.cost);
+      }
+    }
+    if (record?.type === 'turn_context' && !state.model) {
+      state.model = record.payload?.model || state.model;
+    }
+    return !(latestUsage && state.model);
+  }, { fsImpl });
+  if (latestUsage) state.lastUsage = latestUsage;
+  state.pendingUsage = null;
+}
 
 function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
   const resolvedNativeRoot = pathContext?.customized
     ? (pathContext.native?.sessions || nativeRoot || NATIVE_PATHS.codex.sessions)
     : (nativeRoot || NATIVE_PATHS.codex.sessions);
-  const createRead = (cursorFs, state) => () => {
-    const scanFiles = () => walkFiles(resolvedNativeRoot, name => /^rollout-.*\.jsonl$/.test(name), cursorFs);
-    const latest = new Map();
-    for (const filePath of scanFiles()) {
-      const lines = readJsonLines(filePath, cursorFs);
-      const meta = lines.find(line => line.type === 'session_meta')?.payload || {};
-      let model = '';
-      for (const line of lines) {
-        if (line.type === 'turn_context' && line.payload?.model) model = line.payload.model;
-      }
-      const usageLines = lines.filter(line => line.type === 'event_msg'
-        && line.payload?.type === 'token_count'
-        && line.payload?.info?.total_token_usage);
-      const line = usageLines[usageLines.length - 1];
-      if (!line) continue;
-      const sessionId = meta.id || path.basename(filePath, '.jsonl');
-      const tokens = normalizeUsage(line.payload.info.total_token_usage);
-      latest.set(sessionId, {
-        id: `${sessionId}:token-count`,
-        source: 'codex',
-        sessionId,
-        timestamp: line.timestamp || meta.timestamp,
-        provider: meta.model_provider || '',
-        model,
-        tokens,
-        cost: normalizeCost(line.payload.info.cost ?? line.payload.info.total_token_usage.cost)
-          || calculateUsageCost('codex', model, tokens)
-      });
-    }
-
-    const events = [];
-    for (const [sessionId, event] of latest) {
-      const previous = state.lastUsage.get(sessionId);
-      state.lastUsage.set(sessionId, event.tokens);
-      if (!state.initialized) continue;
-      const restarted = previous && event.tokens.total < previous.total;
-      const tokens = previous && !restarted ? subtractUsage(event.tokens, previous) : event.tokens;
-      if (tokens.total > 0) {
-        events.push({
-          ...event,
-          id: `${event.id}:${event.tokens.total}`,
-          tokens,
-          cost: calculateUsageCost('codex', event.model, tokens)
-        });
-      }
-    }
-    state.initialized = true;
-    return events;
-  };
-
   return {
     platform: 'codex',
     capability: 'nativeLogs',
-    createNativeLogCursor({ fs: cursorFs = fsImpl } = {}) {
-      const state = { initialized: false, lastUsage: new Map() };
-      const read = createRead(cursorFs, state);
-      return {
-        initialize() { read(); },
-        readNewEvents: read,
-        read,
-        reset() { state.initialized = false; state.lastUsage = new Map(); },
-        close() { state.initialized = false; state.lastUsage.clear(); }
-      };
+    createNativeLogCursor({ fs: cursorFs = fsImpl, skipInitialParse = false } = {}) {
+      const scanFiles = () => walkFiles(resolvedNativeRoot, name => /^rollout-.*\.jsonl$/.test(name), cursorFs);
+      return createIncrementalJsonlCursor({
+        scanFiles,
+        fsImpl: cursorFs,
+        skipInitialParse,
+        createFileState: (filePath, _stat, previousState) => ({
+          sessionId: previousState?.sessionId || path.basename(filePath, '.jsonl'),
+          provider: previousState?.provider || '',
+          model: previousState?.model || '',
+          lastUsage: previousState?.lastUsage || null,
+          pendingUsage: null,
+          pendingTimestamp: null,
+          pendingCost: 0
+        }),
+        bootstrapFile: (filePath, state, stat) => bootstrapCodexFile(filePath, state, stat, cursorFs),
+        parseLine: (_filePath, record, state) => {
+          applyCodexRecord(state, record);
+          return null;
+        },
+        afterRead: (_filePath, state) => {
+          if (!state.pendingUsage) return null;
+          const current = state.pendingUsage;
+          const previous = state.lastUsage;
+          const restarted = previous && current.total < previous.total;
+          const tokens = previous && !restarted ? subtractUsage(current, previous) : current;
+          state.lastUsage = current;
+          state.pendingUsage = null;
+          if (tokens.total <= 0) return null;
+          const sessionId = state.sessionId || '';
+          const event = {
+            id: `${sessionId}:token-count:${current.total}`,
+            source: 'codex',
+            sessionId,
+            timestamp: state.pendingTimestamp,
+            provider: state.provider,
+            model: state.model,
+            tokens,
+            cost: state.pendingCost || calculateUsageCost('codex', state.model, tokens)
+          };
+          state.pendingTimestamp = null;
+          state.pendingCost = 0;
+          return event;
+        },
+        onError: (error, filePath) => {
+          console.warn('[Codex Native Logs] Failed to read changed usage events:', filePath, error.message);
+        }
+      });
     },
     createCursor(options) { return this.createNativeLogCursor(options); }
   };

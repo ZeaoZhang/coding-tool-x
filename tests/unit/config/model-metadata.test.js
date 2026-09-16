@@ -129,12 +129,8 @@ describe('model-metadata', () => {
       expect(result).toHaveProperty('pricing');
     });
 
-    test('unknown claude model returns generic fallback', () => {
-      const result = resolveModelMetadata('claude-unknown-99');
-      expect(result).not.toBeNull();
-      expect(result.limit).toEqual({ context: 200000, output: 32000 });
-      expect(result.pricing).toHaveProperty('input');
-      expect(result.pricing).toHaveProperty('output');
+    test('unknown model returns null without a configured override', () => {
+      expect(resolveModelMetadata('claude-unknown-99')).toBeNull();
     });
 
     test('completely unknown non-claude model → null', () => {

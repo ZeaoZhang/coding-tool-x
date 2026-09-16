@@ -136,21 +136,9 @@ function normalizeConfigForSave(config = {}) {
   if (Object.prototype.hasOwnProperty.call(normalized, 'nativeCliLogs')) {
     normalized.nativeCliLogs = normalizeNativeCliLogs(normalized.nativeCliLogs);
   }
+  // Model pricing is maintained only in modelMetadataOverrides.
+  delete normalized.pricing;
   return normalized;
-}
-
-function mergePricing(defaultPricing, overrides = {}) {
-  const merged = {};
-  Object.keys(defaultPricing).forEach((key) => {
-    merged[key] = {
-      ...defaultPricing[key],
-      ...(overrides && overrides[key] ? overrides[key] : {})
-    };
-    if (!merged[key].mode) {
-      merged[key].mode = 'auto';
-    }
-  });
-  return merged;
 }
 
 function mergeDefaultModels(defaultModels, overrides = {}) {
@@ -208,7 +196,9 @@ function loadConfig() {
 
       // 合并 ports 配置
       config.ports = { ...DEFAULT_CONFIG.ports, ...userConfig.ports };
-      config.pricing = mergePricing(DEFAULT_CONFIG.pricing, userConfig.pricing);
+      // Ignore the removed platform-level pricing configuration. Per-model
+      // pricing belongs in modelMetadataOverrides and is resolved centrally.
+      delete config.pricing;
       config.defaultModels = mergeDefaultModels(DEFAULT_CONFIG.defaultModels, userConfig.defaultModels);
       config.defaultSpeedTestModels = mergeDefaultSpeedTestModels(
         DEFAULT_CONFIG.defaultSpeedTestModels,

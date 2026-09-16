@@ -6,9 +6,8 @@ const { NATIVE_PATHS } = require('../../../config/paths');
 const {
   normalizeUsage,
   normalizeCost,
-  readJsonLines,
   walkFiles,
-  createScannedFileCursor
+  createIncrementalJsonlCursor
 } = require('../native-log-utils');
 const { calculateUsageCost } = require('../../../server/services/usage-log-utils');
 
@@ -19,18 +18,18 @@ function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
   return {
     platform: 'claude',
     capability: 'nativeLogs',
-    createNativeLogCursor({ fs: cursorFs = fsImpl } = {}) {
+    createNativeLogCursor({ fs: cursorFs = fsImpl, skipInitialParse = false } = {}) {
       const scanFiles = () => walkFiles(resolvedNativeRoot, name => name.endsWith('.jsonl') && !name.startsWith('agent-'), cursorFs);
-      const parseFile = filePath => readJsonLines(filePath, cursorFs).flatMap(record => {
+      const parseLine = (filePath, record) => {
         const message = record.message && typeof record.message === 'object' ? record.message : {};
         const role = record.role || message.role || (record.type === 'assistant' ? 'assistant' : null);
-        if (role !== 'assistant') return [];
+        if (role !== 'assistant') return null;
         const usage = record.usage || message.usage;
         const messageId = record.uuid || record.id || message.id;
-        if (!usage || typeof usage !== 'object' || !messageId) return [];
+        if (!usage || typeof usage !== 'object' || !messageId) return null;
         const tokens = normalizeUsage(usage);
         const model = record.model || message.model || '';
-        return [{
+        return {
           id: `${path.basename(filePath)}:${messageId}`,
           source: 'claude',
           sessionId: path.basename(filePath, '.jsonl'),
@@ -42,13 +41,16 @@ function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
             || calculateUsageCost('claude', model, tokens),
           channelId: record.channelId || message.channelId,
           channel: record.channel || message.channel
-        }];
-      });
-      return createScannedFileCursor({
+        };
+      };
+      return createIncrementalJsonlCursor({
         scanFiles,
-        parseFile,
-        normalizeEvent: event => event,
-        fsImpl: cursorFs
+        parseLine,
+        fsImpl: cursorFs,
+        skipInitialParse,
+        onError: (error, filePath) => {
+          console.warn('[Claude Native Logs] Failed to read changed usage events:', filePath, error.message);
+        }
       });
     },
     createCursor(options) { return this.createNativeLogCursor(options); }

@@ -26,7 +26,6 @@ function configure({ pathContext } = {}) {
       ? (pathContext.state?.channels || PATHS.channels?.opencode)
       : PATHS.channels?.opencode
   };
-  if (service) service.channelsFilePath = configuredState.channels;
 }
 
 function clearChannelBalanceCache(channel) {

@@ -32,21 +32,21 @@ function versionedId(id, signature) {
   return `${id}:${crypto.createHash('sha1').update(signature).digest('hex').slice(0, 12)}`;
 }
 
-function readUsageRows(db) {
+function* readUsageRows(db) {
   const rows = db.prepare(`
     SELECT p.id, p.session_id, p.message_id, p.time_created, p.time_updated, p.data,
            m.data AS message_data
     FROM part p
     LEFT JOIN message m ON m.id = p.message_id
     ORDER BY p.time_created ASC
-  `).all();
+  `).iterate();
 
-  return rows.flatMap(row => {
+  for (const row of rows) {
     const part = parseJson(row.data);
     const message = parseJson(row.message_data) || {};
     const usage = part?.tokens || part?.usage || (part?.type === 'step-finish' ? part : null);
-    if (!usage || !hasUsage(usage)) return [];
-    return [{
+    if (!usage || !hasUsage(usage)) continue;
+    yield {
       id: `opencode:${row.session_id}:${row.id}`,
       source: 'opencode',
       sessionId: row.session_id,
@@ -56,8 +56,8 @@ function readUsageRows(db) {
       tokens: normalizeUsage(usage),
       cost: normalizeCost(part.cost ?? usage.cost)
         || calculateUsageCost('opencode', part.model || part.modelID || message.model || message.modelID || '', normalizeUsage(usage))
-    }];
-  });
+    };
+  }
 }
 
 function createDriver({ fsImpl = fs, pathContext } = {}) {
@@ -78,9 +78,8 @@ function createDriver({ fsImpl = fs, pathContext } = {}) {
         let db;
         try {
           db = new DatabaseSync(dbPath, { readOnly: true, timeout: 1000 });
-          const rows = readUsageRows(db);
           const events = [];
-          for (const event of rows) {
+          for (const event of readUsageRows(db)) {
             const signature = usageSignature(event);
             const previous = rowState.get(event.id);
             if (!previous) {

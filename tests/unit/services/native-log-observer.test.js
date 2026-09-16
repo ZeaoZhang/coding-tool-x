@@ -74,6 +74,57 @@ test('records normalized native usage without touching channel health', () => {
   expect(runtime.getDriver).not.toHaveBeenCalledWith('codex', 'health');
 });
 
+test('resolves configured channels from native metadata for all supported CLIs', () => {
+  const statistics = {
+    recordRequest: vi.fn()
+  };
+  const channelsByPlatform = {
+    claude: [{ id: 'claude-deepseek', name: 'Claude DeepSeek', providerKey: 'deepseek', enabled: true, model: 'claude-sonnet' }],
+    codex: [{ id: 'codex-foxcode', name: 'Codex Foxcode', providerKey: 'foxcode', enabled: true }],
+    gemini: [{ id: 'gemini-vertex', name: 'Gemini Vertex', providerKey: 'vertex', enabled: true }],
+    opencode: [{ id: 'opencode-byok', name: 'OpenCode BYOK', providerKey: 'open-design-byok', enabled: true }],
+    omp: [{ id: 'omp-shuai', name: 'OMP Shuai', providerKey: 'omp-provider', enabled: true }]
+  };
+  const runtime = {
+    getDriver: vi.fn((platform, capability) => {
+      if (capability === 'statistics') return statistics;
+      if (capability === 'channels') {
+        return {
+          list: vi.fn(() => ({ status: 'ok', data: { channels: channelsByPlatform[platform] } }))
+        };
+      }
+      return null;
+    })
+  };
+
+  const events = [
+    ['claude', { id: 'claude-event', provider: '', model: 'claude-sonnet', tokens: { input: 1, output: 1 } }],
+    ['codex', { id: 'codex-event', channel: 'Unknown', provider: 'foxcode', model: 'gpt-5', tokens: { input: 1, output: 1 } }],
+    ['gemini', { id: 'gemini-event', provider: '', model: 'gemini-3.1-pro-preview', tokens: { input: 1, output: 1 } }],
+    ['opencode', { id: 'opencode-event', provider: 'open-design-byok', model: 'gpt-5.6-luna', tokens: { input: 1, output: 1 } }],
+    ['omp', { id: 'omp-event', provider: 'omp-provider', model: 'claude-sonnet', tokens: { input: 1, output: 1 } }]
+  ];
+
+  events.forEach(([platform, event]) => {
+    observer._test.recordEvent(platform, event, runtime);
+  });
+
+  expect(broadcastLog.mock.calls.map(([payload]) => [payload.source, payload.channel])).toEqual([
+    ['claude', 'Claude DeepSeek'],
+    ['codex', 'Codex Foxcode'],
+    ['gemini', 'Gemini Vertex'],
+    ['opencode', 'OpenCode BYOK'],
+    ['omp', 'OMP Shuai']
+  ]);
+  expect(statistics.recordRequest.mock.calls.map(([request]) => request.channelId)).toEqual([
+    'claude-deepseek',
+    'codex-foxcode',
+    'gemini-vertex',
+    'opencode-byok',
+    'omp-shuai'
+  ]);
+});
+
 test('discovers native log cursors from registry capabilities and polls them', () => {
   const statistics = { recordRequest: vi.fn() };
   const cursor = {
@@ -91,13 +142,33 @@ test('discovers native log cursors from registry capabilities and polls them', (
   const registry = { list: vi.fn(() => [{ key: 'claude' }]) };
 
   observer.configureNativeCliLogObserver({ enabled: true, intervalSeconds: 60, runtime, registry });
-  expect(nativeDriver.createNativeLogCursor).toHaveBeenCalledTimes(1);
+  expect(nativeDriver.createNativeLogCursor).toHaveBeenCalledWith({ skipInitialParse: true });
   expect(cursor.initialize).toHaveBeenCalledTimes(1);
 
   observer.pollNativeCliLogs({ runtime, registry });
   expect(cursor.readNewEvents).toHaveBeenCalledTimes(1);
   expect(statistics.recordRequest).toHaveBeenCalledTimes(1);
   expect(broadcastLog).toHaveBeenCalledTimes(1);
+});
+
+test('prepares cursors without polling and starts them only when requested', () => {
+  const statistics = { recordRequest: vi.fn() };
+  const cursor = {
+    initialize: vi.fn(),
+    readNewEvents: vi.fn(() => []),
+    close: vi.fn()
+  };
+  const nativeDriver = { createNativeLogCursor: vi.fn(() => cursor) };
+  const runtime = makeRuntime(statistics, nativeDriver);
+  const registry = { list: vi.fn(() => [{ key: 'claude' }]) };
+
+  const prepared = observer.prepareNativeCliLogObserver({ enabled: true, runtime, registry });
+  expect(prepared.state).toBe('prepared');
+  expect(cursor.readNewEvents).not.toHaveBeenCalled();
+
+  const started = observer.startNativeCliLogObserver({ runtime, registry, pollImmediately: true });
+  expect(started.state).toBe('running');
+  expect(cursor.readNewEvents).toHaveBeenCalledTimes(1);
 });
 
 test('does not publish or record zero-usage native records', () => {

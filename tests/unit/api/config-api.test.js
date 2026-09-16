@@ -2,9 +2,8 @@
  * Tests for src/server/api/config.js
  *
  * Pattern: inject vi.fn() stubs into require.cache before requiring the module
- * under test. Tests exercise internal logic (clampNumber, uniqueModels,
- * parseBooleanQuery, validateModelList) through the POST /advanced and
- * POST /default-models routes.
+ * under test. Tests exercise internal logic (uniqueModels, parseBooleanQuery,
+ * validateModelList) through the POST /advanced and POST /default-models routes.
  */
 
 const LOADER_PATH         = require.resolve('../../../src/config/loader');
@@ -38,11 +37,6 @@ function injectStubs() {
   loadConfig = vi.fn(() => ({
     projectsDir: '/tmp/projects',
     ports: { proxy: 9960, webUI: 9999, codexProxy: 9961, geminiProxy: 9962, opencodeProxy: 9963 },
-    pricing: {
-      claude:  { mode: 'auto', input: 3,    output: 15 },
-      codex:   { mode: 'auto', input: 2,    output: 8  },
-      gemini:  { mode: 'auto', input: 1.25, output: 10, cacheRead: 0.125 },
-    },
     defaultModels: {
       claude: ['claude-sonnet-4-6'],
       codex:  ['gpt-4.1'],
@@ -63,11 +57,6 @@ function injectStubs() {
     id: DEFAULT_PATH, filename: DEFAULT_PATH, loaded: true,
     exports: {
       ports: { proxy: 9960 },
-      pricing: {
-        claude:  { mode: 'auto', input: 3,    output: 15 },
-        codex:   { mode: 'auto', input: 2,    output: 8  },
-        gemini:  { mode: 'auto', input: 1.25, output: 10, cacheRead: 0.125 },
-      },
       defaultModels: {
         claude: ['claude-sonnet-4-6'],
         codex:  ['gpt-4.1'],
@@ -147,7 +136,6 @@ describe('GET /advanced', () => {
     expect(res.json).toHaveBeenCalled();
     const data = res._data;
     expect(data).toHaveProperty('ports');
-    expect(data).toHaveProperty('pricing');
     expect(data).toHaveProperty('modelDiscovery');
     expect(data.nativeCliLogs).toEqual({
       enabled: true,
@@ -188,7 +176,6 @@ describe('dynamic manifest ports', () => {
     try {
       loadConfig.mockReturnValue({
         ports: { webUI: 19999, demoProxy: 23100 },
-        pricing: { 'demo-cli': { mode: 'auto', input: 1, output: 2 } },
         modelDiscovery: { useV1ModelsEndpoint: false }
       });
       const customRouter = require('../../../src/server/api/config');
@@ -218,7 +205,7 @@ describe('dynamic manifest ports', () => {
 describe('POST /advanced', () => {
   test('saves config successfully with valid body', () => {
     const handler = findHandler(router, 'post', '/advanced');
-    const req = mockReq({ body: { pricing: {} } });
+    const req = mockReq({ body: {} });
     const res = mockRes();
     handler(req, res);
 
@@ -249,7 +236,6 @@ describe('POST /advanced', () => {
     const currentNativeCliLogs = { enabled: false, intervalSeconds: 17 };
     loadConfig.mockReturnValueOnce({
       ports: { proxy: 9960, webUI: 9999 },
-      pricing: {},
       modelDiscovery: { useV1ModelsEndpoint: false },
       nativeCliLogs: currentNativeCliLogs
     });
@@ -300,11 +286,6 @@ describe('POST /advanced', () => {
   test('does not force projectsDir into saved advanced config', () => {
     loadConfig.mockReturnValueOnce({
       ports: { proxy: 9960, webUI: 9999, codexProxy: 9961, geminiProxy: 9962, opencodeProxy: 9963 },
-      pricing: {
-        claude:  { mode: 'auto', input: 3, output: 15 },
-        codex:   { mode: 'auto', input: 2, output: 8 },
-        gemini:  { mode: 'auto', input: 1.25, output: 10, cacheRead: 0.125 },
-      },
       modelDiscovery: { useV1ModelsEndpoint: false },
       currentProject: 'test',
     });
@@ -316,42 +297,6 @@ describe('POST /advanced', () => {
 
     const saved = saveConfig.mock.calls[0][0];
     expect(saved).not.toHaveProperty('projectsDir');
-  });
-
-  test('clamps negative pricing values to 0', () => {
-    const handler = findHandler(router, 'post', '/advanced');
-    const req = mockReq({
-      body: {
-        pricing: {
-          claude: { mode: 'custom', input: -5, output: -100 },
-        },
-      },
-    });
-    const res = mockRes();
-    handler(req, res);
-
-    expect(saveConfig).toHaveBeenCalled();
-    const saved = saveConfig.mock.calls[0][0];
-    expect(saved.pricing.claude.input).toBe(0);
-    expect(saved.pricing.claude.output).toBe(0);
-  });
-
-  test('clamps pricing values above 1000 to 1000', () => {
-    const handler = findHandler(router, 'post', '/advanced');
-    const req = mockReq({
-      body: {
-        pricing: {
-          codex: { mode: 'custom', input: 9999, output: 2000 },
-        },
-      },
-    });
-    const res = mockRes();
-    handler(req, res);
-
-    expect(saveConfig).toHaveBeenCalled();
-    const saved = saveConfig.mock.calls[0][0];
-    expect(saved.pricing.codex.input).toBe(1000);
-    expect(saved.pricing.codex.output).toBe(1000);
   });
 
   test('returns 400 for invalid port (out of range)', () => {
@@ -395,11 +340,6 @@ describe('POST /default-models', () => {
   test('does not force projectsDir into saved defaultModels config', () => {
     loadConfig.mockReturnValueOnce({
       ports: { proxy: 9960, webUI: 9999, codexProxy: 9961, geminiProxy: 9962, opencodeProxy: 9963 },
-      pricing: {
-        claude:  { mode: 'auto', input: 3, output: 15 },
-        codex:   { mode: 'auto', input: 2, output: 8 },
-        gemini:  { mode: 'auto', input: 1.25, output: 10, cacheRead: 0.125 },
-      },
       defaultModels: {
         claude: ['claude-sonnet-4-6'],
         codex:  ['gpt-4.1'],

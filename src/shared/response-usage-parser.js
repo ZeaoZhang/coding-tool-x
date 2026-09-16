@@ -69,6 +69,8 @@ function parseUsageObject(rawUsage) {
     hasOpenAiResponseFields ||
     rawUsage.cached_tokens !== undefined ||
     rawUsage.cachedTokens !== undefined ||
+    rawUsage.cached_input_tokens !== undefined ||
+    rawUsage.cachedInputTokens !== undefined ||
     rawUsage.reasoning_tokens !== undefined ||
     rawUsage.reasoningTokens !== undefined ||
     rawUsage.completion_tokens_details !== undefined ||
@@ -93,7 +95,7 @@ function parseUsageObject(rawUsage) {
   const cacheRead = readNumericField(rawUsage, ['cache_read_input_tokens', 'cacheReadInputTokens']);
   if (cacheRead !== undefined) tokens.cacheRead = cacheRead;
 
-  const cached = readNumericField(rawUsage, ['cached_tokens', 'cachedTokens'])
+  const cached = readNumericField(rawUsage, ['cached_tokens', 'cachedTokens', 'cached_input_tokens', 'cachedInputTokens'])
     ?? readNestedNumericField(rawUsage, [
       ['input_tokens_details', 'cached_tokens'],
       ['prompt_tokens_details', 'cached_tokens'],
@@ -187,13 +189,15 @@ function parseSSEUsage(parsed, eventType) {
   // === Gemini Native 格式 ===
   // parsed.usageMetadata.{promptTokenCount, candidatesTokenCount, ...}
   if (!tokens && parsed.usageMetadata) {
+    const promptTokens = Number(parsed.usageMetadata.promptTokenCount || 0);
+    const cachedTokens = Number(parsed.usageMetadata.cachedContentTokenCount || 0);
     tokens = {
-      input: parsed.usageMetadata.promptTokenCount || 0,
+      input: Math.max(promptTokens - cachedTokens, 0),
       output: parsed.usageMetadata.candidatesTokenCount || 0,
       total: parsed.usageMetadata.totalTokenCount || 0,
     };
-    if (parsed.usageMetadata.cachedContentTokenCount) {
-      tokens.cached = parsed.usageMetadata.cachedContentTokenCount;
+    if (cachedTokens) {
+      tokens.cached = cachedTokens;
     }
     if (parsed.usageMetadata.thoughtsTokenCount) {
       tokens.reasoning = parsed.usageMetadata.thoughtsTokenCount;

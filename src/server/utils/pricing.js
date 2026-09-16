@@ -54,32 +54,24 @@ function resolveMetadataPricing(model) {
   }
 }
 
-function resolvePricing(_toolKey, modelPricing = {}, defaultPricing = {}) {
-  return { ...defaultPricing, ...(modelPricing || {}) };
-}
-
-function resolveModelPricing(_toolKey, model, fallbackPricing = {}, defaultPricing = {}) {
+function resolveModelPricing(_toolKey, model) {
   const pricingFromMetadata = resolveMetadataPricing(model);
-  return {
-    ...defaultPricing,
-    ...(fallbackPricing || {}),
-    ...(pricingFromMetadata || {})
-  };
+  return pricingFromMetadata ? { ...pricingFromMetadata } : {};
 }
 
-function getRate(pricing, defaultPricing, key) {
+function getRate(pricing, key) {
   if (typeof pricing?.[key] === 'number') return pricing[key];
-  if (typeof defaultPricing?.[key] === 'number') return defaultPricing[key];
   return 0;
 }
 
-function calculateTokenCost(pricing = {}, tokens = {}, defaultPricing = {}) {
-  const inputRate = getRate(pricing, defaultPricing, 'input');
-  const outputRate = getRate(pricing, defaultPricing, 'output');
-  const cacheCreationRate = getRate(pricing, defaultPricing, 'cacheCreation');
-  const cacheReadRate = getRate(pricing, defaultPricing, 'cacheRead');
+function calculateTokenCost(pricing = {}, tokens = {}, options = {}) {
+  const inputRate = getRate(pricing, 'input');
+  const outputRate = getRate(pricing, 'output');
+  const cacheCreationRate = getRate(pricing, 'cacheCreation');
+  const cacheReadRate = getRate(pricing, 'cacheRead');
   const inputTokens = Number(tokens.input || 0);
-  const outputTokens = Number(tokens.output || 0);
+  const outputTokens = Number(tokens.output || 0)
+    + (options.reasoningBilledAsOutput ? Number(tokens.reasoning || 0) : 0);
   const cacheCreationTokens = Number(tokens.cacheCreation || 0);
   const cacheReadTokens = Number(tokens.cacheRead || tokens.cached || 0);
 
@@ -92,7 +84,6 @@ function calculateTokenCost(pricing = {}, tokens = {}, defaultPricing = {}) {
 }
 
 module.exports = {
-  resolvePricing,
   resolveModelPricing,
   calculateTokenCost
 };

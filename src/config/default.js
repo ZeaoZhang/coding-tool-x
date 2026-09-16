@@ -33,54 +33,7 @@ const DEFAULT_CONFIG = {
     useV1ModelsEndpoint: false
   },
   defaultModels: modelMetadataConfig.defaultModels || {},
-  defaultSpeedTestModels: modelMetadataConfig.defaultSpeedTestModels || {},
-  pricing: {
-    claude: {
-      mode: 'auto',
-      input: 3,
-      output: 15,
-      cacheCreation: 3.75,
-      cacheRead: 0.30,
-      models: {
-        // All model pricing comes from src/config/model-metadata.js
-        // Add custom entries here only if you need to override official pricing
-      }
-    },
-    codex: {
-      mode: 'auto',
-      input: 2.5,
-      output: 15,
-      cacheRead: 0.25,
-      models: {
-        'gpt-5-codex': { mode: 'auto' },
-        'gpt-4o-mini': { mode: 'auto' }
-      }
-    },
-    gemini: {
-      mode: 'auto',
-      input: 1.25,
-      output: 10,
-      cacheRead: 0.125,
-      models: {
-        'gemini-2.5-pro': { mode: 'auto' },
-        'gemini-2.5-flash': { mode: 'auto' }
-      }
-    },
-    opencode: {
-      mode: 'auto',
-      input: 2.5,
-      output: 15,
-      cacheRead: 0.25,
-      models: {}
-    },
-    omp: {
-      mode: 'auto',
-      input: 2.5,
-      output: 15,
-      cacheRead: 0.25,
-      models: {}
-    }
-  }
+  defaultSpeedTestModels: modelMetadataConfig.defaultSpeedTestModels || {}
 };
 
 module.exports = DEFAULT_CONFIG;

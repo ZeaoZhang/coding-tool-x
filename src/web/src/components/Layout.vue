@@ -439,7 +439,10 @@ import { useDashboard } from '../composables/useDashboard'
 import { getRoutePlatform } from '../config/platformCatalog'
 import { buildPlatformNavigation } from '../config/platformCatalog'
 import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
-const RightPanel = defineAsyncComponent(() => import('./RightPanel.vue'))
+// RightPanel is part of every CLI route's primary layout. Keeping this shell
+// in the entry chunk avoids a circular lazy chunk (RightPanel -> app entry)
+// that leaves the panel unmounted in production browsers.
+import RightPanel from './RightPanel.vue'
 const RecentSessionsDrawer = defineAsyncComponent(() => import('./RecentSessionsDrawer.vue'))
 const FavoritesDrawer = defineAsyncComponent(() => import('./FavoritesDrawer.vue'))
 const ChatHistoryDrawer = defineAsyncComponent(() => import('./ChatHistoryDrawer.vue'))

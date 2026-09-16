@@ -788,7 +788,22 @@ const TOOL_PREFIXES = {
 function getTokenTotal(tokens) {
   if (typeof tokens === 'number') return tokens;
   if (tokens && typeof tokens === 'object') {
-    if (typeof tokens.total === 'number') return tokens.total;
+    if (typeof tokens.total === 'number' && tokens.total > 0) return tokens.total;
+
+    // Token detail fields overlap: cached/reasoning tokens are usually
+    // sub-counts of input/output. The canonical shape stores cached input
+    // separately, so include it once and never add reasoning independently.
+    const usageKeys = ['input', 'output', 'cacheCreation', 'cacheRead', 'cached'];
+    if (usageKeys.some(key => typeof tokens[key] === 'number')) {
+      const input = typeof tokens.input === 'number' ? tokens.input : 0;
+      const output = typeof tokens.output === 'number' ? tokens.output : 0;
+      const cacheCreation = typeof tokens.cacheCreation === 'number' ? tokens.cacheCreation : 0;
+      const cacheRead = typeof tokens.cacheRead === 'number'
+        ? tokens.cacheRead
+        : (typeof tokens.cached === 'number' ? tokens.cached : 0);
+      return input + output + cacheCreation + cacheRead;
+    }
+
     return Object.entries(tokens).reduce((sum, [key, value]) => {
       if (key === 'total') return sum;
       return typeof value === 'number' ? sum + value : sum;

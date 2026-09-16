@@ -31,27 +31,39 @@ describe('proxy cost calculation', () => {
     })).toBeCloseTo(11.375, 8);
   });
 
-  test('unknown Codex model uses configured base pricing', () => {
+  test('unknown model without an override has no cost', () => {
     expect(calculateCodexCost('gpt-4-retired', {
       input: 1000000,
       output: 1000000,
       cacheRead: 1000000
-    })).toBeCloseTo(17.75, 8);
+    })).toBe(0);
   });
 
-  test('unknown OpenCode model uses configured base pricing', () => {
-    expect(calculateOpenCodeCost('gpt-4-retired', {
-      input: 1000000,
-      output: 1000000,
-      cacheRead: 1000000
-    })).toBeCloseTo(17.75, 8);
+  test('normalizes cached input aliases before calculating Codex cost', () => {
+    expect(calculateCodexCost('gpt-5.5', {
+      input_tokens: 1000000,
+      cached_input_tokens: 800000,
+      output_tokens: 1000000,
+      total_tokens: 2000000
+    })).toBeCloseTo(31.4, 8);
   });
 
-  test('unknown Gemini model uses configured base pricing', () => {
-    expect(calculateGeminiCost('gemini-pro-vision-retired', {
-      input: 1000000,
-      output: 1000000,
-      cacheRead: 1000000
-    })).toBeCloseTo(11.375, 8);
+  test('normalizes nested OpenAI-compatible cached input details', () => {
+    expect(calculateOpenCodeCost('gpt-5.5', {
+      prompt_tokens: 1000000,
+      prompt_tokens_details: { cached_tokens: 800000 },
+      completion_tokens: 1000000,
+      total_tokens: 2000000
+    })).toBeCloseTo(31.4, 8);
+  });
+
+  test('charges Gemini thinking tokens at the output rate', () => {
+    expect(calculateGeminiCost('gemini-2.5-pro', {
+      promptTokenCount: 1000000,
+      cachedContentTokenCount: 200000,
+      candidatesTokenCount: 1000000,
+      thoughtsTokenCount: 100000,
+      totalTokenCount: 2100000
+    })).toBeCloseTo(12.025, 8);
   });
 });

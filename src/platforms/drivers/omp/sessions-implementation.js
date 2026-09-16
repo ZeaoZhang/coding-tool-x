@@ -2,6 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const { PATHS, HOME_DIR } = require('../../../config/paths');
 const ompConfig = require('./config');
+const {
+  normalizeUsage: normalizeNativeUsage,
+  createIncrementalJsonlCursor
+} = require('../native-log-utils');
 let sessionHistoryIndex = null;
 let ompSessionPathsOverride = null;
 
@@ -135,16 +139,20 @@ function extractMessageText(message = {}) {
 }
 
 function parseUsage(usage = {}) {
-  const input = Number(usage.input ?? usage.inputTokens ?? usage.input_tokens ?? usage.prompt_tokens ?? usage.promptTokens ?? 0) || 0;
-  const output = Number(usage.output ?? usage.outputTokens ?? usage.output_tokens ?? usage.completion_tokens ?? usage.completionTokens ?? 0) || 0;
-  const cacheRead = Number(usage.cacheRead ?? usage.cache_read ?? usage.cachedTokens ?? usage.cached_tokens ?? usage.cache_read_input_tokens ?? 0) || 0;
-  const cacheWrite = Number(usage.cacheWrite ?? usage.cache_write ?? usage.cacheCreation ?? usage.cache_creation ?? usage.cache_creation_input_tokens ?? 0) || 0;
-  const reasoning = Number(usage.reasoningTokens ?? usage.reasoning_tokens ?? 0) || 0;
-  const total = Number(usage.totalTokens ?? usage.total_tokens ?? (input + output + cacheRead + cacheWrite + reasoning)) || 0;
+  const normalized = normalizeNativeUsage(usage);
+  const input = normalized.input;
+  const output = normalized.output;
+  const cacheRead = normalized.cacheRead;
+  const cacheWrite = normalized.cacheCreation;
+  const reasoning = normalized.reasoning;
+  const total = normalized.total;
   const cost = typeof usage.cost === 'number'
     ? usage.cost
     : Number(usage.cost?.total ?? usage.cost?.usd ?? 0) || 0;
-  return { input, output, cached: cacheRead, cacheRead, cacheWrite, reasoning, total, cost };
+  return {
+    input, output, cached: normalized.cached, cacheRead, cacheWrite,
+    cacheCreation: normalized.cacheCreation, reasoning, total, cost
+  };
 }
 
 function readJsonLines(filePath) {
@@ -413,144 +421,21 @@ function getOmpUsageEvents(rootDir = getOmpSessionPaths().sessions) {
   });
 }
 
-const CURSOR_ANCHOR_BYTES = 256;
-
-function readFileRange(filePath, offset, length) {
-  if (length <= 0) {
-    return { bytesRead: 0, buffer: Buffer.alloc(0) };
-  }
-
-  const fd = fs.openSync(filePath, 'r');
-  const buffer = Buffer.alloc(length);
-  let bytesRead = 0;
-  try {
-    while (bytesRead < length) {
-      const count = fs.readSync(fd, buffer, bytesRead, length - bytesRead, offset + bytesRead);
-      if (!count) break;
-      bytesRead += count;
+function createOmpUsageEventCursor(rootDir = null, { skipInitialParse = false } = {}) {
+  return createIncrementalJsonlCursor({
+    scanFiles: () => scanSessionFiles(rootDir || getOmpSessionPaths().sessions),
+    createFileState: (filePath, _stat, previousState) => createSessionUsageParserState(
+      filePath,
+      [],
+      previousState || {}
+    ),
+    parseLine: (filePath, record, state, index) => parseSessionUsageEntry(filePath, record, index, state),
+    fsImpl: fs,
+    skipInitialParse,
+    onError: (error, filePath) => {
+      console.warn('[OMP Sessions] Failed to read changed usage events:', filePath, error.message);
     }
-  } finally {
-    fs.closeSync(fd);
-  }
-  return { bytesRead, buffer: buffer.subarray(0, bytesRead) };
-}
-
-function createCursorFileState(filePath, stat) {
-  return {
-    ...createSessionUsageParserState(filePath),
-    offset: 0,
-    remainder: '',
-    utf8Remainder: Buffer.alloc(0),
-    prefixBytes: Buffer.alloc(0),
-    tailBytes: Buffer.alloc(0),
-    device: stat.dev,
-    inode: stat.ino,
-    size: 0,
-    mtimeMs: stat.mtimeMs,
-    ctimeMs: stat.ctimeMs
-  };
-}
-
-function updateCursorAnchors(state, buffer) {
-  if (!buffer || buffer.length === 0) return;
-  if (state.prefixBytes.length < CURSOR_ANCHOR_BYTES) {
-    const prefixBytesNeeded = CURSOR_ANCHOR_BYTES - state.prefixBytes.length;
-    state.prefixBytes = Buffer.concat([
-      state.prefixBytes,
-      buffer.subarray(0, prefixBytesNeeded)
-    ]).subarray(0, CURSOR_ANCHOR_BYTES);
-  }
-  state.tailBytes = Buffer.concat([state.tailBytes, buffer]);
-  if (state.tailBytes.length > CURSOR_ANCHOR_BYTES) {
-    state.tailBytes = state.tailBytes.subarray(-CURSOR_ANCHOR_BYTES);
-  }
-}
-
-function readCursorAnchor(filePath, offset, length) {
-  return readFileRange(filePath, offset, length).buffer;
-}
-
-function isCursorFileReplaced(filePath, state, stat) {
-  const identityChanged = state.device !== stat.dev || state.inode !== stat.ino;
-  const truncated = stat.size < state.offset;
-  const metadataChanged = state.mtimeMs !== stat.mtimeMs || state.ctimeMs !== stat.ctimeMs;
-  const sameSizeRewritten = stat.size === state.size && metadataChanged;
-  if (identityChanged || truncated || sameSizeRewritten) return true;
-  if (!metadataChanged || stat.size <= state.offset) return false;
-
-  try {
-    if (state.prefixBytes.length > 0
-      && stat.size >= state.prefixBytes.length
-      && !readCursorAnchor(filePath, 0, state.prefixBytes.length).equals(state.prefixBytes)) {
-      return true;
-    }
-    if (state.tailBytes.length > 0
-      && state.offset >= state.tailBytes.length
-      && !readCursorAnchor(
-        filePath,
-        state.offset - state.tailBytes.length,
-        state.tailBytes.length
-      ).equals(state.tailBytes)) {
-      return true;
-    }
-  } catch {
-    return true;
-  }
-  return false;
-}
-
-function createOmpUsageEventCursor(rootDir = null) {
-  let fileStates = new Map();
-  let initialized = false;
-
-  return {
-    read() {
-      const files = scanSessionFiles(rootDir || getOmpSessionPaths().sessions);
-      const currentFiles = new Set(files);
-      fileStates.forEach((_state, filePath) => {
-        if (!currentFiles.has(filePath)) fileStates.delete(filePath);
-      });
-
-      const events = [];
-      files.forEach((filePath) => {
-        try {
-          const stat = fs.statSync(filePath);
-          let state = fileStates.get(filePath);
-          if (!state || isCursorFileReplaced(filePath, state, stat)) {
-            state = createCursorFileState(filePath, stat);
-            fileStates.set(filePath, state);
-          }
-
-          const bytesToRead = Math.max(0, stat.size - state.offset);
-          if (bytesToRead > 0) {
-            const { bytesRead, buffer } = readFileRange(filePath, state.offset, bytesToRead);
-            consumeSessionUsageBytes(
-              filePath,
-              buffer,
-              state,
-              initialized ? events : null
-            );
-            state.offset += bytesRead;
-            updateCursorAnchors(state, buffer);
-          }
-          state.device = stat.dev;
-          state.inode = stat.ino;
-          state.size = stat.size;
-          state.mtimeMs = stat.mtimeMs;
-          state.ctimeMs = stat.ctimeMs;
-        } catch (error) {
-          console.warn('[OMP Sessions] Failed to read changed usage events:', filePath, error.message);
-        }
-      });
-
-      initialized = true;
-      return events;
-    },
-    reset() {
-      fileStates = new Map();
-      initialized = false;
-    }
-  };
+  });
 }
 
 function loadProjectOrder() {

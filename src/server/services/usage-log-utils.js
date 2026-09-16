@@ -1,6 +1,6 @@
 'use strict';
 
-const DEFAULT_CONFIG = require('../../config/default');
+const { normalizeUsage: normalizeNativeUsage } = require('../../platforms/drivers/native-log-utils');
 const { resolveModelPricing, calculateTokenCost } = require('../utils/pricing');
 
 function toNumber(value) {
@@ -33,14 +33,23 @@ function resolveActualModel(model = '', metadata = {}) {
 
 function normalizeUsageTokens(source, tokens = {}) {
   const normalizedSource = normalizeToolSource(source);
-  const input = toNumber(tokens.input);
-  const output = toNumber(tokens.output);
-  const cacheCreation = toNumber(tokens.cacheCreation);
-  const cacheRead = toNumber(tokens.cacheRead);
-  const cached = toNumber(tokens.cached);
-  const reasoning = toNumber(tokens.reasoning);
-  let total = toNumber(tokens.total);
-  if (total <= 0) total = normalizedSource === 'claude' ? input + output + cacheCreation + cacheRead : input + output;
+  const normalizedUsage = normalizeNativeUsage(tokens);
+  const input = toNumber(normalizedUsage.input);
+  const output = toNumber(normalizedUsage.output);
+  const cacheCreation = toNumber(normalizedUsage.cacheCreation);
+  const cacheRead = toNumber(normalizedUsage.cacheRead || normalizedUsage.cached);
+  const cached = toNumber(normalizedUsage.cached || cacheRead);
+  const reasoning = toNumber(normalizedUsage.reasoning);
+  const hasPositiveReportedTotal = ['total', 'total_tokens', 'totalTokens', 'totalTokenCount']
+    .some(key => toNumber(tokens?.[key]) > 0);
+  let total = toNumber(normalizedUsage.total);
+  if (!hasPositiveReportedTotal) {
+    if (normalizedSource === 'claude') {
+      total = input + output + cacheCreation + cacheRead;
+    } else if (normalizedSource === 'gemini') {
+      total = input + output + cacheCreation + cacheRead + reasoning;
+    }
+  }
   return { input, output, cacheCreation, cacheRead, cached, reasoning, total };
 }
 
@@ -53,11 +62,10 @@ function hasMeaningfulUsage(source, tokens = {}) {
 
 function calculateUsageCost(source, model, tokens = {}) {
   const normalizedSource = normalizeToolSource(source);
-  const defaultPricing = DEFAULT_CONFIG.pricing?.[normalizedSource]
-    || DEFAULT_CONFIG.pricing?.codex
-    || {};
-  const pricing = resolveModelPricing(normalizedSource, model, {}, defaultPricing);
-  return calculateTokenCost(pricing, normalizeUsageTokens(normalizedSource, tokens), defaultPricing);
+  const pricing = resolveModelPricing(normalizedSource, model);
+  return calculateTokenCost(pricing, normalizeUsageTokens(normalizedSource, tokens), {
+    reasoningBilledAsOutput: normalizedSource === 'gemini'
+  });
 }
 
 function formatRealtimeTime(timestamp = Date.now()) {

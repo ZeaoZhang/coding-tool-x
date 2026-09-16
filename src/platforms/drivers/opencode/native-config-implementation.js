@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { NATIVE_PATHS } = require('../../../config/paths');
 const { resolveModelMetadata } = require('../../../config/model-metadata');
+const { resolveModelPricing } = require('../../../server/utils/pricing');
 
 /**
  * 根据模型 ID 查找 limit（context + output）
@@ -14,11 +15,11 @@ function resolveModelLimit(modelId) {
 
 /**
  * 根据模型 ID 查找定价信息
- * 委托给集中式 model-metadata.js
+ * 委托给集中式定价解析器（modelMetadataOverrides -> model-metadata.json）
  */
 function resolveModelCost(modelId) {
-  const meta = resolveModelMetadata(modelId);
-  return meta ? meta.pricing : null;
+  const pricing = resolveModelPricing('opencode', modelId);
+  return Object.keys(pricing).length > 0 ? pricing : null;
 }
 
 let CONFIG_DIR = NATIVE_PATHS.opencode.config;

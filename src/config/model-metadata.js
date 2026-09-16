@@ -44,7 +44,7 @@ function loadMetadataConfigFromFile() {
 
 /**
  * Resolve model metadata (limit + pricing) for a given model ID.
- * Supports: alias match -> exact match -> prefix match -> generic Claude fallback
+ * Supports: alias match -> exact match -> prefix match
  *
  * @param {string} modelId
  * @returns {{ limit: {context, output}, pricing: {input, output, cacheCreation?, cacheRead?} } | null}
@@ -69,14 +69,6 @@ function resolveModelMetadata(modelId) {
   // Prefix match
   for (const [key, meta] of Object.entries(MODEL_METADATA)) {
     if (id.startsWith(key.toLowerCase())) return meta;
-  }
-
-  // Generic fallback for unknown Claude models
-  if (id.startsWith('claude-')) {
-    return {
-      limit: { context: 200000, output: 32000 },
-      pricing: { input: 3, output: 15, cacheCreation: 3.75, cacheRead: 0.3 }
-    };
   }
 
   return null;

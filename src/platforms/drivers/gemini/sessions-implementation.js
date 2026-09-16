@@ -3,9 +3,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { HOME_DIR } = require('../../../config/paths');
 const { getGeminiDir } = require('./config');
-const DEFAULT_CONFIG = require('../../../config/default');
+const { normalizeUsageTokens } = require('../../../server/services/usage-log-utils');
 const { resolveModelPricing, calculateTokenCost } = require('../../../server/utils/pricing');
-const GEMINI_BASE_PRICING = DEFAULT_CONFIG.pricing.gemini;
 let sessionHistoryIndex = null;
 let geminiDirOverride = null;
 
@@ -509,12 +508,15 @@ function readSessionMeta(filePath) {
 
     messages.forEach(msg => {
       if (msg.tokens) {
-        totalTokens += msg.tokens.total || 0;
+        const tokens = normalizeUsageTokens('gemini', msg.tokens);
+        totalTokens += tokens.total || 0;
 
         if (msg.model) {
           model = msg.model;
-          const pricing = resolveModelPricing('gemini', msg.model, {}, GEMINI_BASE_PRICING);
-          totalCost += calculateTokenCost(pricing, msg.tokens, GEMINI_BASE_PRICING);
+          const pricing = resolveModelPricing('gemini', msg.model);
+          totalCost += calculateTokenCost(pricing, tokens, {
+            reasoningBilledAsOutput: true
+          });
         }
       }
     });

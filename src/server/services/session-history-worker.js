@@ -236,10 +236,19 @@ function attachWorkerHandler() {
 
   const { createSessionHistoryIndex } = require('./session-history-index');
   const index = createSessionHistoryIndex({ dbPath, projectsDir });
+  const finishWorker = (message, exitCode) => {
+    try {
+      index.closeSessionHistoryIndex();
+    } catch (_err) {
+      // The inventory result/error is more useful to the parent than a
+      // best-effort checkpoint failure during worker teardown.
+    }
+    _sendWorkerMessage(message, exitCode);
+  };
 
   index.ensureSourceIndexed(source, { consistency: 'complete', force })
-    .then(() => _sendWorkerMessage({ type: 'done' }, 0))
-    .catch((err) => _sendWorkerMessage({ type: 'error', error: _serializeWorkerError(err) }, 1));
+    .then(() => finishWorker({ type: 'done' }, 0))
+    .catch((err) => finishWorker({ type: 'error', error: _serializeWorkerError(err) }, 1));
 }
 
 function _sendWorkerMessage(message, exitCode, send, exit = process.exit) {

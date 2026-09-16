@@ -99,6 +99,11 @@ async function handleUI() {
       }
 
       shutdownNativeCliLogObserver();
+      try {
+        await require('../server/websocket-server').flushPendingLogs();
+      } catch (flushError) {
+        console.error(chalk.yellow(`[WARN] 日志持久化退出清理失败: ${flushError.message}`));
+      }
       console.log(chalk.green('[OK] Web UI 已停止\n'));
       process.exit(0);
     });

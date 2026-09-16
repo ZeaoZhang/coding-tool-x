@@ -6,6 +6,7 @@ const path = require('path');
 
 const PATHS_PATH = require.resolve('../../../src/config/paths');
 const MODEL_META_PATH = require.resolve('../../../src/config/model-metadata');
+const PRICING_PATH = require.resolve('../../../src/server/utils/pricing');
 const MODULE_PATH = require.resolve('../../../src/platforms/drivers/opencode/native-config-implementation');
 
 let testDir;
@@ -21,7 +22,27 @@ beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-settings-manager-'));
   configDir = path.join(testDir, '.opencode');
 
+  const known = {
+    'claude-sonnet': {
+      limit: { context: 200000, output: 8192 },
+      pricing: { input: 3, output: 15, cacheRead: 0.3, cacheCreation: 3.75 }
+    },
+    'claude-haiku': {
+      limit: { context: 200000, output: 4096 },
+      pricing: { input: 0.8, output: 4, cacheRead: 0.08, cacheCreation: 1 }
+    },
+    'gpt-4o': {
+      limit: { context: 128000, output: 16384 },
+      pricing: { input: 5, output: 15, cacheRead: 0.5, cacheCreation: 1.25 }
+    },
+    'gpt-4o-mini': {
+      limit: { context: 128000, output: 16384 },
+      pricing: { input: 0.15, output: 0.6, cacheRead: 0.015, cacheCreation: 0.03 }
+    }
+  };
+
   delete require.cache[MODULE_PATH];
+  delete require.cache[PRICING_PATH];
   require.cache[PATHS_PATH] = {
     id: PATHS_PATH,
     filename: PATHS_PATH,
@@ -40,26 +61,16 @@ beforeEach(() => {
     loaded: true,
     exports: {
       resolveModelMetadata: vi.fn((modelId) => {
-        const known = {
-          'claude-sonnet': {
-            limit: { context: 200000, output: 8192 },
-            pricing: { input: 3, output: 15, cacheRead: 0.3, cacheCreation: 3.75 }
-          },
-          'claude-haiku': {
-            limit: { context: 200000, output: 4096 },
-            pricing: { input: 0.8, output: 4, cacheRead: 0.08, cacheCreation: 1 }
-          },
-          'gpt-4o': {
-            limit: { context: 128000, output: 16384 },
-            pricing: { input: 5, output: 15, cacheRead: 0.5, cacheCreation: 1.25 }
-          },
-          'gpt-4o-mini': {
-            limit: { context: 128000, output: 16384 },
-            pricing: { input: 0.15, output: 0.6, cacheRead: 0.015, cacheCreation: 0.03 }
-          }
-        };
         return known[modelId] || null;
       })
+    }
+  };
+  require.cache[PRICING_PATH] = {
+    id: PRICING_PATH,
+    filename: PRICING_PATH,
+    loaded: true,
+    exports: {
+      resolveModelPricing: vi.fn((_toolKey, modelId) => known[modelId]?.pricing || {})
     }
   };
 
@@ -68,7 +79,7 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
-  [MODULE_PATH, PATHS_PATH, MODEL_META_PATH].forEach((mod) => {
+  [MODULE_PATH, PATHS_PATH, MODEL_META_PATH, PRICING_PATH].forEach((mod) => {
     delete require.cache[mod];
   });
 });
