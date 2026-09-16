@@ -7,14 +7,27 @@ const {
   normalizeCost,
   normalizeUsage,
   subtractUsage,
-  readFileRange,
+  usageFieldPaths,
+  createSelectiveJsonLineParser,
+  visitJsonLinesForward,
   visitJsonLinesReverse,
   walkFiles,
   createIncrementalJsonlCursor
 } = require('../native-log-utils');
 const { calculateUsageCost } = require('../../../server/services/usage-log-utils');
 
-const BOOTSTRAP_READ_BYTES = 64 * 1024;
+const CODEX_SELECTED_FIELDS = [
+  'type',
+  'timestamp',
+  'payload.type',
+  'payload.id',
+  'payload.model_provider',
+  'payload.model',
+  'payload.info.cost.total',
+  'payload.info.cost.usd',
+  'payload.info.cost.amount',
+  ...usageFieldPaths('payload.info.total_token_usage')
+];
 
 function applyCodexRecord(state, record) {
   if (record?.type === 'session_meta') {
@@ -34,14 +47,31 @@ function applyCodexRecord(state, record) {
   state.pendingCost = normalizeCost(record.payload?.info?.cost ?? usage.cost);
 }
 
-function bootstrapCodexFile(filePath, state, stat, fsImpl) {
-  const head = readFileRange(filePath, 0, Math.min(stat.size, BOOTSTRAP_READ_BYTES), fsImpl).buffer.toString('utf8');
-  head.split(/\r?\n/).forEach((line) => {
-    if (!line.trim()) return;
-    try { applyCodexRecord(state, JSON.parse(line)); } catch (_) {}
+function bootstrapCodexFile(filePath, state, stat, fsImpl, stats) {
+  const endOffset = stat.size;
+  state.sessionId = path.basename(filePath, '.jsonl');
+  state.provider = '';
+  state.model = '';
+  state.lastUsage = null;
+  state.pendingUsage = null;
+  state.pendingTimestamp = null;
+  state.pendingCost = 0;
+  visitJsonLinesForward(filePath, (record) => {
+    if (record?.type === 'session_meta') {
+      state.sessionId = record.payload?.id || state.sessionId;
+      state.provider = record.payload?.model_provider || state.provider;
+      return false;
+    }
+    return true;
+  }, {
+    fsImpl,
+    endOffset,
+    createLongLineParser: () => createSelectiveJsonLineParser(CODEX_SELECTED_FIELDS),
+    stats
   });
 
   let latestUsage = null;
+  let foundLatestModel = false;
   visitJsonLinesReverse(filePath, (record) => {
     if (record?.type === 'event_msg' && record.payload?.type === 'token_count' && !latestUsage) {
       const usage = record.payload?.info?.total_token_usage;
@@ -51,13 +81,24 @@ function bootstrapCodexFile(filePath, state, stat, fsImpl) {
         state.pendingCost = normalizeCost(record.payload?.info?.cost ?? usage.cost);
       }
     }
-    if (record?.type === 'turn_context' && !state.model) {
-      state.model = record.payload?.model || state.model;
+    if (record?.type === 'turn_context' && !foundLatestModel) {
+      const model = record.payload?.model;
+      if (model) {
+        state.model = model;
+        foundLatestModel = true;
+      }
     }
-    return !(latestUsage && state.model);
-  }, { fsImpl });
+    return !(latestUsage && foundLatestModel);
+  }, {
+    fsImpl,
+    endOffset,
+    includeTrailingLine: false,
+    createLongLineParser: () => createSelectiveJsonLineParser(CODEX_SELECTED_FIELDS),
+    stats
+  });
   if (latestUsage) state.lastUsage = latestUsage;
   state.pendingUsage = null;
+  return { ok: true };
 }
 
 function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
@@ -67,7 +108,7 @@ function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
   return {
     platform: 'codex',
     capability: 'nativeLogs',
-    createNativeLogCursor({ fs: cursorFs = fsImpl, skipInitialParse = false } = {}) {
+    createNativeLogCursor({ fs: cursorFs = fsImpl, skipInitialParse = false, onDiagnostic } = {}) {
       const scanFiles = () => walkFiles(resolvedNativeRoot, name => /^rollout-.*\.jsonl$/.test(name), cursorFs);
       return createIncrementalJsonlCursor({
         scanFiles,
@@ -82,7 +123,7 @@ function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
           pendingTimestamp: null,
           pendingCost: 0
         }),
-        bootstrapFile: (filePath, state, stat) => bootstrapCodexFile(filePath, state, stat, cursorFs),
+        bootstrapFile: (filePath, state, stat, stats) => bootstrapCodexFile(filePath, state, stat, cursorFs, stats),
         parseLine: (_filePath, record, state) => {
           applyCodexRecord(state, record);
           return null;
@@ -111,6 +152,8 @@ function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
           state.pendingCost = 0;
           return event;
         },
+        createLongLineParser: () => createSelectiveJsonLineParser(CODEX_SELECTED_FIELDS),
+        onDiagnostic,
         onError: (error, filePath) => {
           console.warn('[Codex Native Logs] Failed to read changed usage events:', filePath, error.message);
         }

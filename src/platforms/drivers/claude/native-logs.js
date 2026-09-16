@@ -6,10 +6,20 @@ const { NATIVE_PATHS } = require('../../../config/paths');
 const {
   normalizeUsage,
   normalizeCost,
+  usageFieldPaths,
+  createSelectiveJsonLineParser,
   walkFiles,
   createIncrementalJsonlCursor
 } = require('../native-log-utils');
 const { calculateUsageCost } = require('../../../server/services/usage-log-utils');
+
+const CLAUDE_SELECTED_FIELDS = [
+  'type', 'role', 'uuid', 'id', 'model', 'timestamp', 'provider', 'cost', 'channelId', 'channel',
+  'message.role', 'message.id', 'message.uuid', 'message.model', 'message.timestamp',
+  'message.provider', 'message.cost', 'message.channelId', 'message.channel',
+  ...usageFieldPaths('usage'),
+  ...usageFieldPaths('message.usage')
+];
 
 function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
   const resolvedNativeRoot = pathContext?.customized
@@ -18,7 +28,7 @@ function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
   return {
     platform: 'claude',
     capability: 'nativeLogs',
-    createNativeLogCursor({ fs: cursorFs = fsImpl, skipInitialParse = false } = {}) {
+    createNativeLogCursor({ fs: cursorFs = fsImpl, skipInitialParse = false, onDiagnostic } = {}) {
       const scanFiles = () => walkFiles(resolvedNativeRoot, name => name.endsWith('.jsonl') && !name.startsWith('agent-'), cursorFs);
       const parseLine = (filePath, record) => {
         const message = record.message && typeof record.message === 'object' ? record.message : {};
@@ -48,6 +58,8 @@ function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
         parseLine,
         fsImpl: cursorFs,
         skipInitialParse,
+        createLongLineParser: () => createSelectiveJsonLineParser(CLAUDE_SELECTED_FIELDS),
+        onDiagnostic,
         onError: (error, filePath) => {
           console.warn('[Claude Native Logs] Failed to read changed usage events:', filePath, error.message);
         }

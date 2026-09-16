@@ -28,6 +28,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  delete process.env.CC_TOOL_MEMORY_TRACE;
   observer?.shutdownNativeCliLogObserver();
   delete require.cache[OBSERVER_PATH];
   delete require.cache[RUNTIME_PATH];
@@ -181,4 +182,52 @@ test('does not publish or record zero-usage native records', () => {
   }, runtime)).toBe(false);
   expect(broadcastLog).not.toHaveBeenCalled();
   expect(statistics.recordRequest).not.toHaveBeenCalled();
+});
+
+test('memory tracing reports per-platform cursor phases and bounded reader counters without log content', () => {
+  process.env.CC_TOOL_MEMORY_TRACE = '1';
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const statistics = { recordRequest: vi.fn() };
+  const cursor = {
+    initialize: vi.fn(),
+    readNewEvents: vi.fn(() => []),
+    close: vi.fn()
+  };
+  const nativeDriver = {
+    createNativeLogCursor: vi.fn(options => {
+      options.onDiagnostic?.({ files: 2, bytesRead: 1234, parsedRecords: 7, maxLineLength: 256 });
+      return cursor;
+    })
+  };
+  const runtime = makeRuntime(statistics, nativeDriver);
+  const registry = { list: vi.fn(() => [{ key: 'codex' }]) };
+
+  observer.prepareNativeCliLogObserver({ enabled: true, runtime, registry });
+  observer.pollNativeCliLogs({ runtime, registry });
+
+  const records = log.mock.calls
+    .map(([line]) => String(line))
+    .filter(line => line.startsWith('[MEM] native-log '))
+    .map(line => JSON.parse(line.slice('[MEM] native-log '.length)));
+  expect(records.map(record => record.stage)).toEqual([
+    'cursor-initialize-before',
+    'cursor-initialize-after',
+    'first-poll-before',
+    'first-poll-after'
+  ]);
+  expect(records[1]).toEqual(expect.objectContaining({
+    pid: process.pid,
+    platform: 'codex',
+    files: 2,
+    bytesRead: 1234,
+    parsedRecords: 7,
+    maxLineLength: 256,
+    rss: expect.any(Number),
+    heapTotal: expect.any(Number),
+    heapUsed: expect.any(Number),
+    external: expect.any(Number),
+    arrayBuffers: expect.any(Number)
+  }));
+  expect(records.every(record => !Object.prototype.hasOwnProperty.call(record, 'sessionId'))).toBe(true);
+  log.mockRestore();
 });

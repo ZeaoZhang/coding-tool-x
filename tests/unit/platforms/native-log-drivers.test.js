@@ -9,7 +9,12 @@ const claudeDriver = require('../../../src/platforms/drivers/claude/native-logs'
 const codexDriver = require('../../../src/platforms/drivers/codex/native-logs');
 const geminiDriver = require('../../../src/platforms/drivers/gemini/native-logs');
 const opencodeDriver = require('../../../src/platforms/drivers/opencode/native-logs');
-const { createScannedFileCursor } = require('../../../src/platforms/drivers/native-log-utils');
+const {
+  createScannedFileCursor,
+  createSelectiveJsonLineParser,
+  visitJsonLinesForward,
+  visitJsonLinesReverse
+} = require('../../../src/platforms/drivers/native-log-utils');
 
 let testDir;
 
@@ -142,6 +147,198 @@ describe('file-backed native log cursors', () => {
     })]);
     expect(fullReads).toBe(0);
     expect(chunkReads).toBeGreaterThan(0);
+  });
+
+  test('Codex baseline fixes the file watermark and consumes an append made during bootstrap once', () => {
+    const filePath = path.join(testDir, 'codex', 'rollout-watermark.jsonl');
+    const baseline = [
+      { type: 'session_meta', payload: { id: 'session-watermark', model_provider: 'openai' } },
+      { type: 'turn_context', payload: { model: 'gpt-5' } },
+      { type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 100, total_tokens: 100 } } } }
+    ];
+    writeJsonLines(filePath, baseline);
+    const appended = JSON.stringify({
+      type: 'event_msg',
+      payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 150, total_tokens: 150 } } }
+    }) + '\n';
+    let appendedDuringBootstrap = false;
+    const trackedFs = {
+      ...fs,
+      readSync(...args) {
+        const result = fs.readSync(...args);
+        if (!appendedDuringBootstrap) {
+          appendedDuringBootstrap = true;
+          fs.appendFileSync(filePath, appended);
+        }
+        return result;
+      }
+    };
+    const cursor = codexDriver.createDriver({ nativeRoot: path.dirname(filePath), fsImpl: trackedFs })
+      .createNativeLogCursor({ fs: trackedFs, skipInitialParse: true });
+
+    cursor.initialize();
+    expect(cursor.readNewEvents()).toEqual([expect.objectContaining({
+      tokens: expect.objectContaining({ input: 50, total: 50 })
+    })]);
+    expect(cursor.readNewEvents()).toEqual([]);
+  });
+
+  test('Codex uses the newest model independently from the head metadata and ignores an incomplete tail until newline', () => {
+    const filePath = path.join(testDir, 'codex', 'rollout-model.jsonl');
+    const baseline = [
+      { type: 'session_meta', payload: { id: 'session-model', model_provider: 'openai' } },
+      { type: 'turn_context', payload: { model: 'old-model' } },
+      { type: 'event_msg', payload: { type: 'noise', payload: { text: '"type":"turn_context"' } } },
+      { type: 'turn_context', payload: { model: 'new-model' } },
+      { type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 100, total_tokens: 100 } } } }
+    ];
+    writeJsonLines(filePath, baseline);
+    const tail = JSON.stringify({
+      payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 150, total_tokens: 150 } } },
+      type: 'event_msg'
+    });
+    fs.appendFileSync(filePath, tail);
+    const cursor = codexDriver.createDriver({ nativeRoot: path.dirname(filePath) })
+      .createNativeLogCursor({ skipInitialParse: true });
+    cursor.initialize();
+    expect(cursor.readNewEvents()).toEqual([]);
+    fs.appendFileSync(filePath, '\n');
+    expect(cursor.readNewEvents()).toEqual([expect.objectContaining({
+      model: 'new-model',
+      tokens: expect.objectContaining({ input: 50, total: 50 })
+    })]);
+  });
+
+  test('long JSONL records retain selected usage while skipping large unselected message content', () => {
+    const filePath = path.join(testDir, 'claude', 'long-session.jsonl');
+    writeJsonLines(filePath, [{
+      type: 'assistant',
+      uuid: 'old',
+      message: { role: 'assistant', usage: { input_tokens: 1, output_tokens: 1 } }
+    }]);
+    const cursor = claudeDriver.createDriver({ nativeRoot: path.dirname(filePath) }).createNativeLogCursor();
+    cursor.initialize();
+    fs.appendFileSync(filePath, JSON.stringify({
+      type: 'assistant',
+      uuid: 'long',
+      message: {
+        role: 'assistant',
+        model: 'claude-sonnet',
+        content: 'x'.repeat(300 * 1024),
+        usage: { input_tokens: 20, output_tokens: 5 }
+      }
+    }) + '\n');
+    expect(cursor.readNewEvents()).toEqual([expect.objectContaining({
+      id: 'long-session.jsonl:long',
+      tokens: expect.objectContaining({ input: 20, output: 5, total: 25 })
+    })]);
+  });
+
+  test('a permanently damaged long row is discarded so later valid rows continue', () => {
+    const filePath = path.join(testDir, 'claude', 'long-corrupt-session.jsonl');
+    writeJsonLines(filePath, [{
+      type: 'assistant',
+      uuid: 'old',
+      message: { role: 'assistant', usage: { input_tokens: 1, output_tokens: 1 } }
+    }]);
+    const diagnostics = [];
+    const cursor = claudeDriver.createDriver({ nativeRoot: path.dirname(filePath) })
+      .createNativeLogCursor({ onDiagnostic: details => diagnostics.push(details) });
+    cursor.initialize();
+    fs.appendFileSync(filePath, `{"type":"assistant","uuid":"bad","message":{"role":"assistant","content":"${'x'.repeat(300 * 1024)}\n`);
+    fs.appendFileSync(filePath, JSON.stringify({
+      type: 'assistant',
+      uuid: 'after-bad',
+      message: { role: 'assistant', usage: { input_tokens: 6, output_tokens: 2 } }
+    }) + '\n');
+
+    expect(cursor.readNewEvents()).toEqual([expect.objectContaining({
+      id: 'long-corrupt-session.jsonl:after-bad',
+      tokens: expect.objectContaining({ input: 6, output: 2, total: 8 })
+    })]);
+    expect(diagnostics.at(-1)).toEqual(expect.objectContaining({ parseErrors: 1, parsedRecords: 1 }));
+  });
+
+  test('incremental reads reuse one 64 KiB scratch buffer for all chunks in an operation', () => {
+    const filePath = path.join(testDir, 'claude', 'scratch-session.jsonl');
+    writeJsonLines(filePath, Array.from({ length: 4000 }, (_, index) => ({
+      type: 'assistant',
+      uuid: `assistant-${index}`,
+      message: { role: 'assistant', usage: { input_tokens: 1, output_tokens: 1 } }
+    })));
+    const scratchBuffers = new Set();
+    const trackedFs = {
+      ...fs,
+      readSync(fd, buffer, ...args) {
+        if (buffer.length === 64 * 1024) scratchBuffers.add(buffer);
+        return fs.readSync(fd, buffer, ...args);
+      }
+    };
+    const cursor = claudeDriver.createDriver({ nativeRoot: path.dirname(filePath), fsImpl: trackedFs })
+      .createNativeLogCursor({ fs: trackedFs });
+    cursor.initialize();
+    expect(scratchBuffers.size).toBe(1);
+  });
+
+  test('a failed baseline read is retried and never advances the file watermark', () => {
+    const filePath = path.join(testDir, 'codex', 'rollout-read-failure.jsonl');
+    writeJsonLines(filePath, [
+      { type: 'session_meta', payload: { id: 'session-read-failure', model_provider: 'openai' } },
+      { type: 'turn_context', payload: { model: 'gpt-5' } },
+      { type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 100, total_tokens: 100 } } } }
+    ]);
+    let failReads = true;
+    const trackedFs = {
+      ...fs,
+      readSync(fd, buffer, ...args) {
+        if (failReads) return 0;
+        return fs.readSync(fd, buffer, ...args);
+      }
+    };
+    const cursor = codexDriver.createDriver({ nativeRoot: path.dirname(filePath), fsImpl: trackedFs })
+      .createNativeLogCursor({ fs: trackedFs, skipInitialParse: true });
+    cursor.initialize();
+    failReads = false;
+    cursor.initialize();
+    expect(cursor.readNewEvents()).toEqual([]);
+    fs.appendFileSync(filePath, JSON.stringify({
+      type: 'event_msg',
+      payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 150, total_tokens: 150 } } }
+    }) + '\n');
+    expect(cursor.readNewEvents()).toEqual([expect.objectContaining({
+      tokens: expect.objectContaining({ input: 50, total: 50 })
+    })]);
+  });
+
+  test('selective JSON parsing handles escaped strings, reordered fields, nested values and chunk boundaries', () => {
+    const parser = createSelectiveJsonLineParser([
+      'type', 'payload.model', 'payload.info.total_token_usage.total', 'message.usage.input'
+    ]);
+    const line = JSON.stringify({
+      ignored: { body: 'x'.repeat(300 * 1024), pseudo: '"type":"fake"' },
+      message: { usage: { input: 7 } },
+      payload: { info: { total_token_usage: { total: 150 } }, model: 'gpt-5\n最新' },
+      type: 'event_msg'
+    });
+    for (let index = 0; index < line.length; index += 97) parser.write(line.slice(index, index + 97));
+    expect(parser.finish()).toEqual({
+      type: 'event_msg',
+      payload: { model: 'gpt-5\n最新', info: { total_token_usage: { total: 150 } } },
+      message: { usage: { input: 7 } }
+    });
+  });
+
+  test('forward and reverse scanners honor a fixed watermark and complete-line semantics', () => {
+    const filePath = path.join(testDir, 'codex', 'scan.jsonl');
+    const complete = [JSON.stringify({ id: 'one' }), JSON.stringify({ id: 'two' })].join('\n') + '\n';
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, complete + JSON.stringify({ id: 'partial' }));
+    const forward = [];
+    visitJsonLinesForward(filePath, record => { forward.push(record.id); }, { endOffset: Buffer.byteLength(complete) });
+    const reverse = [];
+    visitJsonLinesReverse(filePath, record => { reverse.push(record.id); }, { includeTrailingLine: false });
+    expect(forward).toEqual(['one', 'two']);
+    expect(reverse).toEqual(['two', 'one']);
   });
 
   test('Codex normalizes cached_input_tokens as a separately billable cache read', () => {
@@ -305,6 +502,24 @@ describe('file-backed native log cursors', () => {
       })
     ]);
     expect(cursor.readNewEvents()).toEqual([]);
+  });
+
+  test('Gemini JSONL keeps usage from an oversized message body', () => {
+    const filePath = path.join(testDir, 'gemini', 'session-long.jsonl');
+    writeJsonLines(filePath, [{ id: 'old', usage: { input_tokens: 1, output_tokens: 1 } }]);
+    const cursor = geminiDriver.createDriver({ nativeRoot: path.dirname(filePath) }).createNativeLogCursor();
+    cursor.initialize();
+    fs.appendFileSync(filePath, JSON.stringify({
+      id: 'long',
+      message: {
+        content: 'x'.repeat(300 * 1024),
+        usage: { input_tokens: 12, output_tokens: 4 }
+      }
+    }) + '\n');
+    expect(cursor.readNewEvents()).toEqual([expect.objectContaining({
+      id: 'session-long.jsonl:long',
+      tokens: expect.objectContaining({ input: 12, output: 4, total: 16 })
+    })]);
   });
 
   test('Gemini oversized JSON sessions are not parsed and warn only once', () => {

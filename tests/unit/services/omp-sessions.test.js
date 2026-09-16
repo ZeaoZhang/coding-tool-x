@@ -321,6 +321,27 @@ describe('OMP session parser', () => {
     ]);
   });
 
+  test('streams oversized OMP message rows without retaining message content', () => {
+    const sessionFile = path.join(sessionDir, 'session-long-row.jsonl');
+    writeJsonl(sessionFile, [{ type: 'session', version: 3, id: 'omp-session-long-row' }]);
+    const { createOmpUsageEventCursor } = loadModule();
+    const cursor = createOmpUsageEventCursor(sessionDir);
+    cursor.initialize();
+    appendJsonl(sessionFile, [{
+      type: 'message',
+      id: 'long-assistant',
+      message: {
+        role: 'assistant',
+        content: 'x'.repeat(300 * 1024),
+        usage: { input: 9, output: 3 }
+      }
+    }]);
+    expect(cursor.readNewEvents()).toEqual([expect.objectContaining({
+      id: 'omp-session-long-row:long-assistant',
+      usage: expect.objectContaining({ input: 9, output: 3, total: 12 })
+    })]);
+  });
+
   test('emits all complete events from a file created after the baseline', () => {
     const { createOmpUsageEventCursor } = loadModule();
     const cursor = createOmpUsageEventCursor(sessionDir);
