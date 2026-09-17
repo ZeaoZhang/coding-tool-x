@@ -10,6 +10,7 @@ const portHelper = require('../src/utils/port-helper');
 const { isWindowsLikeRuntime, parsePidsFromNetstatOutput } = portHelper;
 const notificationHooks = require('../src/platforms/notification-hooks');
 const logsCommand = require('../src/commands/logs');
+const uiCommand = require('../src/commands/ui');
 const pm2Autostart = require('../src/server/api/pm2-autostart');
 const daemonCommand = require('../src/commands/daemon');
 const codexSettingsManager = require('../src/platforms/drivers/codex/native-config-implementation');
@@ -19,6 +20,7 @@ function run() {
   const hookTest = notificationHooks._test || {};
   const notificationHookTest = notificationHooks._test || {};
   const logsTest = logsCommand._test || {};
+  const uiTest = uiCommand._test || {};
   const pm2Test = pm2Autostart._test || {};
   const mcpClientTest = mcpClient._test || {};
   const portHelperTest = portHelper._test || {};
@@ -32,6 +34,7 @@ function run() {
   assert.strictEqual(typeof notificationHookTest.generateSystemNotificationCommand, 'function', '缺少 generateSystemNotificationCommand 测试导出');
   assert.strictEqual(typeof isSameOriginRequest, 'function', '缺少 isSameOriginRequest 导出');
   assert.strictEqual(typeof logsTest.buildFollowProcessSpec, 'function', '缺少 buildFollowProcessSpec 测试导出');
+  assert.strictEqual(typeof uiTest.buildWindowsOpenSpec, 'function', '缺少 buildWindowsOpenSpec 测试导出');
   assert.strictEqual(typeof pm2Test.getExecOptions, 'function', '缺少 getExecOptions 测试导出');
   assert.strictEqual(typeof mcpClientTest.createMissingCommandHint, 'function', '缺少 createMissingCommandHint 测试导出');
   assert.strictEqual(typeof portHelperTest.isMissingCommandError, 'function', '缺少 isMissingCommandError 测试导出');
@@ -169,6 +172,27 @@ function run() {
   const unixFollowSpec = logsTest.buildFollowProcessSpec('/tmp/cc-tool-out.log', 'linux');
   assert.strictEqual(unixFollowSpec.command, 'tail', 'Unix 日志跟踪应使用 tail');
   assert.deepStrictEqual(unixFollowSpec.args, ['-n', '50', '-f', '/tmp/cc-tool-out.log'], 'Unix 日志跟踪参数不正确');
+
+  const windowsOpenSpec = uiTest.buildWindowsOpenSpec('http://localhost:19999', { SystemRoot: 'C:\\Windows' });
+  assert.strictEqual(
+    windowsOpenSpec.command,
+    'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    'Windows 浏览器启动应使用系统 PowerShell'
+  );
+  assert.strictEqual(windowsOpenSpec.args.includes('-NoProfile'), true, 'Windows 浏览器启动应带 -NoProfile');
+  assert.strictEqual(windowsOpenSpec.args.includes('-NonInteractive'), true, 'Windows 浏览器启动应带 -NonInteractive');
+  assert.strictEqual(windowsOpenSpec.args.some(arg => String(arg).includes('Start-Process')), true, 'Windows 浏览器启动应通过 Start-Process');
+  assert.strictEqual(windowsOpenSpec.options.windowsHide, true, 'Windows 浏览器启动必须隐藏 PowerShell 控制台窗口');
+
+  const windowsPortProbeSpec = portHelperTest.buildWindowsPortProbeSpec();
+  assert.deepStrictEqual(windowsPortProbeSpec.args, ['-ano'], 'Windows 端口检测应直接读取 netstat 输出');
+  assert.strictEqual(windowsPortProbeSpec.command, 'netstat.exe', 'Windows 端口检测不应经过 cmd/findstr');
+  assert.strictEqual(windowsPortProbeSpec.options.windowsHide, true, 'Windows 端口检测必须隐藏控制台窗口');
+  const windowsKillSpec = portHelperTest.buildWindowsKillSpec(1234);
+  assert.deepStrictEqual(windowsKillSpec.args, ['/F', '/PID', '1234'], 'Windows 端口清理应使用分离参数调用 taskkill');
+  assert.strictEqual(windowsKillSpec.command, 'taskkill.exe', 'Windows 端口清理应直接调用 taskkill');
+  assert.strictEqual(windowsKillSpec.options.windowsHide, true, 'Windows 端口清理必须隐藏控制台窗口');
+  assert.strictEqual(daemonTest.buildStartOptions(19999, false, false).windowsHide, true, 'PM2 Node 服务必须隐藏 Windows 控制台窗口');
 
   const winExecOptions = pm2Test.getExecOptions(30000, 'win32');
   assert.deepStrictEqual(winExecOptions, { timeout: 30000, windowsHide: true }, 'Windows PM2 exec 选项不应强制 /bin/bash');

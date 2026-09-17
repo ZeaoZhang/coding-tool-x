@@ -4,7 +4,37 @@ const net = require('net');
 const portHelper = require('../../../src/utils/port-helper');
 
 const { parsePidsFromNetstatOutput, getPortToolIssue, formatPortToolIssue, isPortInUse } = portHelper;
-const { isMissingCommandError, createPortToolIssue, formatPortToolIssue: formatFromTest } = portHelper._test;
+const {
+  isMissingCommandError,
+  createPortToolIssue,
+  formatPortToolIssue: formatFromTest,
+  buildWindowsPortProbeSpec,
+  buildWindowsKillSpec
+} = portHelper._test;
+
+describe('Windows process command specs', () => {
+  test('uses one hidden direct netstat process without cmd/findstr', () => {
+    expect(buildWindowsPortProbeSpec()).toEqual({
+      command: 'netstat.exe',
+      args: ['-ano'],
+      options: expect.objectContaining({
+        encoding: 'utf-8',
+        windowsHide: true
+      })
+    });
+  });
+
+  test('uses a hidden direct taskkill process with argument separation', () => {
+    expect(buildWindowsKillSpec(12345)).toEqual({
+      command: 'taskkill.exe',
+      args: ['/F', '/PID', '12345'],
+      options: expect.objectContaining({
+        stdio: 'ignore',
+        windowsHide: true
+      })
+    });
+  });
+});
 
 // ---------------------------------------------------------------------------
 // parsePidsFromNetstatOutput
