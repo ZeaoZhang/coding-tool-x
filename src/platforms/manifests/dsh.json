@@ -1,0 +1,356 @@
+{
+  "key": "dsh",
+  "title": "DeepSeek Harness",
+  "label": "DSH",
+  "command": "dsh",
+  "iconToken": "terminal",
+  "color": "#2563eb",
+  "defaultVisible": true,
+  "defaultEnabled": false,
+  "sortOrder": 50,
+  "modelConfig": { "catalogKey": "dsh" },
+  "helpLabel": "DSH 本地配置与会话",
+  "cliSelectable": false,
+  "pathResolverId": "dsh",
+  "resourceTypes": {
+    "skills": false,
+    "commands": false,
+    "agents": false,
+    "plugins": false
+  },
+  "agentCapabilities": {
+    "projectScope": false,
+    "repoOperations": false
+  },
+  "api": {
+    "prefix": "dsh",
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/projects",
+        "capability": "projects",
+        "operation": "listProjects",
+        "request": "default",
+        "response": "projects-list"
+      },
+      {
+        "method": "POST",
+        "path": "/projects/order",
+        "capability": "projects",
+        "operation": "saveProjectOrder",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "DELETE",
+        "path": "/projects/:projectName",
+        "capability": "projects",
+        "operation": "deleteProject",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/sessions/:projectName",
+        "capability": "sessions",
+        "operation": "listSessions",
+        "request": "default",
+        "response": "sessions-list"
+      },
+      {
+        "method": "GET",
+        "path": "/sessions/search/global",
+        "capability": "sessions",
+        "operation": "searchAcrossProjects",
+        "request": "default",
+        "response": "sessions-list"
+      },
+      {
+        "method": "GET",
+        "path": "/sessions/recent/list",
+        "capability": "sessions",
+        "operation": "recent",
+        "request": "default",
+        "response": "sessions-list"
+      },
+      {
+        "method": "GET",
+        "path": "/sessions/:projectName/search",
+        "capability": "sessions",
+        "operation": "search",
+        "request": "default",
+        "response": "sessions-list"
+      },
+      {
+        "method": "GET",
+        "path": "/sessions/:projectName/:sessionId/status",
+        "capability": "sessions",
+        "operation": "status",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/sessions/:projectName/:sessionId/outline",
+        "capability": "sessions",
+        "operation": "outline",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/sessions/:projectName/:sessionId/messages",
+        "capability": "sessions",
+        "operation": "messages",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "DELETE",
+        "path": "/sessions/:projectName/:sessionId",
+        "capability": "sessions",
+        "operation": "delete",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/sessions/:projectName/batch-delete",
+        "capability": "sessions",
+        "operation": "batchDelete",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/sessions/:projectName/:sessionId/fork",
+        "capability": "sessions",
+        "operation": "fork",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/sessions/:projectName/order",
+        "capability": "sessions",
+        "operation": "saveSessionOrder",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/sessions/:projectName/:sessionId/launch",
+        "capability": "sessions",
+        "operation": "launch",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/config",
+        "capability": "api",
+        "operation": "getConfig",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "PATCH",
+        "path": "/config/settings",
+        "capability": "api",
+        "operation": "updateConfig",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/config/capabilities",
+        "capability": "api",
+        "operation": "getConfigCapabilities",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/config/auth-providers",
+        "capability": "api",
+        "operation": "getConfigAuthProviders",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/config/resources",
+        "capability": "api",
+        "operation": "getConfigResources",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/profiles",
+        "capability": "api",
+        "operation": "listProfiles",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/plugins",
+        "capability": "api",
+        "operation": "listPlugins",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/profiles/:profileName/plugins",
+        "capability": "api",
+        "operation": "listProfilePlugins",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/profiles/:profileName/plugins/install",
+        "capability": "api",
+        "operation": "installPlugin",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "DELETE",
+        "path": "/profiles/:profileName/plugins/:pluginName",
+        "capability": "api",
+        "operation": "uninstallPlugin",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/profiles/:profileName/plugins/update",
+        "capability": "api",
+        "operation": "updatePlugin",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/profiles/:profileName/capabilities",
+        "capability": "api",
+        "operation": "listProfileCapabilities",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/profiles/:profileName/mcp",
+        "capability": "api",
+        "operation": "listProfileMcp",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/profiles/:profileName/mcp",
+        "capability": "api",
+        "operation": "upsertMcp",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "PATCH",
+        "path": "/profiles/:profileName/mcp/:serverId",
+        "capability": "api",
+        "operation": "upsertMcp",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "DELETE",
+        "path": "/profiles/:profileName/mcp/:serverId",
+        "capability": "api",
+        "operation": "deleteMcp",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/profiles/:profileName/prompts",
+        "capability": "api",
+        "operation": "listProfilePrompts",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/profiles/:profileName/prompts",
+        "capability": "api",
+        "operation": "upsertPrompt",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "PATCH",
+        "path": "/profiles/:profileName/prompts/:promptId",
+        "capability": "api",
+        "operation": "upsertPrompt",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "DELETE",
+        "path": "/profiles/:profileName/prompts/:promptId",
+        "capability": "api",
+        "operation": "deletePrompt",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/skills",
+        "capability": "api",
+        "operation": "listSkills",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/skills",
+        "capability": "api",
+        "operation": "createSkill",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "PUT",
+        "path": "/skills/:skillName",
+        "capability": "api",
+        "operation": "updateSkill",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "DELETE",
+        "path": "/skills/:skillName",
+        "capability": "api",
+        "operation": "deleteSkill",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/skills/:skillName",
+        "capability": "api",
+        "operation": "getSkill",
+        "request": "default",
+        "response": "default"
+      }
+    ]
+  },
+  "capabilities": {
+    "projects": "dsh-projects",
+    "sessions": "dsh-sessions",
+    "nativeConfig": "dsh-native-config",
+    "api": "dsh-api"
+  }
+}

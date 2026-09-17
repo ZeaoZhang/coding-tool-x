@@ -26,6 +26,7 @@ function getAiConfigMap(registry = getPlatformContext().registry) {
   return Object.fromEntries(
     registry.list({ enabledOnly: true })
       .filter(platform => platform && platform.key)
+      .filter(platform => platform.resourceTypes?.commands !== false)
       .map(platform => [platform.key, {
         fileName: platform.promptFile || null,
         name: platform.promptLabel

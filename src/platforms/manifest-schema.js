@@ -17,7 +17,11 @@ const DRIVER_IDS = new Set([
   'legacy:opencode',
   'legacy:omp',
   'opencode-conversion',
-  'claude-health'
+  'claude-health',
+  'dsh-api',
+  'dsh-projects',
+  'dsh-sessions',
+  'dsh-native-config'
 ]);
 
 const PATH_RESOLVER_IDS = new Set([
@@ -26,7 +30,8 @@ const PATH_RESOLVER_IDS = new Set([
   'codex',
   'gemini',
   'opencode',
-  'omp'
+  'omp',
+  'dsh'
 ]);
 
 const API_ROUTE_DESCRIPTOR_SCHEMA = {
@@ -46,7 +51,31 @@ const API_ROUTE_DESCRIPTOR_SCHEMA = {
 const API_ROUTE_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 
 const CAPABILITY_OPERATIONS = Object.freeze({
-  api: new Set(['getConfig', 'getConfigAuthProviders', 'getConfigCapabilities', 'getConfigResources']),
+  api: new Set([
+    'getConfig',
+    'getConfigAuthProviders',
+    'getConfigCapabilities',
+    'getConfigResources',
+    'updateConfig',
+    'listProfiles',
+    'listPlugins',
+    'listProfilePlugins',
+    'listProfileCapabilities',
+    'listProfileMcp',
+    'listProfilePrompts',
+    'installPlugin',
+    'uninstallPlugin',
+    'updatePlugin',
+    'upsertMcp',
+    'deleteMcp',
+    'upsertPrompt',
+    'deletePrompt',
+    'listSkills',
+    'getSkill',
+    'createSkill',
+    'updateSkill',
+    'deleteSkill'
+  ]),
   channels: new Set(['applyToSettings', 'bestForRestore', 'catalogMetadata', 'create', 'current', 'enabled', 'getAuth', 'getAuthQuota', 'list', 'models', 'order', 'poolStatus', 'probeModels', 'remove', 'resetHealth', 'speedTest', 'speedTestAll', 'sync', 'syncLocalAuth', 'update']),
   health: new Set(['healthCheck']),
   hooks: new Set(['getHooks', 'saveHooks', 'testHooks']),

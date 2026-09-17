@@ -18,7 +18,8 @@ const BUILT_IN_MANIFESTS = [
   require('./manifests/codex.json'),
   require('./manifests/gemini.json'),
   require('./manifests/opencode.json'),
-  require('./manifests/omp.json')
+  require('./manifests/omp.json'),
+  require('./manifests/dsh.json')
 ];
 
 function getDefaultPlatformsFile(env = process.env, homeDir = os.homedir()) {
