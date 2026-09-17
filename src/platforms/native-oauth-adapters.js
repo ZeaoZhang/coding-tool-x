@@ -321,12 +321,22 @@ function parseCodexAuthPayload(raw) {
   const idTokenPayload = decodeJwtPayload(tokens.id_token);
   const accessTokenPayload = decodeJwtPayload(tokens.access_token);
   const exp = Number(idTokenPayload?.exp || accessTokenPayload?.exp || 0) || null;
+  const accountId = tokens.account_id
+    || idTokenPayload?.chatgpt_account_id
+    || accessTokenPayload?.chatgpt_account_id
+    || idTokenPayload?.['https://api.openai.com/auth.chatgpt_account_id']
+    || accessTokenPayload?.['https://api.openai.com/auth.chatgpt_account_id']
+    || idTokenPayload?.['https://api.openai.com/auth']?.chatgpt_account_id
+    || accessTokenPayload?.['https://api.openai.com/auth']?.chatgpt_account_id
+    || idTokenPayload?.organizations?.[0]?.id
+    || accessTokenPayload?.organizations?.[0]?.id
+    || '';
   return {
     authMode: String(auth.auth_mode || 'chatgpt').trim() || 'chatgpt',
     accessToken: String(tokens.access_token || '').trim(),
     refreshToken: String(tokens.refresh_token || '').trim() || '',
     idToken: String(tokens.id_token || '').trim() || '',
-    accountId: String(tokens.account_id || '').trim() || '',
+    accountId: String(accountId).trim(),
     accountEmail: String(idTokenPayload?.email || '').trim() || '',
     expiresAt: exp ? exp * 1000 : null,
     lastRefresh: auth.last_refresh || null,

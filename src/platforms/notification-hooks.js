@@ -393,6 +393,20 @@ function createHttpsProxyAgent(proxyUrl) {
 const REMOTE_PROVIDERS = ${JSON.stringify(enabledProviders)}
 const CONFIG_FILE = ${JSON.stringify(PATHS.configFile)}
 
+function isCliPlatformEnabled(source) {
+  try {
+    const config = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'))
+    const configuredPlatforms = config?.enabledCliPlatforms
+    if (!Array.isArray(configuredPlatforms)) return true
+    const normalizedSource = String(source || '').trim().toLowerCase()
+    return configuredPlatforms.some((platform) => (
+      String(platform || '').trim().toLowerCase() === normalizedSource
+    ))
+  } catch (error) {
+    return true
+  }
+}
+
 function createClientId(prefix = 'coding-tool') {
   const randomPart = typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID().replace(/-/g, '').slice(0, 16)
@@ -826,6 +840,7 @@ async function sendRemoteNotifications(message, source, eventType) {
 
 (async () => {
   const source = readArg('--source') || 'claude'
+  if (!isCliPlatformEnabled(source)) return
   const mode = readArg('--mode') || readArg('--cc-notify-type') || 'notification'
   const eventType = readArg('--event-type') || ''
   const payload = readOptionalPayload()
@@ -1085,6 +1100,27 @@ function getHookPlatformEntries(catalog = getPlatformCatalog()) {
   return entries;
 }
 
+function getChannelPlatformKeys(catalog = getPlatformCatalog()) {
+  const manifests = typeof catalog?.list === 'function'
+    ? catalog.list({ capability: 'channels' })
+    : [];
+  return new Set(manifests
+    .map(manifest => String(manifest?.key || '').trim().toLowerCase())
+    .filter(Boolean));
+}
+
+function isConfiguredCliPlatformEnabled(key, uiConfig, catalog) {
+  const channelPlatformKeys = getChannelPlatformKeys(catalog);
+  const normalizedKey = String(key || '').trim().toLowerCase();
+  if (!channelPlatformKeys.has(normalizedKey)) return true;
+
+  const configuredPlatforms = uiConfig?.enabledCliPlatforms;
+  if (!Array.isArray(configuredPlatforms)) return true;
+  return configuredPlatforms.some(platform => (
+    String(platform || '').trim().toLowerCase() === normalizedKey
+  ));
+}
+
 function toPublicHookDefinition({ manifest, definition }) {
   return {
     key: manifest.key,
@@ -1097,13 +1133,21 @@ function toPublicHookDefinition({ manifest, definition }) {
 }
 
 function getNotificationSettings({ catalog } = {}) {
-  const entries = getHookPlatformEntries(catalog);
+  const resolvedCatalog = catalog || getPlatformCatalog();
+  const entries = getHookPlatformEntries(resolvedCatalog);
   const uiConfig = loadUIConfig();
   const remoteNotifications = getRemoteNotificationsConfig(uiConfig);
   const platforms = {};
   const platformDefinitions = [];
   for (const entry of entries) {
-    platforms[entry.manifest.key] = entry.driver.getHooks();
+    const hooks = entry.driver.getHooks();
+    platforms[entry.manifest.key] = isConfiguredCliPlatformEnabled(
+      entry.manifest.key,
+      uiConfig,
+      resolvedCatalog
+    )
+      ? hooks
+      : { ...hooks, enabled: false };
     platformDefinitions.push(toPublicHookDefinition(entry));
   }
   const claudeStatus = platforms.claude || { enabled: false, type: 'notification' };
@@ -1186,7 +1230,9 @@ function saveNotificationSettings(input = {}, { catalog } = {}) {
       ? input.remoteNotifications
       : {}
   );
-  const entries = getHookPlatformEntries(catalog);
+  const resolvedCatalog = catalog || getPlatformCatalog();
+  const entries = getHookPlatformEntries(resolvedCatalog);
+  const uiConfig = loadUIConfig();
   const inputPlatforms = input.platforms && typeof input.platforms === 'object' && !Array.isArray(input.platforms)
     ? input.platforms
     : {};
@@ -1199,7 +1245,10 @@ function saveNotificationSettings(input = {}, { catalog } = {}) {
         : key === 'claude'
           ? input.stopHook
           : undefined;
-    return [key, normalizePlatformInput(platformInput)];
+    const normalized = normalizePlatformInput(platformInput);
+    return [key, isConfiguredCliPlatformEnabled(key, uiConfig, resolvedCatalog)
+      ? normalized
+      : { ...normalized, enabled: false }];
   }));
 
   const claudeEntry = entries.find(entry => entry.manifest.key === 'claude');
@@ -1213,7 +1262,7 @@ function saveNotificationSettings(input = {}, { catalog } = {}) {
   if (hasManagedPlatform) writeNotifyScript(remoteNotifications);
   else removeNotifyScript();
 
-  return getNotificationSettings({ catalog });
+  return getNotificationSettings({ catalog: resolvedCatalog });
 }
 
 function parseNotifyTypeMarker(command) {
@@ -1528,6 +1577,7 @@ module.exports = {
   validateRemoteProviderConfig,
   _test: {
     getHookPlatformEntries,
+    isConfiguredCliPlatformEnabled,
     toPublicHookDefinition,
     applyClaudeDisablePreference,
     getManagedCommandType,

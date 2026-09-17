@@ -120,6 +120,22 @@ function resolveBalanceToken(channel = {}) {
   );
 }
 
+function isOAuthChannel(channel = {}) {
+  return channel?.authMode === 'oauth';
+}
+
+function resolveOAuthCacheIdentity(channel = {}) {
+  const ref = channel.authRef && typeof channel.authRef === 'object' ? channel.authRef : {};
+  return [
+    channel.oauthProviderId,
+    ref.credentialId,
+    ref.providerId,
+    ref.accountId,
+    ref.identityKey,
+    ref.accountEmail
+  ].map(value => String(value || '').trim()).filter(Boolean).join('|');
+}
+
 function resolveBalanceUserId(channel = {}) {
   const raw = channel.balanceUserId
     ?? channel.platformUserId
@@ -248,6 +264,64 @@ function makeVisibleSnapshot(platform, input, { stale = false, updatedAt = nowIs
   if (total != null) snapshot.total = roundMoney(total);
   if (monthlyRemaining != null) snapshot.monthlyRemaining = roundMoney(monthlyRemaining);
   return snapshot;
+}
+
+function formatPercent(value) {
+  const number = parseFiniteNumber(value);
+  if (number == null) return '';
+  return Number.isInteger(number) ? String(number) : number.toFixed(1).replace(/\.0$/, '');
+}
+
+function normalizeOAuthWindows(quota = {}) {
+  const source = quota && typeof quota === 'object' ? quota : {};
+  const candidates = [];
+  if (source.primary) candidates.push({ id: 'primary', ...source.primary });
+  if (source.secondary) candidates.push({ id: 'secondary', ...source.secondary });
+  if (Array.isArray(source.windows)) candidates.push(...source.windows);
+  if (Array.isArray(source.additional)) candidates.push(...source.additional);
+
+  const seen = new Set();
+  return candidates.map((window, index) => {
+    const remainingPercent = parseFiniteNumber(window?.remainingPercent);
+    const usedPercent = parseFiniteNumber(window?.usedPercent);
+    if (remainingPercent == null && usedPercent == null) return null;
+    const id = String(window?.id || `window-${index}`);
+    if (seen.has(id)) return null;
+    seen.add(id);
+    return {
+      id,
+      label: String(window?.label || id),
+      remainingPercent: remainingPercent != null
+        ? Math.max(0, Math.min(100, remainingPercent))
+        : Math.max(0, Math.min(100, 100 - usedPercent)),
+      usedPercent: usedPercent != null
+        ? Math.max(0, Math.min(100, usedPercent))
+        : Math.max(0, Math.min(100, 100 - remainingPercent)),
+      resetsAt: window?.resetsAt || null,
+      scope: window?.scope || null
+    };
+  }).filter(Boolean);
+}
+
+function buildOAuthBalanceSnapshot(platform, quota, { stale = false, updatedAt = nowIso() } = {}) {
+  const windows = normalizeOAuthWindows(quota);
+  if (!windows.length) return makeHiddenSnapshot(platform, { stale, updatedAt });
+
+  const primaryWindows = windows.filter(window => window.id === 'primary' || window.id === 'secondary');
+  const displayWindows = primaryWindows.length ? primaryWindows : windows;
+  const label = displayWindows
+    .map(window => `${window.label} 剩余 ${formatPercent(window.remainingPercent)}%`)
+    .join(' · ');
+
+  return {
+    visible: true,
+    kind: 'oauth-quota',
+    platform,
+    label,
+    windows,
+    updatedAt,
+    stale
+  };
 }
 
 function normalizeBaseUrl(value) {
@@ -1483,14 +1557,16 @@ async function probeBalanceFromBase(baseUrl, channel, token) {
 
 function buildCacheKey(source, channel) {
   const token = resolveBalanceToken(channel);
-  const tokenHash = token
-    ? crypto.createHash('sha256').update(token).digest('hex').slice(0, 16)
-    : 'no-token';
+  const identity = isOAuthChannel(channel)
+    ? `oauth:${resolveOAuthCacheIdentity(channel) || channel.id || channel.name || 'unknown'}`
+    : token
+      ? crypto.createHash('sha256').update(token).digest('hex').slice(0, 16)
+      : 'no-token';
   return [
     source,
     channel.id || channel.name || 'unknown',
     normalizeBaseUrl(channel.baseUrl || ''),
-    tokenHash
+    identity
   ].join(':');
 }
 
@@ -1510,6 +1586,44 @@ async function refreshChannelBalanceSnapshot(source, channel, options = {}) {
 
   if (!force && cached && cached.expiresAt > currentTime) {
     return cached.snapshot;
+  }
+
+  if (isOAuthChannel(channel)) {
+    try {
+      const { fetchChannelAuthQuota } = require('../../platforms/channel-auth-service');
+      const result = await fetchChannelAuthQuota(source, channel.id, { refresh: force });
+      const snapshot = buildOAuthBalanceSnapshot(source, result?.quota, {
+        updatedAt: result?.checkedAt || nowIso(currentTime)
+      });
+      if (snapshot.visible) {
+        balanceCache.set(key, {
+          snapshot,
+          expiresAt: currentTime + CACHE_TTL_MS
+        });
+        return snapshot;
+      }
+    } catch {
+      // OAuth providers are best-effort; preserve a previous successful quota below.
+    }
+
+    if (cached?.snapshot?.visible) {
+      const staleSnapshot = {
+        ...cached.snapshot,
+        stale: true
+      };
+      balanceCache.set(key, {
+        snapshot: staleSnapshot,
+        expiresAt: currentTime + CACHE_TTL_MS
+      });
+      return staleSnapshot;
+    }
+
+    const hiddenSnapshot = makeHiddenSnapshot(source, { updatedAt: nowIso(currentTime) });
+    balanceCache.set(key, {
+      snapshot: hiddenSnapshot,
+      expiresAt: currentTime + CACHE_TTL_MS
+    });
+    return hiddenSnapshot;
   }
 
   const bases = buildBaseCandidates(channel.baseUrl);
@@ -1766,6 +1880,10 @@ module.exports = {
     buildSub2ApiUsageSnapshot,
     resolveStatusPlatform,
     resolveBalanceToken,
+    isOAuthChannel,
+    resolveOAuthCacheIdentity,
+    normalizeOAuthWindows,
+    buildOAuthBalanceSnapshot,
     resolveBalanceUserId,
     buildCookieCandidates,
     build88CodeApiBaseCandidates,

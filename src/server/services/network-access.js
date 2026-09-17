@@ -44,7 +44,17 @@ function isSameOriginRequest(req) {
 
   try {
     const originUrl = new URL(origin);
-    return originUrl.host === host;
+    if (originUrl.host === host) {
+      return true;
+    }
+
+    // The Vite dev UI runs on a separate local port and proxies API calls to
+    // the backend. Treat that as local-only traffic, but do not extend this
+    // exception to requests arriving from a LAN or public address.
+    const originHost = String(originUrl.hostname || '').replace(/^\[|\]$/g, '');
+    return (originUrl.protocol === 'http:' || originUrl.protocol === 'https:')
+      && isLoopbackRequest(req)
+      && isLoopbackAddress(originHost);
   } catch (error) {
     return false;
   }

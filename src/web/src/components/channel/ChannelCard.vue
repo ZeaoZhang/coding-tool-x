@@ -205,6 +205,19 @@ const balanceTitle = computed(() => {
       parts.push(new Date(props.balance.updatedAt).toLocaleString())
     } catch {}
   }
+  if (Array.isArray(props.balance.windows) && props.balance.windows.length) {
+    const windows = props.balance.windows.map((window) => {
+      const remaining = window.remainingPercent == null ? '' : `剩余 ${window.remainingPercent}%`
+      let reset = ''
+      if (window.resetsAt) {
+        try {
+          reset = `，重置 ${new Date(window.resetsAt).toLocaleString()}`
+        } catch {}
+      }
+      return `${window.label || window.id || '额度'} ${remaining}${reset}`
+    })
+    parts.push(windows.join('\n'))
+  }
   return parts.join(' · ')
 })
 

@@ -288,6 +288,37 @@ describe('createSameOriginGuard', () => {
     expect(next).toHaveBeenCalled();
   });
 
+  it('allows a local dev UI origin when the request itself is loopback', () => {
+    const guard = createSameOriginGuard({ enabled: true });
+    const next = vi.fn();
+    guard(
+      mockReq({
+        headers: { origin: 'http://localhost:5000', host: '127.0.0.1:19999' },
+        socket: { remoteAddress: '127.0.0.1' }
+      }),
+      mockRes(),
+      next
+    );
+    expect(next).toHaveBeenCalled();
+  });
+
+  it('does not allow a local UI origin when the request comes from the LAN', () => {
+    const guard = createSameOriginGuard({ enabled: true });
+    const next = vi.fn();
+    const res = mockRes();
+    guard(
+      mockReq({
+        headers: { origin: 'http://localhost:5000', host: '192.168.1.20:19999' },
+        socket: { remoteAddress: '192.168.1.10' }
+      }),
+      res,
+      next
+    );
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(403);
+    expect(res.data.code).toBe('CROSS_ORIGIN_REQUEST_BLOCKED');
+  });
+
   it('returns 403 when enabled and cross-origin request', () => {
     const guard = createSameOriginGuard({ enabled: true });
     const next = vi.fn();

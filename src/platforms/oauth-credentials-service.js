@@ -359,6 +359,14 @@ function httpPost(url, body, headers = {}) {
   });
 }
 
+function parseJsonBody(body) {
+  try {
+    return JSON.parse(body);
+  } catch {
+    return null;
+  }
+}
+
 async function fetchClaudeUsage(accessToken) {
   try {
     const result = await httpGet('https://api.anthropic.com/api/oauth/usage', {
@@ -367,38 +375,40 @@ async function fetchClaudeUsage(accessToken) {
       'anthropic-version': '2023-06-01',
       'User-Agent': 'claude-cli/1.0'
     });
-    const data = JSON.parse(result.body);
+    const data = parseJsonBody(result.body);
     return { raw: data, provider: 'claude', statusCode: result.statusCode };
   } catch (err) {
     return { error: err.message, provider: 'claude' };
   }
 }
 
-async function fetchCodexUsage(accessToken) {
-  // Codex uses JWT id_token; decode it to extract user info directly
-  try {
-    const { decodeJwtPayload } = require('../server/services/oauth-utils');
-    const payload = decodeJwtPayload(accessToken);
-    if (payload && (payload.email || payload.sub)) {
-      return {
-        raw: {
-          email: payload.email || '',
-          accountId: payload.sub || '',
-          name: payload.name || ''
-        },
-        provider: 'codex',
-        statusCode: 200
-      };
+function extractCodexAccountId(...tokens) {
+  const { decodeJwtPayload } = require('../server/services/oauth-utils');
+  for (const token of tokens) {
+    if (!token) continue;
+    try {
+      const payload = decodeJwtPayload(token) || {};
+      const accountId = payload.chatgpt_account_id
+        || payload['https://api.openai.com/auth.chatgpt_account_id']
+        || payload['https://api.openai.com/auth']?.chatgpt_account_id
+        || payload.organizations?.[0]?.id;
+      if (accountId) return String(accountId);
+    } catch (_) {
+      // Try the next token; malformed JWTs should not prevent the usage request.
     }
-  } catch (_) {
-    // fall through to API call
   }
+  return '';
+}
+
+async function fetchCodexUsage(accessToken, accountId = '') {
   try {
-    const result = await httpGet('https://api.openai.com/v1/me', {
+    const headers = {
       'Authorization': `Bearer ${accessToken}`,
-      'User-Agent': 'openai-node/4.0.0'
-    });
-    const data = JSON.parse(result.body);
+      'User-Agent': 'codex-cli/0.1'
+    };
+    if (accountId) headers['ChatGPT-Account-Id'] = accountId;
+    const result = await httpGet('https://chatgpt.com/backend-api/wham/usage', headers);
+    const data = parseJsonBody(result.body);
     return { raw: data, provider: 'codex', statusCode: result.statusCode };
   } catch (err) {
     return { error: err.message, provider: 'codex' };
@@ -409,7 +419,7 @@ async function fetchGeminiUsage(accessToken) {
   try {
     const body = JSON.stringify({
       metadata: {
-        ideType: 'ANTIGRAVITY',
+        ideType: 'IDE_UNSPECIFIED',
         platform: 'PLATFORM_UNSPECIFIED',
         pluginType: 'GEMINI'
       }
@@ -421,8 +431,30 @@ async function fetchGeminiUsage(accessToken) {
       'X-Goog-Api-Client': 'google-cloud-sdk vscode_cloudshelleditor/0.1',
       'Client-Metadata': '{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}'
     });
-    const data = JSON.parse(result.body);
-    return { raw: data, provider: 'gemini', statusCode: result.statusCode };
+    const loadData = parseJsonBody(result.body) || {};
+    if (result.statusCode < 200 || result.statusCode >= 300) {
+      return { raw: loadData, provider: 'gemini', statusCode: result.statusCode };
+    }
+
+    const project = typeof loadData.cloudaicompanionProject === 'string'
+      ? loadData.cloudaicompanionProject
+      : loadData.cloudaicompanionProject?.id || '';
+    const quotaResult = await httpPost(
+      'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota',
+      JSON.stringify(project ? { project } : {}),
+      {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'google-api-nodejs-client/9.15.1',
+        'X-Goog-Api-Client': 'google-cloud-sdk vscode_cloudshelleditor/0.1',
+        'Client-Metadata': '{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}'
+      }
+    );
+    return {
+      raw: parseJsonBody(quotaResult.body),
+      provider: 'gemini',
+      statusCode: quotaResult.statusCode
+    };
   } catch (err) {
     return { error: err.message, provider: 'gemini' };
   }
@@ -435,31 +467,122 @@ function clampPercent(value) {
   return Math.max(0, Math.min(100, percent));
 }
 
-function normalizeWindow(window, label) {
+function normalizeResetAt(value, resetAfterSeconds) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    const milliseconds = numeric < 1e12 ? numeric * 1000 : numeric;
+    const date = new Date(milliseconds);
+    if (!Number.isNaN(date.getTime())) return date.toISOString();
+  }
+  if (value) {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) return date.toISOString();
+  }
+  const afterSeconds = Number(resetAfterSeconds);
+  if (Number.isFinite(afterSeconds) && afterSeconds >= 0) {
+    return new Date(Date.now() + afterSeconds * 1000).toISOString();
+  }
+  return null;
+}
+
+function normalizeWindow(window, label, id = '') {
   if (!window || typeof window !== 'object') return null;
-  const usedPercent = clampPercent(window.used_percent ?? window.utilization);
-  if (usedPercent === null) return null;
+  const usedPercent = clampPercent(window.used_percent ?? window.usedPercent ?? window.utilization);
+  const remainingPercent = clampPercent(
+    window.remaining_percent
+      ?? window.remainingPercent
+      ?? window.remaining_fraction
+      ?? window.remainingFraction
+  );
+  if (usedPercent === null && remainingPercent === null) return null;
+  const normalizedUsedPercent = usedPercent === null ? 100 - remainingPercent : usedPercent;
+  const normalizedRemainingPercent = remainingPercent === null ? 100 - usedPercent : remainingPercent;
   return {
+    ...(id ? { id } : {}),
     label,
-    remainingPercent: Math.max(0, Math.min(100, 100 - usedPercent)),
-    usedPercent,
-    resetsAt: window.reset_at || window.resetAt || null
+    remainingPercent: Math.max(0, Math.min(100, normalizedRemainingPercent)),
+    usedPercent: Math.max(0, Math.min(100, normalizedUsedPercent)),
+    resetsAt: normalizeResetAt(
+      window.resets_at
+        ?? window.resetsAt
+        ?? window.reset_at
+        ?? window.resetAt
+        ?? window.reset_time
+        ?? window.resetTime,
+      window.reset_after_seconds ?? window.resetAfterSeconds
+    )
   };
+}
+
+function normalizeGeminiQuota(value) {
+  const buckets = Array.isArray(value?.buckets) ? value.buckets : [];
+  const windows = buckets.map((bucket, index) => {
+    const remainingPercent = clampPercent(bucket?.remainingFraction ?? bucket?.remaining_fraction);
+    if (remainingPercent === null) return null;
+    const modelId = String(bucket?.modelId || bucket?.model_id || '').trim();
+    return {
+      id: `gemini:${modelId || index}`,
+      label: modelId || 'Gemini',
+      remainingPercent,
+      usedPercent: Math.max(0, Math.min(100, 100 - remainingPercent)),
+      resetsAt: normalizeResetAt(bucket?.resetTime || bucket?.reset_time),
+      scope: modelId ? { modelId } : null
+    };
+  }).filter(Boolean);
+  return windows.length ? { status: 'available', windows } : null;
 }
 
 function normalizeOAuthQuota(tool, raw) {
   const value = raw && typeof raw === 'object' ? raw : {};
-  let primary = normalizeWindow(value.five_hour || value.fiveHour, '5h');
-  let secondary = normalizeWindow(value.seven_day || value.sevenDay, '7d');
+  if (tool === 'gemini') {
+    const geminiQuota = normalizeGeminiQuota(value);
+    if (geminiQuota) return { quota: geminiQuota, status: 'available' };
+  }
+
+  let primary = normalizeWindow(value.five_hour || value.fiveHour, '5h', 'primary');
+  let secondary = normalizeWindow(value.seven_day || value.sevenDay, '7d', 'secondary');
   const rateLimit = value.rate_limit || value.rateLimit;
   if (rateLimit) {
-    primary = primary || normalizeWindow(rateLimit.primary_window || rateLimit.primaryWindow, '5h');
-    secondary = secondary || normalizeWindow(rateLimit.secondary_window || rateLimit.secondaryWindow, '7d');
+    primary = primary || normalizeWindow(rateLimit.primary_window || rateLimit.primaryWindow, '5h', 'primary');
+    secondary = secondary || normalizeWindow(rateLimit.secondary_window || rateLimit.secondaryWindow, '7d', 'secondary');
   }
-  if (!primary && !secondary) {
-    return { quota: null, status: 'unsupported', warning: `${tool}: provider did not return 5h/7d quota windows` };
+
+  const additional = [];
+  const additionalLimits = Array.isArray(value.additional_rate_limits)
+    ? value.additional_rate_limits
+    : Array.isArray(value.additionalRateLimits) ? value.additionalRateLimits : [];
+  additionalLimits.forEach((limit, index) => {
+    const additionalRateLimit = limit?.rate_limit || limit?.rateLimit || limit;
+    const name = String(
+      limit?.limit_name || limit?.limitName || limit?.metered_feature || limit?.meteredFeature || '附加额度'
+    ).trim();
+    const additionalPrimary = normalizeWindow(
+      additionalRateLimit?.primary_window || additionalRateLimit?.primaryWindow,
+      `${name} 5h`,
+      `additional:${index}:primary`
+    );
+    const additionalSecondary = normalizeWindow(
+      additionalRateLimit?.secondary_window || additionalRateLimit?.secondaryWindow,
+      `${name} 7d`,
+      `additional:${index}:secondary`
+    );
+    if (additionalPrimary) additional.push(additionalPrimary);
+    if (additionalSecondary) additional.push(additionalSecondary);
+  });
+
+  if (!primary && !secondary && !additional.length) {
+    return { quota: null, status: 'unsupported', warning: `${tool}: provider did not return usable quota windows` };
   }
-  return { quota: { status: 'available', primary, secondary }, status: 'available' };
+  return {
+    quota: {
+      status: 'available',
+      primary,
+      secondary,
+      additional,
+      windows: [primary, secondary, ...additional].filter(Boolean)
+    },
+    status: 'available'
+  };
 }
 
 async function fetchCredentialUsage(tool, credentialId) {
@@ -474,7 +597,10 @@ async function fetchCredentialUsage(tool, credentialId) {
       response = await fetchClaudeUsage(accessToken);
       break;
     case 'codex':
-      response = await fetchCodexUsage(secrets.idToken || accessToken);
+      response = await fetchCodexUsage(
+        accessToken,
+        extractCodexAccountId(secrets.idToken, accessToken) || entry.accountId || secrets.accountId
+      );
       break;
     case 'gemini':
       response = await fetchGeminiUsage(accessToken);
@@ -485,7 +611,7 @@ async function fetchCredentialUsage(tool, credentialId) {
         ? await fetchClaudeUsage(accessToken)
         : providerId.includes('gemini') || providerId.includes('google')
           ? await fetchGeminiUsage(accessToken)
-          : await fetchCodexUsage(accessToken);
+          : await fetchCodexUsage(accessToken, extractCodexAccountId(accessToken) || entry.accountId || secrets.accountId);
       break;
     }
     default:
@@ -502,5 +628,8 @@ module.exports = {
   SUPPORTED_TOOLS,
   syncLocalCredential,
   normalizeOAuthQuota,
-  fetchCredentialUsage
+  fetchCredentialUsage,
+  extractCodexAccountId,
+  normalizeResetAt,
+  normalizeWindow
 };

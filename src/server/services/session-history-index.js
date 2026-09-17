@@ -19,6 +19,8 @@ const INDEX_INVENTORY_TTL_MS = 30000;
 const INDEX_COLD_WAIT_MS = 1500;
 /** @type {number} Maximum age for a lock whose owner cannot be inspected */
 const INVENTORY_LOCK_STALE_MS = 30 * 60 * 1000;
+/** @type {number} Maximum time a competing inventory waits for the database writer */
+const INVENTORY_LOCK_WAIT_MS = 30000;
 /** @type {number} Number of files parsed before results are released */
 const INVENTORY_PARSE_BATCH_SIZE = 8;
 /** @type {number} Maximum number of files parsed concurrently */
@@ -34,9 +36,8 @@ function _isUsableRuntime(runtime) {
   return !!runtime && typeof runtime === 'object' && typeof runtime.getDriver === 'function';
 }
 
-function _inventoryLockPath(dbPath, source) {
-  const sourceKey = Buffer.from(String(source), 'utf8').toString('hex');
-  return `${dbPath}.${sourceKey}.inventory.lock`;
+function _inventoryLockPath(dbPath) {
+  return `${path.resolve(String(dbPath))}.inventory.lock`;
 }
 
 function _isProcessAlive(pid) {
@@ -50,19 +51,19 @@ function _isProcessAlive(pid) {
 }
 
 /**
- * Acquire a durable per-database/source lock. The in-memory single-flight
+ * Acquire a durable database-wide inventory lock. The in-memory single-flight
  * map only protects requests inside one Node process; production indexing is
  * deliberately performed in child processes, so it cannot prevent two
- * workers from rebuilding the same source after a parent restart.
+ * workers from writing the same database after a parent restart.
  */
 function _tryAcquireInventoryLock(dbPath, source) {
-  const lockPath = _inventoryLockPath(dbPath, source);
+  const lockPath = _inventoryLockPath(dbPath);
 
   for (let attempt = 0; attempt < 2; attempt++) {
     let fd;
     try {
       fd = fs.openSync(lockPath, 'wx');
-      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, startedAt: Date.now() }), 'utf8');
+      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, source, startedAt: Date.now() }), 'utf8');
       return { fd, lockPath };
     } catch (error) {
       if (fd !== undefined) {
@@ -81,7 +82,14 @@ function _tryAcquireInventoryLock(dbPath, source) {
     }
 
     const ownerPid = Number(owner?.pid);
-    if (_isProcessAlive(ownerPid) || (!Number.isFinite(ageMs) || ageMs < INVENTORY_LOCK_STALE_MS)) {
+    if (_isProcessAlive(ownerPid)) {
+      return {
+        busy: true,
+        sameSource: owner?.source && String(owner.source) === String(source)
+      };
+    }
+
+    if ((!Number.isInteger(ownerPid) || ownerPid <= 0) && ageMs < INVENTORY_LOCK_STALE_MS) {
       return null;
     }
 
@@ -95,10 +103,89 @@ function _tryAcquireInventoryLock(dbPath, source) {
   return null;
 }
 
+async function _acquireInventoryLock(dbPath, source) {
+  const deadline = Date.now() + INVENTORY_LOCK_WAIT_MS;
+  while (true) {
+    const lock = _tryAcquireInventoryLock(dbPath, source);
+    if (lock?.busy) {
+      if (lock.sameSource) return null;
+    } else if (lock) {
+      return lock;
+    }
+    if (Date.now() >= deadline) return null;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+}
+
 function _releaseInventoryLock(lock) {
   if (!lock) return;
   try { fs.closeSync(lock.fd); } catch (_err) {}
   try { fs.unlinkSync(lock.lockPath); } catch (_err) {}
+}
+
+/**
+ * Remove inventory locks left by workers that are no longer alive.
+ *
+ * A normal worker releases its lock in `_runInventory`'s finally block. This
+ * fallback is needed for `ctx stop` when a worker is terminated before that
+ * block can run. Locks owned by a live PID are intentionally retained.
+ *
+ * @param {string} [dbPath]
+ * @returns {{ removed: string[], retained: string[] }}
+ */
+function cleanupStaleInventoryLocks(dbPath = PATHS?.sessionHistoryIndex) {
+  const targetPath = dbPath ? path.resolve(String(dbPath)) : '';
+  if (!targetPath) return { removed: [], retained: [] };
+
+  const directory = path.dirname(targetPath);
+  const prefix = `${path.basename(targetPath)}.`;
+  let entries;
+  try {
+    entries = fs.readdirSync(directory);
+  } catch (_) {
+    return { removed: [], retained: [] };
+  }
+
+  const removed = [];
+  const retained = [];
+  for (const entry of entries) {
+    if (!entry.startsWith(prefix) || !entry.endsWith('.inventory.lock')) continue;
+    const lockPath = path.join(directory, entry);
+    let owner = null;
+    let ageMs = 0;
+    try {
+      ageMs = Math.max(0, Date.now() - fs.statSync(lockPath).mtimeMs);
+    } catch (_) {
+      retained.push(lockPath);
+      continue;
+    }
+    try {
+      owner = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+    } catch (_) {
+      // Keep malformed young locks; an old one is handled by the stale rule.
+    }
+
+    const ownerPid = Number(owner?.pid);
+    if (_isProcessAlive(ownerPid)) {
+      retained.push(lockPath);
+      continue;
+    }
+
+    // A valid but dead owner can be cleaned immediately. Unreadable lock
+    // files remain protected by the normal acquisition path's stale check.
+    if ((Number.isInteger(ownerPid) && ownerPid > 0) || ageMs >= INVENTORY_LOCK_STALE_MS) {
+      try {
+        fs.unlinkSync(lockPath);
+        removed.push(lockPath);
+      } catch (_) {
+        retained.push(lockPath);
+      }
+    } else {
+      retained.push(lockPath);
+    }
+  }
+
+  return { removed, retained };
 }
 
 
@@ -597,18 +684,23 @@ function createSessionHistoryIndex(opts = {}) {
   }
 
   async function _runInventory(source, { force = false, config = indexConfig } = {}) {
-    const db = _getDb();
-    const inventoryLock = _tryAcquireInventoryLock(dbPath, source);
+    // SQLite's writer lock is database-wide, so source-specific lock files do
+    // not prevent two different sources from entering BEGIN IMMEDIATE at the
+    // same time. Acquire one lock for the whole index before opening/schema
+    // initializing the writer connection.
+    const inventoryLock = await _acquireInventoryLock(dbPath, source);
     if (!inventoryLock) {
       // Another process is already doing the expensive work. Existing rows
       // remain readable, and the next scheduled inventory will observe the
       // new source_state timestamp once that worker finishes.
       return;
     }
+    let db = null;
     let errorMsg = null;
     let stateToRecord = null;
 
     try {
+      db = _getDb();
       if (!force && _isSourceFresh(source)) {
         return;
       }
@@ -798,7 +890,9 @@ function createSessionHistoryIndex(opts = {}) {
     } finally {
       if (stateToRecord) {
         try {
-          _recordSourceState(db, source, stateToRecord.lastInventoryMs, stateToRecord.lastError);
+          if (db) {
+            _recordSourceState(db, source, stateToRecord.lastInventoryMs, stateToRecord.lastError);
+          }
         } catch (_err) {}
       }
       _releaseInventoryLock(inventoryLock);
@@ -1494,4 +1588,5 @@ module.exports = {
   invalidateSource,
   getSourceIndexMeta,
   closeSessionHistoryIndex,
+  cleanupStaleInventoryLocks,
 };

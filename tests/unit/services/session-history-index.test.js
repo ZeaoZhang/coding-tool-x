@@ -3,7 +3,10 @@ import { createRequire } from 'module';
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
-import { createSessionHistoryIndex } from '../../../src/server/services/session-history-index.js';
+import {
+  cleanupStaleInventoryLocks,
+  createSessionHistoryIndex
+} from '../../../src/server/services/session-history-index.js';
 const require = createRequire(import.meta.url);
 const runtimeModule = require('../../../src/platforms/runtime');
 
@@ -173,6 +176,76 @@ describe('session-history-index', () => {
     });
     return state;
   }
+
+  it('cleans locks owned by dead workers without removing live-worker locks', () => {
+    state = createFixtureState();
+    const deadLockPath = `${state.dbPath}.${Buffer.from('claude', 'utf8').toString('hex')}.inventory.lock`;
+    const liveLockPath = `${state.dbPath}.${Buffer.from('codex', 'utf8').toString('hex')}.inventory.lock`;
+    fs.writeFileSync(deadLockPath, JSON.stringify({ pid: 999999999, startedAt: Date.now() }), 'utf8');
+    fs.writeFileSync(liveLockPath, JSON.stringify({ pid: process.pid, startedAt: Date.now() }), 'utf8');
+
+    const result = cleanupStaleInventoryLocks(state.dbPath);
+
+    expect(result.removed).toEqual([deadLockPath]);
+    expect(result.retained).toEqual([liveLockPath]);
+    expect(fs.existsSync(deadLockPath)).toBe(false);
+    expect(fs.existsSync(liveLockPath)).toBe(true);
+  });
+
+  it('serializes inventory writers across different sources sharing one database', async () => {
+    state = createFixtureState();
+    let releaseFirstInventory;
+    let firstInventoryStarted;
+    const firstInventoryStartedPromise = new Promise(resolve => {
+      firstInventoryStarted = resolve;
+    });
+    const firstAdapter = {
+      inventory: vi.fn(async () => {
+        firstInventoryStarted();
+        await new Promise(resolve => {
+          releaseFirstInventory = resolve;
+        });
+        return [];
+      }),
+      parse: vi.fn(async () => null)
+    };
+    const secondAdapter = {
+      inventory: vi.fn(async () => []),
+      parse: vi.fn(async () => null)
+    };
+    const firstIndex = createSessionHistoryIndex({
+      dbPath: state.dbPath,
+      adapterRegistry: { claude: firstAdapter },
+      ftsEnabledOverride: false
+    });
+    const secondIndex = createSessionHistoryIndex({
+      dbPath: state.dbPath,
+      adapterRegistry: { codex: secondAdapter },
+      ftsEnabledOverride: false
+    });
+
+    try {
+      const firstRefresh = firstIndex.ensureSourceIndexed('claude', {
+        force: true,
+        consistency: 'complete'
+      });
+      await firstInventoryStartedPromise;
+
+      const secondRefresh = secondIndex.ensureSourceIndexed('codex', {
+        force: true,
+        consistency: 'complete'
+      });
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(secondAdapter.inventory).not.toHaveBeenCalled();
+
+      releaseFirstInventory();
+      await Promise.all([firstRefresh, secondRefresh]);
+      expect(secondAdapter.inventory).toHaveBeenCalledTimes(1);
+    } finally {
+      firstIndex.closeSessionHistoryIndex();
+      secondIndex.closeSessionHistoryIndex();
+    }
+  });
 
   it('cold inventory parses every valid file exactly once', async () => {
     const fixture = setupIndex();

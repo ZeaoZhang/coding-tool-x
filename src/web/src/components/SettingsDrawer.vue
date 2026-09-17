@@ -238,7 +238,7 @@
             <div class="panel-body">
               <div class="setting-group">
                 <template
-                  v-for="(platform, index) in notificationPlatformDefinitions"
+                  v-for="(platform, index) in visibleNotificationPlatformDefinitions"
                   :key="platform.key"
                 >
                   <div class="setting-item">
@@ -333,7 +333,7 @@
                     </div>
                   </div>
 
-                  <n-divider v-if="index < notificationPlatformDefinitions.length - 1" />
+                  <n-divider v-if="index < visibleNotificationPlatformDefinitions.length - 1" />
                 </template>
 
                 <n-divider />
@@ -827,10 +827,11 @@
                         <n-select
                           v-model:value="defaultSpeedTestModels[tool.key]"
                           :options="speedTestModelOptions[tool.key]"
-                          :placeholder="`选择${tool.label}默认测速模型`"
+                          :placeholder="`选择或输入${tool.label}默认测速模型`"
                           :disabled="(speedTestModelOptions[tool.key] || []).length === 0"
                           size="small"
                           filterable
+                          tag
                         />
                       </div>
                     </div>
@@ -1726,32 +1727,51 @@ const filteredModelMeta = computed(() => {
 
 function getModelProviderById(modelId, meta = modelMetaTable.value[modelId]) {
   const id = String(modelId || '').trim().toLowerCase()
-  const explicitToolType = Array.isArray(meta?.toolTypes)
-    ? meta.toolTypes.find(toolType => typeof toolType === 'string' && toolType.trim())
-    : ''
-  if (explicitToolType) return explicitToolType
+  const explicitToolTypes = getModelProviderTypesById(meta)
+  if (explicitToolTypes.length > 0) return explicitToolTypes[0]
   if (id.startsWith('claude-')) return 'claude'
   if (id.startsWith('gemini-')) return 'gemini'
   if (id.startsWith('gpt-') || id.startsWith('o1') || id.startsWith('o3') || id.startsWith('o4')) return 'codex'
   return ''
 }
 
+function getModelProviderTypesById(meta = {}) {
+  if (!Array.isArray(meta?.toolTypes)) return []
+  return [...new Set(meta.toolTypes
+    .filter(toolType => typeof toolType === 'string')
+    .map(toolType => toolType.trim())
+    .filter(Boolean))]
+}
 
 const speedTestModelOptions = computed(() => {
   const grouped = Object.fromEntries(speedTestToolRows.value.map(tool => [tool.key, []]))
 
   for (const [modelId, meta] of Object.entries(modelMetaTable.value || {})) {
     if (!meta || typeof meta !== 'object' || !meta.limit || !meta.pricing) continue
-    const provider = getModelProviderById(modelId)
-    if (!provider || !grouped[provider]) continue
-    grouped[provider].push({
-      label: modelId,
-      value: modelId
-    })
+    const providers = getModelProviderTypesById(meta)
+    const fallbackProvider = providers.length > 0 ? '' : getModelProviderById(modelId, meta)
+    for (const provider of providers.length > 0 ? providers : [fallbackProvider]) {
+      if (!provider || !grouped[provider]) continue
+      grouped[provider].push({
+        label: modelId,
+        value: modelId
+      })
+    }
   }
 
   for (const key of Object.keys(grouped)) {
     grouped[key].sort((a, b) => a.label.localeCompare(b.label))
+  }
+
+  for (const tool of speedTestToolRows.value) {
+    const currentModel = String(defaultSpeedTestModels.value[tool.key] || '').trim()
+    if (!currentModel || !grouped[tool.key]) continue
+    if (grouped[tool.key].some(option => option.value === currentModel)) continue
+    // Models.dev is metadata-only; keep a user's provider-specific model ID selectable.
+    grouped[tool.key].push({
+      label: `${currentModel}（自定义）`,
+      value: currentModel
+    })
   }
 
   return grouped
@@ -1953,7 +1973,41 @@ const menuItems = computed(() => [
   }
 ])
 
-const platformCatalog = computed(() => platformStore.all)
+const platformCatalog = computed(() => {
+  const catalog = Array.isArray(platformStore.all) ? platformStore.all : []
+  const byKey = new Map(catalog.map(platform => [platform.key, platform]))
+  const enabled = enabledCliPlatforms.value
+    .map(key => byKey.get(key))
+    .filter(Boolean)
+  const enabledKeys = new Set(enabled.map(platform => platform.key))
+  const disabled = catalog.filter(platform => !enabledKeys.has(platform.key))
+  return [...enabled, ...disabled]
+})
+
+function normalizePlatformKey(key) {
+  return String(key || '').trim().toLowerCase()
+}
+
+function getVisibleNotificationPlatformDefinitions(definitions = notificationPlatformDefinitions.value) {
+  const knownCliKeys = new Set(
+    (Array.isArray(platformStore.all) ? platformStore.all : [])
+      .map(platform => normalizePlatformKey(platform.key))
+      .filter(Boolean)
+  )
+  const enabledCliKeys = new Set(enabledCliPlatforms.value.map(normalizePlatformKey).filter(Boolean))
+  return definitions.filter(definition => {
+    const key = normalizePlatformKey(definition.key)
+    return !knownCliKeys.has(key) || enabledCliKeys.has(key)
+  })
+}
+
+const visibleNotificationPlatformDefinitions = computed(() =>
+  getVisibleNotificationPlatformDefinitions()
+)
+
+function getVisibleNotificationPlatformKeys() {
+  return new Set(visibleNotificationPlatformDefinitions.value.map(definition => definition.key))
+}
 const homeCliDirty = computed(() =>
   JSON.stringify(enabledCliPlatforms.value) !== JSON.stringify(originalEnabledCliPlatforms.value)
 )
@@ -2144,7 +2198,11 @@ async function loadNotificationSettings() {
     if (response.ok) {
       const data = await response.json()
       const { definitions, providerDefinitions } = applyNotificationResponseMetadata(data)
-      const nextSettings = createNotificationSettingsState(data, definitions, providerDefinitions)
+      const nextSettings = createNotificationSettingsState(
+        data,
+        getVisibleNotificationPlatformDefinitions(definitions),
+        providerDefinitions
+      )
       notificationSettings.value = nextSettings
       originalNotificationSettings.value = JSON.parse(JSON.stringify(nextSettings))
       // 获取平台信息用于显示安装提示
@@ -2160,9 +2218,12 @@ async function loadNotificationSettings() {
 async function handleSaveNotification() {
   savingNotification.value = true
   try {
-    const needsBrowserPermission = Object.values(notificationSettings.value.platforms || {}).some((state) => (
-      state?.enabled === true && state.type === 'browser'
-    ))
+    const visiblePlatformKeys = getVisibleNotificationPlatformKeys()
+    const needsBrowserPermission = Object.entries(notificationSettings.value.platforms || {})
+      .filter(([key]) => visiblePlatformKeys.has(key))
+      .some(([, state]) => (
+        state?.enabled === true && state.type === 'browser'
+      ))
 
     if (needsBrowserPermission) {
       await ensureBrowserNotificationPermission()
@@ -2173,13 +2234,15 @@ async function handleSaveNotification() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         platforms: Object.fromEntries(
-          Object.entries(notificationSettings.value.platforms || {}).map(([key, state]) => [
-            key,
-            {
-              enabled: state.enabled,
-              type: state.type
-            }
-          ])
+          Object.entries(notificationSettings.value.platforms || {})
+            .filter(([key]) => visiblePlatformKeys.has(key))
+            .map(([key, state]) => [
+              key,
+              {
+                enabled: state.enabled,
+                type: state.type
+              }
+            ])
         ),
         remoteNotifications: {
           providers: notificationSettings.value.remoteNotifications.providers
@@ -2190,7 +2253,11 @@ async function handleSaveNotification() {
     if (response.ok) {
       const data = await response.json()
       const { definitions, providerDefinitions } = applyNotificationResponseMetadata(data)
-      const nextSettings = createNotificationSettingsState(data, definitions, providerDefinitions)
+      const nextSettings = createNotificationSettingsState(
+        data,
+        getVisibleNotificationPlatformDefinitions(definitions),
+        providerDefinitions
+      )
       notificationSettings.value = nextSettings
       originalNotificationSettings.value = JSON.parse(JSON.stringify(nextSettings))
       notificationPlatform.value = data.platform || notificationPlatform.value

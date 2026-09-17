@@ -4,6 +4,7 @@ const PM2_PATH = require.resolve('pm2');
 const CONFIG_PATH = require.resolve('../../../src/config/loader');
 const PATHS_PATH = require.resolve('../../../src/config/paths');
 const PORT_HELPER_PATH = require.resolve('../../../src/utils/port-helper');
+const SESSION_INDEX_PATH = require.resolve('../../../src/server/services/session-history-index');
 const MODULE_PATH = require.resolve('../../../src/commands/daemon');
 
 let processList;
@@ -14,6 +15,7 @@ let killProcessByPort;
 let waitForPortRelease;
 let getPortToolIssue;
 let formatPortToolIssue;
+let cleanupStaleInventoryLocks;
 let daemon;
 let logSpy;
 let errorSpy;
@@ -55,6 +57,7 @@ beforeEach(() => {
   waitForPortRelease = vi.fn(() => Promise.resolve(true));
   getPortToolIssue = vi.fn(() => null);
   formatPortToolIssue = vi.fn(() => []);
+  cleanupStaleInventoryLocks = vi.fn(() => ({ removed: [], retained: [] }));
 
   require.cache[PM2_PATH] = {
     id: PM2_PATH,
@@ -98,6 +101,12 @@ beforeEach(() => {
       formatPortToolIssue
     }
   };
+  require.cache[SESSION_INDEX_PATH] = {
+    id: SESSION_INDEX_PATH,
+    filename: SESSION_INDEX_PATH,
+    loaded: true,
+    exports: { cleanupStaleInventoryLocks }
+  };
 
   logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -113,7 +122,8 @@ afterEach(() => {
     PM2_PATH,
     CONFIG_PATH,
     PATHS_PATH,
-    PORT_HELPER_PATH
+    PORT_HELPER_PATH,
+    SESSION_INDEX_PATH
   ].forEach((mod) => {
     delete require.cache[mod];
   });
@@ -130,6 +140,7 @@ describe('daemon handleStop', () => {
     expect(pm2Mock.dump).toHaveBeenCalledWith(true, expect.any(Function));
     expect(pm2Mock.disconnect).toHaveBeenCalled();
     expect(killProcessByPort).not.toHaveBeenCalled();
+    expect(cleanupStaleInventoryLocks).toHaveBeenCalledTimes(1);
   });
 
   test('forces pm2 dump after deleting the last process to clear stale startup state', async () => {
