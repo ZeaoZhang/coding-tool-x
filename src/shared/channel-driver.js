@@ -8,8 +8,37 @@ const COMMON_KEYS = new Set([
   'routingGroup', 'providerKey', 'providerApi', 'model', 'wireApi',
   'gatewaySourceType', 'websiteUrl', 'createdAt', 'updatedAt',
   'authMode', 'authRef', 'authSource', 'authStatus', 'oauthProviderId', 'apiKey',
-  'transport', 'providerConfig'
+  'transport', 'providerConfig',
+  // Channel model settings are part of the persisted public DTO. Keeping them
+  // in `extra` makes the editor lose redirect rules when it loads and saves a
+  // channel through the descriptor API.
+  'presetId', 'modelConfig', 'modelRedirects', 'speedTestModel', 'allowedModels',
+  'models', 'modelMetadataMode', 'modelBindings'
 ]);
+
+const MODEL_TYPE_ALIASES = Object.freeze({
+  claude: 'claude',
+  anthropic: 'claude',
+  codex: 'codex',
+  openai: 'codex',
+  openai_compatible: 'openai_compatible',
+  'openai-compatible': 'openai_compatible',
+  openai_compatible_api: 'openai_compatible',
+  gemini: 'gemini',
+  google: 'gemini'
+});
+
+function resolveModelListType(platform, channel = {}, configuredType = '') {
+  const explicitType = String(configuredType || channel?.gatewaySourceType || '').trim().toLowerCase();
+  if (MODEL_TYPE_ALIASES[explicitType]) return MODEL_TYPE_ALIASES[explicitType];
+
+  switch (platform) {
+    case 'claude': return 'claude';
+    case 'gemini': return 'gemini';
+    case 'codex': return 'openai_compatible';
+    default: return 'openai_compatible';
+  }
+}
 
 function isSecretKey(key) {
   return SECRET_KEYS.has(key) || /token|secret|password|credential/i.test(key);
@@ -115,16 +144,62 @@ function createChannelDriver({
     return value == null ? { channels: [] } : value;
   };
   Object.defineProperty(driver, '_service', { value: loadService, enumerable: false });
-  driver.listModels = async (channel, options = {}) => {
-    if (!modelListType) {
-      return unsupported(platform, capability, 'listModels');
+  const findChannelById = async channelId => {
+    const target = loadService();
+    if (!target || typeof target[listMethod] !== 'function') {
+      throw new Error(`Channel list operation is unavailable for ${platform}`);
     }
+    const value = await target[listMethod]();
+    const channels = Array.isArray(value) ? value : value?.channels;
+    return Array.isArray(channels)
+      ? channels.find(channel => String(channel?.id || '') === String(channelId))
+      : undefined;
+  };
+  driver.listModels = async (channel, options = {}) => {
     try {
       const { fetchModelsFromProvider } = require('../server/services/model-detector');
-      const data = await fetchModelsFromProvider(channel, modelListType, options);
+      const channelType = resolveModelListType(platform, channel, modelListType);
+      const data = await fetchModelsFromProvider(channel, channelType, options);
       return ok(platform, capability, 'listModels', data);
     } catch (error) {
       return failed(platform, capability, 'listModels', error);
+    }
+  };
+  driver.models = async (channelId, options = {}) => {
+    const operation = 'models';
+    if (!channelId) return invalid(platform, capability, operation, new Error('Channel id is required'));
+    try {
+      const channel = await findChannelById(channelId);
+      if (!channel) return invalid(platform, capability, operation, new Error(`Channel not found: ${channelId}`));
+      const { fetchModelsFromProvider } = require('../server/services/model-detector');
+      const channelType = resolveModelListType(platform, channel, modelListType);
+      const data = await fetchModelsFromProvider(channel, channelType, options);
+      return ok(platform, capability, operation, data);
+    } catch (error) {
+      return failed(platform, capability, operation, error);
+    }
+  };
+  driver.probeModels = async (input = {}) => {
+    const operation = 'probeModels';
+    const channel = input && typeof input === 'object' ? input : {};
+    try {
+      const { probeModelAvailability, getModelPriority } = require('../server/services/model-detector');
+      const channelType = resolveModelListType(platform, channel, modelListType);
+      const probe = await probeModelAvailability(channel, channelType, {
+        forceRefresh: channel.forceRefresh === true || channel.force === true,
+        preferredModels: Array.isArray(channel.preferredModels) ? channel.preferredModels : [],
+        stopOnFirstAvailable: channel.stopOnFirstAvailable === true,
+        toolType: channel.toolType || platform
+      });
+      const models = Array.isArray(probe?.availableModels) ? probe.availableModels : [];
+      return ok(platform, capability, operation, {
+        ...probe,
+        models,
+        modelType: channelType,
+        fallbackModels: getModelPriority(channelType, { toolType: channel.toolType || platform })
+      });
+    } catch (error) {
+      return failed(platform, capability, operation, error);
     }
   };
   driver.list = (...args) => call('list', listMethod, args, sanitizeChannels);

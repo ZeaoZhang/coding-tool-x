@@ -44,6 +44,63 @@ describe('built-in channel Driver contract', () => {
     }
   });
 
+  test.each(platforms)('%s keeps model redirect rules in channel DTOs', platform => {
+    const redirectRules = [{ from: 'gpt-4o', to: 'gpt-4.1' }];
+    const channel = {
+      id: 'redirect-channel',
+      name: 'Redirect channel',
+      modelRedirects: redirectRules
+    };
+    const driverModule = require(`../../../src/platforms/drivers/${platform}/channels`);
+    const driver = driverModule.createDriver({
+      requireImpl: () => serviceFor(platform, [channel])
+    });
+
+    const result = driver.list();
+
+    expect(result.status).toBe('ok');
+    expect(result.data.channels[0].modelRedirects).toEqual(redirectRules);
+    expect(result.data.channels[0].extra?.modelRedirects).toBeUndefined();
+  });
+
+  test.each(platforms)('%s persists model redirect rules through channel updates', async platform => {
+    const redirectRules = [{ from: 'source-model', to: 'target-model' }];
+    const driverModule = require(`../../../src/platforms/drivers/${platform}/channels`);
+    const driver = driverModule.createDriver({
+      requireImpl: () => serviceFor(platform)
+    });
+
+    expect(driver.update('channel-to-update', { modelRedirects: redirectRules })).toMatchObject({
+      status: 'ok',
+      platform,
+      capability: 'channels',
+      operation: 'update',
+      data: { id: 'channel-to-update', modelRedirects: redirectRules }
+    });
+  });
+
+  test.each(platforms)('%s exposes and serves model catalog operations', async platform => {
+    const driverModule = require(`../../../src/platforms/drivers/${platform}/channels`);
+    const driver = driverModule.createDriver({
+      requireImpl: () => serviceFor(platform, [{
+        id: 'model-channel',
+        name: 'Model channel',
+        baseUrl: 'https://models.example.test',
+        apiKey: 'test-key'
+      }])
+    });
+
+    expect(typeof driver.models).toBe('function');
+    expect(typeof driver.probeModels).toBe('function');
+    await expect(driver.models('model-channel', { useV1ModelsEndpoint: false })).resolves.toMatchObject({
+      status: 'ok',
+      platform,
+      capability: 'channels',
+      operation: 'models',
+      data: { fallbackUsed: true, disabledByConfig: true }
+    });
+  });
+
 
   test('returns channel DTOs with visible API keys and platform extensions in extra', () => {
     const { createDriver } = require('../../../src/platforms/drivers/claude/channels');

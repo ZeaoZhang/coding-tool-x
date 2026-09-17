@@ -288,6 +288,7 @@ import ModelRedirectEditor from './ModelRedirectEditor.vue'
 import ChannelAuthSection from './ChannelAuthSection.vue'
 import channelPanelFactories from './channelPanelFactories'
 import useChannelManager from '../../composables/useChannelManager'
+import { resolveErrorMessage } from '../../utils/error-message'
 import { useChannelScheduler } from '../../composables/useChannelScheduler'
 import { createGenericChannelPanel } from './commonChannelSchema'
 import { getPlatformChannels, createPlatformChannel, updatePlatformChannel, deletePlatformChannel } from '../../api/channels'
@@ -495,7 +496,7 @@ async function handleFetchModels({ forceRefresh = false, signature = buildModelF
       await config.fetchModelsForChannel(state.editingChannel?.id || null, state.formData, { forceRefresh })
     } catch (error) {
       if (buildModelFetchSignature() === signature) {
-        state.formData.modelsFetchError = error?.message || '获取模型列表失败'
+        state.formData.modelsFetchError = resolveErrorMessage(error, '获取模型列表失败')
         state.formData.modelsFetchErrorHint = '可重试，或先手动填写模型名称'
       }
     } finally {

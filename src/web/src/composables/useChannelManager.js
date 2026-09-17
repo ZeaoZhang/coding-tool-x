@@ -3,6 +3,7 @@ import message, { dialog } from '../utils/message'
 import { getUIConfig, updateNestedUIConfig } from '../api/ui-config'
 import { getChannelBalances, refreshChannelBalance } from '../api/channels'
 import { useGlobalStore } from '../stores/global'
+import { resolveErrorMessage } from '../utils/error-message'
 
 const BALANCE_LOAD_DELAY_MS = 5000
 const UI_CONFIG_TTL = 60000
@@ -25,15 +26,7 @@ function setLocalCollapse(storageKey, value) {
 }
 
 function resolveError(error, fallback) {
-  const responseError = error?.response?.data?.error
-  if (responseError) {
-    if (typeof responseError === 'string') return responseError
-    if (typeof responseError === 'object') {
-      return responseError.error || responseError.message || responseError.code || fallback || '操作失败'
-    }
-    return String(responseError)
-  }
-  return fallback || error.message || '操作失败'
+  return resolveErrorMessage(error, fallback || '操作失败')
 }
 
 function isDocumentVisible() {

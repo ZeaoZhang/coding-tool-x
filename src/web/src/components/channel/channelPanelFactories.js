@@ -59,39 +59,47 @@ import {
   testOmpChannelSpeed
 } from '../../api/channels'
 import { useDefaultModels } from '../../composables/useDefaultModels.js'
+import { resolveErrorMessage } from '../../utils/error-message'
 
 const { getAllModelsByToolType, loadDefaultModels } = useDefaultModels()
 
 const URL_REQUIRE_HTTP = /^https?:\/\//i
 const PROVIDER_KEY_PATTERN = /^[a-z0-9_-]+$/i
 const MANUAL_BALANCE_CREDENTIAL_PLATFORMS = new Set(['anyrouter', 'newcli'])
+const CHANNEL_EXTENSION_FIELDS = [
+  'model',
+  'allowedModels',
+  'speedTestModel',
+  'presetId',
+  'modelConfig',
+  'models',
+  'modelMetadataMode',
+  'modelBindings',
+  'modelRedirects',
+  'targetApi',
+  'apiFormat',
+  'proxyUrl'
+]
+
+function normalizeChannel(channel) {
+  const extra = channel?.extra
+  if (!extra || typeof extra !== 'object' || Array.isArray(extra)) return channel
+  const normalized = { ...channel }
+  CHANNEL_EXTENSION_FIELDS.forEach(key => {
+    if ((normalized[key] === undefined || normalized[key] === null) && extra[key] !== undefined) {
+      normalized[key] = extra[key]
+    }
+  })
+  return normalized
+}
 
 function normalizeChannelList(data) {
-  return Array.isArray(data) ? data : (data?.channels || [])
+  const channels = Array.isArray(data) ? data : (data?.channels || [])
+  return Array.isArray(channels) ? channels.map(normalizeChannel) : []
 }
 
 function normalizeOmpChannelList(data) {
-  return normalizeChannelList(data).map(channel => {
-    const extra = channel?.extra
-    if (!extra || typeof extra !== 'object' || Array.isArray(extra)) return channel
-    const normalized = { ...channel }
-    const extraFields = [
-      'model',
-      'allowedModels',
-      'speedTestModel',
-      'presetId',
-      'models',
-      'modelMetadataMode',
-      'modelBindings',
-      'modelRedirects'
-    ]
-    extraFields.forEach(key => {
-      if ((normalized[key] === undefined || normalized[key] === null) && extra[key] !== undefined) {
-        normalized[key] = extra[key]
-      }
-    })
-    return normalized
-  })
+  return normalizeChannelList(data)
 }
 
 function normalizeConcurrency(value) {
@@ -695,12 +703,12 @@ const channelPanelFactories = {
 
           // Show info message if using fallback default model
           if (result.fallbackUsed) {
-            form.modelsFetchError = result.error || '无法自动获取模型列表（API 端点受保护）'
+            form.modelsFetchError = resolveErrorMessage(result?.error, '无法自动获取模型列表（API 端点受保护）')
             form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表，您也可以手动输入模型名称'
           }
         } else if (result.fallbackUsed || !result.supported) {
           form.availableModels = defaultOptions
-          form.modelsFetchError = result.error || '该供应商不支持模型列表接口'
+          form.modelsFetchError = resolveErrorMessage(result?.error, '该供应商不支持模型列表接口')
           form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表'
         }
       } catch (error) {
@@ -708,10 +716,10 @@ const channelPanelFactories = {
         // Try to extract error details from response
         const errorData = error.response?.data
         if (errorData) {
-          form.modelsFetchError = errorData.error || error.message || '获取模型列表失败'
+          form.modelsFetchError = resolveErrorMessage(errorData?.error || error, '获取模型列表失败')
           form.modelsFetchErrorHint = errorData.errorHint || '已使用默认模型列表'
         } else {
-          form.modelsFetchError = error.message || '获取模型列表失败'
+          form.modelsFetchError = resolveErrorMessage(error, '获取模型列表失败')
           form.modelsFetchErrorHint = '已使用默认模型列表'
         }
       } finally {
@@ -977,19 +985,19 @@ const channelPanelFactories = {
           )
           // 如果使用了回退，显示提示
           if (result.fallbackUsed) {
-            form.modelsFetchError = result.error || '无法自动获取模型列表'
+            form.modelsFetchError = resolveErrorMessage(result?.error, '无法自动获取模型列表')
             form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表，您也可以手动输入模型名称'
           }
         } else if (result.fallbackUsed || !result.supported) {
           // 获取失败，使用默认列表
           form.availableModels = getToolModelOptions('codex')
-          form.modelsFetchError = result.error || '该供应商不支持模型列表接口'
+          form.modelsFetchError = resolveErrorMessage(result?.error, '该供应商不支持模型列表接口')
           form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表'
         }
       } catch (error) {
         // 出错时使用默认列表
         form.availableModels = getToolModelOptions('codex')
-        form.modelsFetchError = error.message || '获取模型列表失败'
+        form.modelsFetchError = resolveErrorMessage(error, '获取模型列表失败')
         form.modelsFetchErrorHint = '已使用默认模型列表'
       } finally {
         form.modelsFetching = false
@@ -1241,19 +1249,19 @@ const channelPanelFactories = {
           )
           // 如果使用了回退，显示提示
           if (result.fallbackUsed) {
-            form.modelsFetchError = result.error || '无法自动获取模型列表'
+            form.modelsFetchError = resolveErrorMessage(result?.error, '无法自动获取模型列表')
             form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表，您也可以手动输入模型名称'
           }
         } else if (result.fallbackUsed || !result.supported) {
           // 获取失败，使用默认列表
           form.availableModels = getToolModelOptions('gemini')
-          form.modelsFetchError = result.error || '该供应商不支持模型列表接口'
+          form.modelsFetchError = resolveErrorMessage(result?.error, '该供应商不支持模型列表接口')
           form.modelsFetchErrorHint = result.errorHint || '已使用默认模型列表'
         }
       } catch (error) {
         // 出错时使用默认列表
         form.availableModels = getToolModelOptions('gemini')
-        form.modelsFetchError = error.message || '获取模型列表失败'
+        form.modelsFetchError = resolveErrorMessage(error, '获取模型列表失败')
         form.modelsFetchErrorHint = '已使用默认模型列表'
       } finally {
         form.modelsFetching = false
@@ -1532,13 +1540,13 @@ const channelPanelFactories = {
             offlineOptions
           )
           if (result.error) {
-            form.modelsFetchError = result.error
+            form.modelsFetchError = resolveErrorMessage(result?.error, '无法自动获取模型列表')
             form.modelsFetchErrorHint = result.errorHint
               || (offlineOptions.length ? '已使用 Models.dev 离线模型列表' : '请手动填写模型名称')
           }
         } catch (error) {
           form.availableModels = offlineOptions
-          form.modelsFetchError = error.message || '获取模型列表失败'
+          form.modelsFetchError = resolveErrorMessage(error, '获取模型列表失败')
           form.modelsFetchErrorHint = offlineOptions.length
             ? '已使用 Models.dev 离线模型列表'
             : '请手动填写模型名称'
@@ -1554,12 +1562,12 @@ const channelPanelFactories = {
         const liveOptions = buildModelOptions(result.models || [])
         form.availableModels = mergeModelOptions(liveOptions, offlineOptions)
         if (result.fallbackUsed || (liveOptions.length === 0 && offlineOptions.length > 0)) {
-          form.modelsFetchError = result.error || '无法自动获取模型列表'
+          form.modelsFetchError = resolveErrorMessage(result?.error, '无法自动获取模型列表')
           form.modelsFetchErrorHint = result.errorHint || '已使用 Models.dev 离线模型列表'
         }
       } catch (error) {
         form.availableModels = offlineOptions
-        form.modelsFetchError = error.message || '获取模型列表失败'
+        form.modelsFetchError = resolveErrorMessage(error, '获取模型列表失败')
         form.modelsFetchErrorHint = offlineOptions.length
           ? '已使用 Models.dev 离线模型列表'
           : '请手动填写模型名称'
@@ -1942,13 +1950,13 @@ const channelPanelFactories = {
             source: liveOptions.length > 0 ? 'channel' : 'Models.dev'
           }
           if (result.error) {
-            form.modelsFetchError = result.error
+            form.modelsFetchError = resolveErrorMessage(result?.error, '无法自动获取模型列表')
             form.modelsFetchErrorHint = result.errorHint
               || (offlineOptions.length ? '已使用 Models.dev 离线模型列表' : '请手动填写模型名称')
           }
         } catch (error) {
           form.availableModels = offlineOptions
-          form.modelsFetchError = error.message || '获取模型列表失败'
+          form.modelsFetchError = resolveErrorMessage(error, '获取模型列表失败')
           form.modelsFetchErrorHint = offlineOptions.length
             ? '已使用 Models.dev 离线模型列表'
             : '请手动填写模型名称'
@@ -1970,12 +1978,12 @@ const channelPanelFactories = {
           source: liveOptions.length > 0 ? 'channel' : 'Models.dev'
         }
         if (result.error || (liveOptions.length === 0 && offlineOptions.length > 0)) {
-          form.modelsFetchError = result.error || '无法自动获取模型列表'
+          form.modelsFetchError = resolveErrorMessage(result?.error, '无法自动获取模型列表')
           form.modelsFetchErrorHint = result.errorHint || '已使用 Models.dev 离线模型列表'
         }
       } catch (error) {
         form.availableModels = offlineOptions
-        form.modelsFetchError = error.message || '获取模型列表失败'
+        form.modelsFetchError = resolveErrorMessage(error, '获取模型列表失败')
         form.modelsFetchErrorHint = offlineOptions.length
           ? '已使用 Models.dev 离线模型列表'
           : '请手动填写模型名称'
