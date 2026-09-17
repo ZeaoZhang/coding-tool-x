@@ -12,6 +12,7 @@ const CODEX_CHANNELS_PATH = require.resolve('../../../src/platforms/drivers/code
 const GEMINI_CHANNELS_PATH = require.resolve('../../../src/platforms/drivers/gemini/channels-implementation');
 const OPENCODE_CHANNELS_PATH = require.resolve('../../../src/platforms/drivers/opencode/channels-implementation');
 const OMP_CHANNELS_PATH = require.resolve('../../../src/platforms/drivers/omp/channels-implementation');
+const AUTH_SERVICE_PATH = require.resolve('../../../src/platforms/channel-auth-service');
 const PATHS_PATH = require.resolve('../../../src/config/paths');
 const SNAPSHOT_CACHE_PATH = require.resolve('../../../src/server/services/snapshot-cache');
 const PLATFORM_RUNTIME_PATH = require.resolve('../../../src/platforms/runtime');
@@ -24,6 +25,7 @@ function loadServiceWithStubs({
   geminiChannelsStub,
   opencodeChannelsStub,
   ompChannelsStub,
+  authServiceStub,
   strategyCachePath
 } = {}) {
   delete require.cache[SERVICE_PATH];
@@ -33,6 +35,7 @@ function loadServiceWithStubs({
   delete require.cache[GEMINI_CHANNELS_PATH];
   delete require.cache[OPENCODE_CHANNELS_PATH];
   delete require.cache[OMP_CHANNELS_PATH];
+  delete require.cache[AUTH_SERVICE_PATH];
   delete require.cache[PATHS_PATH];
   delete require.cache[SNAPSHOT_CACHE_PATH];
 
@@ -102,6 +105,14 @@ function loadServiceWithStubs({
       exports: ompChannelsStub
     };
   }
+  if (authServiceStub) {
+    require.cache[AUTH_SERVICE_PATH] = {
+      id: AUTH_SERVICE_PATH,
+      filename: AUTH_SERVICE_PATH,
+      loaded: true,
+      exports: authServiceStub
+    };
+  }
   const channelStubs = { claude: channelsStub, codex: codexChannelsStub, gemini: geminiChannelsStub, opencode: opencodeChannelsStub, omp: ompChannelsStub };
   require.cache[PLATFORM_RUNTIME_PATH] = {
     id: PLATFORM_RUNTIME_PATH,
@@ -153,6 +164,7 @@ describe('channel-balance service', () => {
     delete require.cache[GEMINI_CHANNELS_PATH];
     delete require.cache[OPENCODE_CHANNELS_PATH];
     delete require.cache[OMP_CHANNELS_PATH];
+    delete require.cache[AUTH_SERVICE_PATH];
     delete require.cache[PLATFORM_RUNTIME_PATH];
     delete require.cache[SNAPSHOT_CACHE_PATH];
   });
@@ -1509,5 +1521,90 @@ describe('channel-balance service', () => {
       await enabledServer.close();
       await disabledServer.close();
     }
+  });
+
+  test('loads OAuth channel usage without gateway credentials', async () => {
+    const fetchChannelAuthQuota = vi.fn(async () => ({
+      quota: {
+        status: 'available',
+        primary: {
+          label: '5h',
+          remainingPercent: 80,
+          usedPercent: 20,
+          resetsAt: '2026-09-17T10:00:00.000Z'
+        },
+        secondary: {
+          label: '7d',
+          remainingPercent: 60,
+          usedPercent: 40,
+          resetsAt: '2026-09-20T10:00:00.000Z'
+        }
+      },
+      status: 'available'
+    }));
+    const service = loadServiceWithStubs({
+      authServiceStub: { fetchChannelAuthQuota },
+      codexChannelsStub: {
+        getChannels: vi.fn(() => ({
+          channels: [{
+            id: 'codex-oauth',
+            name: 'Codex OAuth',
+            enabled: true,
+            authMode: 'oauth',
+            baseUrl: '',
+            apiKey: '',
+            authRef: { credentialId: 'credential-1' }
+          }]
+        }))
+      }
+    });
+
+    const snapshot = await service._test.refreshChannelBalanceSnapshot('codex', {
+      id: 'codex-oauth',
+      name: 'Codex OAuth',
+      enabled: true,
+      authMode: 'oauth',
+      baseUrl: '',
+      apiKey: '',
+      authRef: { credentialId: 'credential-1' }
+    }, { force: true });
+
+    expect(snapshot).toMatchObject({
+      visible: true,
+      kind: 'oauth-quota',
+      label: '5h 剩余 80% · 7d 剩余 60%',
+      windows: [
+        expect.objectContaining({ id: 'primary', label: '5h', remainingPercent: 80 }),
+        expect.objectContaining({ id: 'secondary', label: '7d', remainingPercent: 60 })
+      ]
+    });
+    expect(fetchChannelAuthQuota).toHaveBeenCalledWith('codex', 'codex-oauth', { refresh: true });
+  });
+
+  test('keeps the last successful OAuth quota as stale when refresh fails', async () => {
+    const fetchChannelAuthQuota = vi.fn()
+      .mockResolvedValueOnce({
+        quota: {
+          primary: { label: '5h', remainingPercent: 80, usedPercent: 20 }
+        },
+        status: 'available',
+        checkedAt: '2026-09-17T09:00:00.000Z'
+      })
+      .mockResolvedValueOnce({ quota: null, status: 'unavailable' });
+    const service = loadServiceWithStubs({
+      authServiceStub: { fetchChannelAuthQuota },
+      codexChannelsStub: {
+        getChannels: vi.fn(() => ({
+          channels: [{ id: 'codex-oauth-stale', enabled: true, authMode: 'oauth', authRef: { credentialId: 'credential-1' } }]
+        }))
+      }
+    });
+    const channel = { id: 'codex-oauth-stale', authMode: 'oauth', authRef: { credentialId: 'credential-1' } };
+
+    await service._test.refreshChannelBalanceSnapshot('codex', channel, { force: true, now: 1000000 });
+    const stale = await service._test.refreshChannelBalanceSnapshot('codex', channel, { force: true, now: 2000000 });
+
+    expect(stale).toMatchObject({ visible: true, kind: 'oauth-quota', stale: true, label: '5h 剩余 80%' });
+    expect(fetchChannelAuthQuota).toHaveBeenCalledTimes(2);
   });
 });

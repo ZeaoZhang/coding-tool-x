@@ -1,6 +1,8 @@
 const fs = require('fs');
+const https = require('https');
 const os = require('os');
 const path = require('path');
+const { EventEmitter } = require('events');
 
 let testDir;
 let service;
@@ -194,6 +196,44 @@ function stubModules() {
   };
 }
 
+function writeCredential(tool, credential) {
+  const storePath = path.join(testDir, 'oauth', 'credentials.json');
+  const tools = {
+    claude: { defaultCredentialId: null, credentials: [] },
+    codex: { defaultCredentialId: null, credentials: [] },
+    gemini: { defaultCredentialId: null, credentials: [] },
+    omp: { defaultCredentialId: null, credentials: [] }
+  };
+  tools[tool] = {
+    defaultCredentialId: credential.id,
+    credentials: [credential]
+  };
+  fs.mkdirSync(path.dirname(storePath), { recursive: true });
+  fs.writeFileSync(storePath, JSON.stringify({ version: 1, tools }, null, 2), 'utf8');
+}
+
+function mockHttpsResponses(responses) {
+  const requests = [];
+  vi.spyOn(https, 'request').mockImplementation((options, callback) => {
+    const request = new EventEmitter();
+    request.write = vi.fn();
+    request.destroy = vi.fn();
+    request.end = vi.fn(() => {
+      const responseSpec = responses.shift() || { statusCode: 500, body: '{}' };
+      const response = new EventEmitter();
+      response.statusCode = responseSpec.statusCode;
+      process.nextTick(() => {
+        callback(response);
+        response.emit('data', responseSpec.body);
+        response.emit('end');
+      });
+    });
+    requests.push({ options, request });
+    return request;
+  });
+  return requests;
+}
+
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oauth-creds-'));
   stubModules();
@@ -202,6 +242,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   fs.rmSync(testDir, { recursive: true, force: true });
   [
     '../../../src/platforms/oauth-credentials-service',
@@ -274,5 +315,207 @@ describe('oauth credential usage lookup', () => {
     const result = await service.fetchCredentialUsage('claude', 'cred-1');
 
     expect(result).toEqual({ error: '无有效 token' });
+  });
+
+  test('normalizes Claude rolling quota windows and reset times', () => {
+    const result = service.normalizeOAuthQuota('claude', {
+      five_hour: {
+        used_percent: 20,
+        resets_at: '2026-09-17T10:00:00.000Z'
+      },
+      seven_day: {
+        utilization: 0.4,
+        reset_after_seconds: 3600
+      }
+    });
+
+    expect(result).toMatchObject({
+      status: 'available',
+      quota: {
+        primary: { id: 'primary', label: '5h', remainingPercent: 80, usedPercent: 20 },
+        secondary: { id: 'secondary', label: '7d', remainingPercent: 60, usedPercent: 40 }
+      }
+    });
+    expect(result.quota.primary.resetsAt).toBe('2026-09-17T10:00:00.000Z');
+    expect(Date.parse(result.quota.secondary.resetsAt)).not.toBeNaN();
+  });
+
+  test('fetches Claude usage from the OAuth usage endpoint', async () => {
+    const requests = mockHttpsResponses([{
+      statusCode: 200,
+      body: JSON.stringify({
+        five_hour: { used_percent: 10 },
+        seven_day: { used_percent: 30 }
+      })
+    }]);
+    writeCredential('claude', {
+      id: 'claude-credential',
+      tool: 'claude',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      fingerprint: 'claude:test',
+      secrets: { accessToken: 'claude-access-token', primaryToken: 'claude-access-token' }
+    });
+
+    const result = await service.fetchCredentialUsage('claude', 'claude-credential');
+
+    expect(result.quota.primary.remainingPercent).toBe(90);
+    expect(requests[0].options.path).toBe('/api/oauth/usage');
+    expect(requests[0].options.headers).toMatchObject({
+      Authorization: 'Bearer claude-access-token',
+      'anthropic-beta': 'oauth-2025-04-20'
+    });
+  });
+
+  test('normalizes Codex canonical usage windows and additional limits', () => {
+    const result = service.normalizeOAuthQuota('codex', {
+      rate_limit: {
+        primary_window: { used_percent: 20, reset_at: 1780000000 },
+        secondary_window: { used_percent: 40, reset_at: '2026-09-20T10:00:00.000Z' }
+      },
+      additional_rate_limits: [{
+        limit_name: 'GPT-5-Codex',
+        rate_limit: {
+          primary_window: { remaining_fraction: 0.25, reset_at: '2026-09-19T10:00:00.000Z' }
+        }
+      }]
+    });
+
+    expect(result).toMatchObject({
+      status: 'available',
+      quota: {
+        primary: { id: 'primary', remainingPercent: 80, usedPercent: 20 },
+        secondary: { id: 'secondary', remainingPercent: 60, usedPercent: 40 }
+      }
+    });
+    expect(result.quota.additional).toEqual([
+      expect.objectContaining({
+        id: 'additional:0:primary',
+        label: 'GPT-5-Codex 5h',
+        remainingPercent: 25,
+        usedPercent: 75,
+        resetsAt: '2026-09-19T10:00:00.000Z'
+      })
+    ]);
+  });
+
+  test('normalizes Gemini model quota buckets', () => {
+    const result = service.normalizeOAuthQuota('gemini', {
+      buckets: [
+        { modelId: 'gemini-2.5-pro', remainingFraction: 0.8, resetTime: '2026-09-18T12:00:00.000Z' },
+        { modelId: 'gemini-2.5-flash', remainingFraction: 0 }
+      ]
+    });
+
+    expect(result).toMatchObject({
+      status: 'available',
+      quota: {
+        windows: [
+          {
+            id: 'gemini:gemini-2.5-pro',
+            label: 'gemini-2.5-pro',
+            remainingPercent: 80,
+            usedPercent: 20,
+            resetsAt: '2026-09-18T12:00:00.000Z'
+          },
+          {
+            id: 'gemini:gemini-2.5-flash',
+            remainingPercent: 0,
+            usedPercent: 100
+          }
+        ]
+      }
+    });
+  });
+
+  test('uses Codex access token, account claim and wham usage endpoint', async () => {
+    decodeJwtPayloadMock.mockImplementation((token) => token === 'id-token'
+      ? { 'https://api.openai.com/auth.chatgpt_account_id': 'chatgpt-account-1' }
+      : {});
+    const requests = mockHttpsResponses([{
+      statusCode: 200,
+      body: JSON.stringify({
+        rate_limit: {
+          primary_window: { used_percent: 20 },
+          secondary_window: { used_percent: 40 }
+        }
+      })
+    }]);
+    writeCredential('codex', {
+      id: 'codex-credential',
+      tool: 'codex',
+      providerId: '',
+      accountId: '',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      fingerprint: 'codex:test',
+      secrets: {
+        accessToken: 'access-token',
+        idToken: 'id-token',
+        primaryToken: 'access-token'
+      }
+    });
+
+    const result = await service.fetchCredentialUsage('codex', 'codex-credential');
+
+    expect(result.quota.primary.remainingPercent).toBe(80);
+    expect(requests).toHaveLength(1);
+    expect(requests[0].options.path).toBe('/backend-api/wham/usage');
+    expect(requests[0].options.headers).toMatchObject({
+      Authorization: 'Bearer access-token',
+      'ChatGPT-Account-Id': 'chatgpt-account-1'
+    });
+  });
+
+  test('loads Gemini project before retrieving quota buckets', async () => {
+    const requests = mockHttpsResponses([
+      {
+        statusCode: 200,
+        body: JSON.stringify({ cloudaicompanionProject: { id: 'project-1' } })
+      },
+      {
+        statusCode: 200,
+        body: JSON.stringify({
+          buckets: [{ modelId: 'gemini-2.5-pro', remainingFraction: 0.7, resetTime: '2026-09-18T12:00:00.000Z' }]
+        })
+      }
+    ]);
+    writeCredential('gemini', {
+      id: 'gemini-credential',
+      tool: 'gemini',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      fingerprint: 'gemini:test',
+      secrets: { accessToken: 'gemini-access-token', primaryToken: 'gemini-access-token' }
+    });
+
+    const result = await service.fetchCredentialUsage('gemini', 'gemini-credential');
+
+    expect(result.quota.windows[0]).toMatchObject({
+      id: 'gemini:gemini-2.5-pro',
+      remainingPercent: 70,
+      resetsAt: '2026-09-18T12:00:00.000Z'
+    });
+    expect(requests).toHaveLength(2);
+    expect(requests[0].options.path).toBe('/v1internal:loadCodeAssist');
+    expect(requests[1].options.path).toBe('/v1internal:retrieveUserQuota');
+    expect(JSON.parse(requests[1].request.write.mock.calls[0][0])).toEqual({ project: 'project-1' });
+    expect(requests[1].options.headers.Authorization).toBe('Bearer gemini-access-token');
+  });
+
+  test('reports an expired OAuth grant without fabricating quota', async () => {
+    mockHttpsResponses([{ statusCode: 401, body: JSON.stringify({ error: 'unauthorized' }) }]);
+    writeCredential('claude', {
+      id: 'expired-credential',
+      tool: 'claude',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      fingerprint: 'claude:expired',
+      secrets: { accessToken: 'expired-token', primaryToken: 'expired-token' }
+    });
+
+    const result = await service.fetchCredentialUsage('claude', 'expired-credential');
+
+    expect(result).toMatchObject({ quota: null, status: 'unauthorized' });
   });
 });

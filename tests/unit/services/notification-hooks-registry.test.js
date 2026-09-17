@@ -35,11 +35,16 @@ const { catalog, drivers, loadUIConfig, saveUIConfig } = vi.hoisted(() => {
     demo: driverFor('demo', statuses.demo, definitions.demo)
   };
   const catalog = {
-    list: vi.fn(() => [
+    list: vi.fn((options = {}) => {
+      const manifests = [
       { key: 'claude', label: 'Manifest Claude' },
       { key: 'demo', label: 'Manifest Demo' },
       { key: 'missing', label: 'Manifest Missing' }
-    ]),
+      ];
+      return options.capability === 'channels'
+        ? manifests.filter(manifest => manifest.key === 'claude')
+        : manifests;
+    }),
     driver: vi.fn(key => drivers[key] || null)
   };
   return {
@@ -93,6 +98,21 @@ describe('notification hooks catalog integration', () => {
     expect(result.platformDefinitions).toHaveLength(2);
     expect(result.stopHook).toEqual({ enabled: false, type: 'notification' });
     expect(catalog.driver).toHaveBeenCalledWith('missing', 'hooks');
+  });
+
+  it('disables selected CLI notifications when the CLI is hidden from the home page', () => {
+    const channelCatalog = { list: vi.fn(() => [{ key: 'demo' }]) };
+
+    expect(notificationHooks._test.isConfiguredCliPlatformEnabled(
+      'demo',
+      { enabledCliPlatforms: ['claude'] },
+      channelCatalog
+    )).toBe(false);
+    expect(notificationHooks._test.isConfiguredCliPlatformEnabled(
+      'demo',
+      { enabledCliPlatforms: ['demo'] },
+      channelCatalog
+    )).toBe(true);
   });
 
   it('saves only discovered platform keys and ignores unknown input', () => {

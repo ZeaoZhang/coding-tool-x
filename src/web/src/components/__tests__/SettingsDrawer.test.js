@@ -55,6 +55,7 @@ describe('SettingsDrawer platform catalog', () => {
   beforeEach(() => {
     fetchMock.mockReset()
     vi.stubGlobal('fetch', fetchMock)
+    platformStore.all = [{ key: 'demo-cli', label: 'Demo CLI', title: 'Demo CLI', capabilities: {} }]
     fetchMock.mockResolvedValue({ ok: true, json: async () => ({}) })
     getUIConfig.mockResolvedValue({
       success: true,
@@ -71,6 +72,94 @@ describe('SettingsDrawer platform catalog', () => {
     enableAutoStart.mockResolvedValue({ success: true })
     disableAutoStart.mockResolvedValue({ success: true })
     client.get.mockResolvedValue({ data: { models: {}, overrides: {}, builtinModelIds: [] } })
+  })
+
+  it('renders enabled CLI platforms in the configured order', async () => {
+    platformStore.all = [
+      { key: 'claude', label: 'Claude', title: 'Claude', capabilities: {} },
+      { key: 'codex', label: 'Codex', title: 'Codex', capabilities: {} },
+      { key: 'omp', label: 'OMP', title: 'OMP', capabilities: {} }
+    ]
+    getUIConfig.mockResolvedValue({
+      success: true,
+      config: { enabledCliPlatforms: ['omp', 'claude'] }
+    })
+
+    const wrapper = shallowMount(SettingsDrawer, {
+      props: { visible: true },
+      global: {
+        stubs: {
+          drawer: { template: '<div><slot /></div>' },
+          'drawer-content': { template: '<div><slot name="header" /><slot /><slot name="footer" /></div>' },
+          checkbox: { template: '<label><slot /></label>' },
+          text: { template: '<span><slot /></span>' }
+        }
+      }
+    })
+
+    await flushPromises()
+
+    expect(wrapper.vm.platformCatalog.map(platform => platform.key)).toEqual([
+      'omp',
+      'claude',
+      'codex'
+    ])
+  })
+
+  it('keeps notification settings aligned with visible CLI platforms', async () => {
+    platformStore.all = [
+      { key: 'claude', label: 'Claude', title: 'Claude', capabilities: {} },
+      { key: 'codex', label: 'Codex', title: 'Codex', capabilities: {} }
+    ]
+    getUIConfig.mockResolvedValue({
+      success: true,
+      config: { enabledCliPlatforms: ['claude'] }
+    })
+    const hooksData = {
+      success: true,
+      platformDefinitions: [
+        { key: 'claude', label: 'Claude', title: 'Claude', capabilities: {} },
+        { key: 'codex', label: 'Codex', title: 'Codex', capabilities: {} }
+      ],
+      platforms: {
+        claude: { enabled: true },
+        codex: { enabled: true }
+      }
+    }
+    fetchMock.mockImplementation(async (url, options = {}) => {
+      if (url === '/api/hooks' && !options.method) {
+        return { ok: true, json: async () => hooksData }
+      }
+      return { ok: true, json: async () => ({ success: true }) }
+    })
+
+    const wrapper = shallowMount(SettingsDrawer, {
+      props: { visible: false },
+      global: {
+        stubs: {
+          drawer: { template: '<div><slot /></div>' },
+          'drawer-content': { template: '<div><slot name="header" /><slot /><slot name="footer" /></div>' },
+          checkbox: { template: '<label><slot /></label>' },
+          text: { template: '<span><slot /></span>' }
+        }
+      }
+    })
+
+    await wrapper.setProps({ visible: true })
+    await flushPromises()
+
+    expect(wrapper.vm.visibleNotificationPlatformDefinitions.map(platform => platform.key)).toEqual([
+      'claude'
+    ])
+
+    await wrapper.vm.handleSaveNotification()
+
+    const saveCall = fetchMock.mock.calls.find(
+      ([url, options]) => url === '/api/hooks' && options?.method === 'POST'
+    )
+    expect(JSON.parse(saveCall[1].body).platforms).toEqual({
+      claude: { enabled: true, type: 'notification' }
+    })
   })
 
   it('lists manifest platforms and exposes no custom CLI metadata inputs', async () => {
@@ -285,6 +374,90 @@ describe('SettingsDrawer platform catalog', () => {
     })
     expect(wrapper.vm.modelMetaOverrides).toEqual(modelData.overrides)
     expect(wrapper.vm.defaultSpeedTestModels).toEqual(modelData.defaultSpeedTestModels)
+  })
+
+  it('offers shared model metadata when configuring the OMP default model', async () => {
+    platformStore.all = [
+      { key: 'omp', label: 'OMP', title: 'OMP', capabilities: {} }
+    ]
+    const modelData = {
+      models: {
+        'shared-compatible': {
+          limit: { context: 200000, output: 8192 },
+          pricing: { input: 1, output: 2 },
+          toolTypes: ['opencode', 'omp']
+        },
+        'omp-only': {
+          limit: { context: 128000, output: 4096 },
+          pricing: { input: 0.5, output: 1 },
+          toolTypes: ['omp']
+        }
+      },
+      overrides: {},
+      builtinModelIds: [],
+      defaultSpeedTestModels: { omp: 'shared-compatible' }
+    }
+    client.get.mockResolvedValue({ data: modelData })
+    client.post.mockResolvedValue({ data: { success: true } })
+
+    const wrapper = shallowMount(SettingsDrawer, {
+      props: { visible: true },
+      global: {
+        stubs: {
+          drawer: { template: '<div><slot /></div>' },
+          'drawer-content': { template: '<div><slot name="header" /><slot /><slot name="footer" /></div>' },
+          checkbox: { template: '<label><slot /></label>' }
+        }
+      }
+    })
+    await flushPromises()
+
+    expect(wrapper.vm.speedTestModelOptions.omp.map(option => option.value)).toEqual([
+      'omp-only',
+      'shared-compatible'
+    ])
+  })
+
+  it('preserves and exposes a custom OMP default model ID', async () => {
+    platformStore.all = [
+      { key: 'omp', label: 'OMP', title: 'OMP', capabilities: {} }
+    ]
+    const modelData = {
+      models: {
+        'deepseek/deepseek-flash': {
+          limit: { context: 1000000, output: 384000 },
+          pricing: { input: 0.15, output: 0.6 },
+          toolTypes: ['opencode', 'omp']
+        }
+      },
+      overrides: {},
+      builtinModelIds: ['deepseek/deepseek-flash'],
+      defaultSpeedTestModels: { omp: 'deepseek-flash' }
+    }
+    client.get.mockResolvedValue({ data: modelData })
+
+    const wrapper = shallowMount(SettingsDrawer, {
+      props: { visible: true },
+      global: {
+        stubs: {
+          drawer: { template: '<div><slot /></div>' },
+          'drawer-content': { template: '<div><slot name="header" /><slot /><slot name="footer" /></div>' },
+          checkbox: { template: '<label><slot /></label>' }
+        }
+      }
+    })
+    await flushPromises()
+
+    expect(wrapper.vm.defaultSpeedTestModels.omp).toBe('deepseek-flash')
+    expect(wrapper.vm.speedTestModelOptions.omp).toEqual(expect.arrayContaining([
+      expect.objectContaining({ value: 'deepseek-flash' })
+    ]))
+
+    await wrapper.vm.handleSaveModelMeta()
+
+    expect(client.post).toHaveBeenCalledWith('/settings/model-settings', expect.objectContaining({
+      defaultSpeedTestModels: { omp: 'deepseek-flash' }
+    }))
   })
 
   it('hydrates and saves global native CLI log settings from both advanced save paths', async () => {

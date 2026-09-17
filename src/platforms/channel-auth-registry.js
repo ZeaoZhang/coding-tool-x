@@ -114,16 +114,19 @@ function scanOmp() {
 const adapters = Object.freeze({
   claude: {
     scan: () => scanNative('claude'),
+    usage: (ref) => oauthStore.fetchCredentialUsage('claude', ref.credentialId),
     quota: (ref) => oauthStore.fetchCredentialUsage('claude', ref.credentialId),
     channelServicePath: './drivers/claude/channels-implementation'
   },
   codex: {
     scan: () => scanNative('codex'),
+    usage: (ref) => oauthStore.fetchCredentialUsage('codex', ref.credentialId),
     quota: (ref) => oauthStore.fetchCredentialUsage('codex', ref.credentialId),
     channelServicePath: './drivers/codex/channels-implementation'
   },
   gemini: {
     scan: () => scanNative('gemini'),
+    usage: (ref) => oauthStore.fetchCredentialUsage('gemini', ref.credentialId),
     quota: (ref) => oauthStore.fetchCredentialUsage('gemini', ref.credentialId),
     channelServicePath: './drivers/gemini/channels-implementation'
   },

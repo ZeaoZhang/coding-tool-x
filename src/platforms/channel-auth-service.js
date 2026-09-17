@@ -15,12 +15,36 @@ function matchChannel(channel, candidate) {
   if (!channel || channel.authMode !== 'oauth') return false;
   const ref = safeRef(channel.authRef);
   const next = safeRef(candidate.authRef);
-  if (ref.credentialId && next.credentialId) return ref.credentialId === next.credentialId;
-  if (ref.providerId && next.providerId && (ref.accountId || ref.identityKey) && (next.accountId || next.identityKey)) {
-    return ref.providerId === next.providerId
-      && (ref.accountId || ref.identityKey) === (next.accountId || next.identityKey);
+  if (ref.credentialId && next.credentialId && ref.credentialId === next.credentialId) return true;
+  if ((ref.accountId || ref.identityKey) && (next.accountId || next.identityKey)) {
+    const sameProvider = !ref.providerId || !next.providerId || ref.providerId === next.providerId;
+    return sameProvider && (ref.accountId || ref.identityKey) === (next.accountId || next.identityKey);
   }
+  if (ref.accountEmail && next.accountEmail) return ref.accountEmail === next.accountEmail;
   return false;
+}
+
+function resolveChannelAuthRef(adapter, channel) {
+  const current = safeRef(channel?.authRef);
+  let scanned;
+  try {
+    scanned = adapter.scan();
+  } catch {
+    return current;
+  }
+
+  const candidates = Array.isArray(scanned?.candidates) ? scanned.candidates : [];
+  const matched = candidates.find(candidate => matchChannel(channel, candidate));
+  if (matched) return safeRef(matched.authRef);
+
+  // A channel created before OAuth credentials were synced can have no stable
+  // reference. Only auto-select when the local scan found exactly one account.
+  if (!current.credentialId && !current.providerId && !current.accountId
+    && !current.identityKey && !current.accountEmail && candidates.length === 1) {
+    return safeRef(candidates[0].authRef);
+  }
+
+  return current;
 }
 
 function getChannel(platform, channelId) {
@@ -51,12 +75,12 @@ async function fetchChannelAuthQuota(platform, channelId, { refresh = false } = 
   const channel = getChannel(platform, channelId);
   if (!channel) return { quota: null, status: 'unavailable', checkedAt: checkedAt(), warning: 'Channel not found' };
   if (channel.authMode !== 'oauth') return { quota: null, status: 'unsupported', checkedAt: checkedAt(), warning: 'Channel is not OAuth' };
-  const ref = safeRef(channel.authRef);
-  const cacheKey = `${adapter.adapterId}:${ref.credentialId || ref.providerId}:${ref.accountId || ref.identityKey}`;
+  const ref = resolveChannelAuthRef(adapter, channel);
+  const cacheKey = `${adapter.adapterId}:${channelId}:${ref.credentialId || ref.providerId}:${ref.accountId || ref.identityKey || ref.accountEmail}`;
   const cached = quotaCache.get(cacheKey);
   if (!refresh && cached && Date.now() - cached.checkedAtMs < QUOTA_TTL_MS) return cached.value;
   try {
-    const usage = await adapter.quota(ref);
+    const usage = await (adapter.usage || adapter.quota)(ref);
     const result = {
       ...(usage?.quota ? usage : {
         quota: null,
@@ -78,5 +102,6 @@ module.exports = {
   fetchChannelAuthQuota,
   listChannelAuthPlatforms,
   safeRef,
-  matchChannel
+  matchChannel,
+  resolveChannelAuthRef
 };

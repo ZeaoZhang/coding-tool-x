@@ -603,6 +603,7 @@ describe('generateNotifyScript', () => {
     expect(script).toContain('postBrowserNotification');
     expect(script).toContain('/api/hooks/browser-event');
     expect(script).toContain('CONFIG_FILE');
+    expect(script).toContain('function isCliPlatformEnabled');
   });
 
   test('embeds OMP message and display source in generated script', () => {

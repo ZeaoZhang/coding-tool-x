@@ -14,7 +14,7 @@
         {{ authMeta.channel.authRef?.providerId || platform }} · {{ authMeta.channel.authRef?.accountEmail || authMeta.channel.authRef?.accountId || '已同步' }}
       </div>
       <div v-if="quota" class="oauth-quota">
-        <span v-for="window in [quota.primary, quota.secondary]" :key="window?.label || 'missing-window'">
+        <span v-for="window in quotaWindows" :key="window?.id || window?.label || 'missing-window'">
           {{ window?.label || '—' }}: {{ window ? `${window.remainingPercent}%` : '—' }}
         </span>
         <n-button text size="tiny" @click="refreshQuota">刷新额度</n-button>
@@ -35,6 +35,11 @@ function candidateKey(candidate) {
 }
 const selectedKey = computed(() => candidateKey({ authRef: props.formData.authRef }))
 const { loading, candidates, warning, quota, sync, refreshQuota } = useChannelAuth(toRef(props, 'platform'), toRef(props, 'channelId'))
+const quotaWindows = computed(() => (
+  Array.isArray(quota.value?.windows) && quota.value.windows.length
+    ? quota.value.windows
+    : [quota.value?.primary, quota.value?.secondary]
+))
 
 function select(key) {
   const candidate = candidates.value.find(item => candidateKey(item) === key)

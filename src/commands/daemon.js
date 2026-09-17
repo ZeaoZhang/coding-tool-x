@@ -382,11 +382,18 @@ async function stopAllManagedInstances(existingProcess, config = loadConfig()) {
   }
 
   const cleanup = await cleanupManagedPorts(config, { timeoutMs: 3000 });
+  let lockCleanup = { removed: [], retained: [] };
+  try {
+    lockCleanup = require('../server/services/session-history-index').cleanupStaleInventoryLocks();
+  } catch (error) {
+    warnings.push(`清理 session-history 锁失败: ${error.message}`);
+  }
 
   return {
     hadPM2Process,
     pm2Status: status,
     cleanup,
+    lockCleanup,
     warnings
   };
 }
@@ -408,6 +415,9 @@ function printStopResult(result) {
     console.log(chalk.red(`[ERROR] 以下端口仍被占用: ${cleanup.stillInUse.join(', ')}`));
     printPortToolIssue(cleanup.toolIssue);
     console.log(chalk.yellow('[TIP] 请检查是否有外部进程仍占用这些端口\n'));
+  }
+  if (cleanup.lockCleanup?.removed?.length > 0) {
+    console.log(chalk.gray(`[CLEANUP] 已清理残留 session-history 锁: ${cleanup.lockCleanup.removed.length}`));
   }
   warnings.forEach((warning) => {
     console.log(chalk.yellow(`[WARN]  ${warning}`));
