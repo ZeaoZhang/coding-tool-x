@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
   fetchClaudeChannels,
+  fetchChannelModels,
   fetchCodexChannels,
   fetchGeminiChannels,
   fetchOpenCodeChannels,
@@ -17,6 +18,7 @@ const {
   probeOpenCodeChannelModels
 } = vi.hoisted(() => ({
   fetchClaudeChannels: vi.fn(),
+  fetchChannelModels: vi.fn(),
   fetchCodexChannels: vi.fn(),
   fetchGeminiChannels: vi.fn(),
   fetchOpenCodeChannels: vi.fn(),
@@ -35,6 +37,7 @@ const {
 vi.mock('../../../api/channels', async () => ({
   ...(await vi.importActual('../../../api/channels')),
   getChannels: fetchClaudeChannels,
+  fetchChannelModels,
   getCodexChannels: fetchCodexChannels,
   getGeminiChannels: fetchGeminiChannels,
   getOpenCodeChannels: fetchOpenCodeChannels,
@@ -53,11 +56,13 @@ vi.mock('../../../composables/useDefaultModels.js', () => ({
 }))
 
 import channelPanelFactories from '../channelPanelFactories'
+import { resolveErrorMessage } from '../../../utils/error-message'
 
 describe('channel panel model catalogs', () => {
   beforeEach(() => {
     loadDefaultModels.mockReset().mockResolvedValue(undefined)
     fetchClaudeChannels.mockReset().mockResolvedValue([{ id: 'claude-1' }])
+    fetchChannelModels.mockReset()
     fetchCodexChannels.mockReset().mockResolvedValue([{ id: 'codex-1' }])
     fetchOmpChannels.mockReset().mockResolvedValue([{ id: 'omp-1' }])
     fetchGeminiChannels.mockReset().mockResolvedValue([{ id: 'gemini-1' }])
@@ -117,6 +122,46 @@ describe('channel panel model catalogs', () => {
       authProviderMeta: null
     })
     expect(fetchOmpChannels).toHaveBeenCalledTimes(1)
+  })
+
+  it('restores model settings from legacy extra data for every CLI', async () => {
+    const cases = [
+      ['claude', fetchClaudeChannels],
+      ['codex', fetchCodexChannels],
+      ['gemini', fetchGeminiChannels],
+      ['opencode', fetchOpenCodeChannels],
+      ['omp', fetchOmpChannels]
+    ]
+
+    for (const [platform, fetchMock] of cases) {
+      fetchMock.mockReset().mockResolvedValueOnce({
+        channels: [{
+          id: `${platform}-legacy`,
+          extra: { modelRedirects: [{ from: 'source', to: 'target' }] }
+        }]
+      })
+      const result = await channelPanelFactories[platform]().api.fetch()
+      const channels = platform === 'omp' ? result.channels : result
+      expect(channels[0].modelRedirects).toEqual([{ from: 'source', to: 'target' }])
+    }
+  })
+
+  it('converts structured model-list errors to the redirect editor prompt text', async () => {
+    fetchChannelModels.mockRejectedValueOnce({
+      response: { data: { error: { status: 'unsupported', operation: 'models' } } }
+    })
+    const form = {
+      gatewaySourceType: 'claude',
+      availableModels: [],
+      modelsFetching: false,
+      modelsFetchError: null,
+      modelsFetchErrorHint: null
+    }
+
+    await channelPanelFactories.claude().fetchModelsForChannel('claude-1', form)
+
+    expect(form.modelsFetchError).toBe('当前 CLI 暂不支持该操作')
+    expect(resolveErrorMessage({ error: { status: 'unsupported' } })).toBe('当前 CLI 暂不支持该操作')
   })
 
 

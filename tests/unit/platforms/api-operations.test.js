@@ -77,6 +77,34 @@ describe('API operation Driver contract', () => {
     });
   });
 
+  test.each(['claude', 'codex', 'gemini', 'opencode', 'omp'])('%s passes channel updates and redirect rules through the API boundary', async platform => {
+      const updateChannel = vi.fn((id, patch) => ({ id, ...patch }));
+      const route = { operation: 'update', capability: 'channels' };
+      const channelsDriver = require(`../../../src/platforms/drivers/${platform}/channels`).createDriver({
+        requireImpl: () => ({ updateChannel })
+      });
+      const driver = createApiOperationsDriver({
+        platform,
+        runtime: { getDriver: () => channelsDriver },
+        manifest: { api: { routes: [route] } }
+      });
+      const body = { modelRedirects: [{ from: 'source-model', to: 'target-model' }] };
+
+      await expect(driver.update({
+        platform,
+        route,
+        params: { channelId: 'channel-1' },
+        body
+      })).resolves.toMatchObject({
+        status: 'ok',
+        platform,
+        capability: 'channels',
+        operation: 'update',
+        data: { id: 'channel-1', modelRedirects: body.modelRedirects }
+      });
+      expect(updateChannel).toHaveBeenCalledWith('channel-1', body);
+    });
+
   test('converts target failures into typed results with hidden causes', async () => {
     const cause = new Error('storage unavailable');
     const driver = createApiOperationsDriver({
