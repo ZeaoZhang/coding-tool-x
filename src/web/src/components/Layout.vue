@@ -219,6 +219,9 @@
     <!-- Prompts Drawer -->
     <PromptsDrawer v-if="isDrawerLoaded('prompts')" v-model:visible="showPromptsDrawer" />
 
+    <!-- DSH native resources drawer -->
+    <DshResourcesDrawer v-if="isDrawerLoaded('dsh-resources')" v-model:visible="showDshResourcesDrawer" />
+
     <!-- Speed Test Drawer -->
     <SpeedTestDrawer v-if="isDrawerLoaded('speed-test')" v-model:visible="showSpeedTestDrawer" />
 
@@ -449,6 +452,7 @@ const ChatHistoryDrawer = defineAsyncComponent(() => import('./ChatHistoryDrawer
 const SettingsDrawer = defineAsyncComponent(() => import('./SettingsDrawer.vue'))
 const McpDrawer = defineAsyncComponent(() => import('./McpDrawer.vue'))
 const PromptsDrawer = defineAsyncComponent(() => import('./PromptsDrawer.vue'))
+const DshResourcesDrawer = defineAsyncComponent(() => import('./DshResourcesDrawer.vue'))
 const SpeedTestDrawer = defineAsyncComponent(() => import('./SpeedTestDrawer.vue'))
 const GatewayConvertDrawer = defineAsyncComponent(() => import('./GatewayConvertDrawer.vue'))
 const SkillsDrawer = defineAsyncComponent(() => import('./SkillsDrawer.vue'))
@@ -509,6 +513,7 @@ const showFavoritesDrawer = ref(false)
 const showSettingsDrawer = ref(false)
 const showMcpDrawer = ref(false)
 const showPromptsDrawer = ref(false)
+const showDshResourcesDrawer = ref(false)
 const showSpeedTestDrawer = ref(false)
 const showGatewayConvertDrawer = ref(false)
 const showHelpModal = ref(false)
@@ -820,6 +825,7 @@ onMounted(() => {
   window.addEventListener('open-commands-drawer', openCommandsDrawer)
   window.addEventListener('open-agents-drawer', openAgentsDrawer)
   window.addEventListener('open-plugins-drawer', openPluginsDrawer)
+  window.addEventListener('open-dsh-resources-drawer', openDshResourcesDrawer)
   window.addEventListener('open-gateway-convert-drawer', openGatewayConvertDrawer)
 
   // 检测环境变量冲突
@@ -833,6 +839,7 @@ onUnmounted(() => {
   window.removeEventListener('open-commands-drawer', openCommandsDrawer)
   window.removeEventListener('open-agents-drawer', openAgentsDrawer)
   window.removeEventListener('open-plugins-drawer', openPluginsDrawer)
+  window.removeEventListener('open-dsh-resources-drawer', openDshResourcesDrawer)
   window.removeEventListener('open-gateway-convert-drawer', openGatewayConvertDrawer)
 })
 
@@ -857,6 +864,11 @@ function openPluginsDrawer(event) {
   pluginsDrawerPlatform.value = event?.detail?.platform || ''
   pluginsDrawerProjectPath.value = event?.detail?.cwd || event?.detail?.projectPath || ''
   openDrawer('plugins', showPluginsDrawer)
+}
+
+function openDshResourcesDrawer() {
+  if (currentChannel.value !== 'dsh') return
+  openDrawer('dsh-resources', showDshResourcesDrawer)
 }
 
 function openGatewayConvertDrawer() {

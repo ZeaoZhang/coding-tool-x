@@ -48,7 +48,11 @@ function getDriverRegistry() {
         'generic-mcp': createGenericMcpDriver,
         'generic-prompt': createGenericPromptDriver,
         'opencode-conversion': require('./drivers/opencode/conversion').createDriver,
-        'claude-health': require('./drivers/claude/health').createDriver
+        'claude-health': require('./drivers/claude/health').createDriver,
+        'dsh-api': require('./drivers/dsh/api-operations').createDriver,
+        'dsh-projects': require('./drivers/dsh/projects').createDriver,
+        'dsh-sessions': require('./drivers/dsh/sessions').createDriver,
+        'dsh-native-config': require('./drivers/dsh/native-config').createDriver
       }
     });
     registerLegacyDrivers(defaultRegistry);

@@ -57,7 +57,7 @@ describe('platform catalog selection', () => {
     publicPlatform({ capabilities: { mcp: true, prompts: false } })
   ])
 
-  it('uses the four new defaults in canonical order', () => {
+  it('uses the default platforms in canonical order', () => {
     expect(resolveEnabledCliPlatforms({ catalog })).toEqual(DEFAULT_ENABLED_CLI_PLATFORMS)
   })
 
@@ -73,11 +73,11 @@ describe('platform catalog selection', () => {
     expect(isPlatformEnabled('claude', [])).toBe(false)
   })
 
-  it('uses only the four safe defaults when catalog loading fails', () => {
+  it('uses only the safe defaults when catalog loading fails', () => {
     expect(resolveEnabledCliPlatforms({ catalog: null })).toEqual(DEFAULT_ENABLED_CLI_PLATFORMS)
     expect(buildPlatformNavigation(undefined).map(platform => platform.key)).toEqual(DEFAULT_ENABLED_CLI_PLATFORMS)
   })
-  it('uses the four safe defaults for capability queries when catalog loading fails', () => {
+  it('uses the safe defaults for capability queries when catalog loading fails', () => {
     expect(getPlatformsByCapability(undefined, 'sessions').map(platform => platform.key)).toEqual([
       'claude', 'codex', 'opencode', 'omp'
     ])
@@ -93,7 +93,7 @@ describe('platform catalog selection', () => {
   it('filters capabilities in received catalog order', () => {
     expect(getPlatformsByCapability(catalog, 'mcp').map(platform => platform.key)).toEqual(['demo-cli'])
     expect(getPlatformsByCapability(catalog, 'sessions').map(platform => platform.key)).toEqual([
-      'claude', 'codex', 'gemini', 'opencode', 'omp'
+      'claude', 'codex', 'gemini', 'opencode', 'omp', 'dsh'
     ])
   })
 

@@ -6,7 +6,8 @@ export const MINIMAL_PLATFORM_FALLBACK = [
   { key: 'codex', label: 'Codex', capabilities: { channels: true, projects: true, sessions: true, proxy: true, statistics: true, resourceSync: true, skills: true, commands: true, agents: true, nativeConfig: true } },
   { key: 'gemini', label: 'Gemini', capabilities: { channels: true, projects: true, sessions: true, proxy: true, statistics: true, resourceSync: true, skills: true, commands: true, agents: true, nativeConfig: true } },
   { key: 'opencode', label: 'OpenCode', capabilities: { channels: true, projects: true, sessions: true, proxy: true, statistics: true, resourceSync: true, skills: true, commands: true, agents: true, nativeConfig: true } },
-  { key: 'omp', label: 'OMP', capabilities: { channels: true, projects: true, sessions: true, proxy: true, statistics: true, resourceSync: true, skills: true, commands: true, plugins: true, agents: false, nativeConfig: true } }
+  { key: 'omp', label: 'OMP', capabilities: { channels: true, projects: true, sessions: true, proxy: true, statistics: true, resourceSync: true, skills: true, commands: true, plugins: true, agents: false, nativeConfig: true } },
+  { key: 'dsh', label: 'DSH', title: 'DeepSeek Harness', command: 'dsh', iconToken: 'terminal', color: '#2563eb', defaultVisible: true, capabilities: { projects: true, sessions: true, nativeConfig: true, api: true }, resourceTypes: { skills: false, commands: false, agents: false, plugins: false } }
 ]
 
 function normalizeCapabilities(platform = {}) {

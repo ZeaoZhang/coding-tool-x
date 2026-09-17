@@ -92,6 +92,7 @@ function resolveNativeHome(pathResolverId, env, commandRunner, homeDir, hasInjec
       case 'codex': return env.CODEX_HOME || path.join(homeDir, '.codex');
       case 'gemini': return path.join(homeDir, '.gemini');
       case 'opencode': return path.join(homeDir, '.config', 'opencode');
+      case 'dsh': return env.DSH_HOME || path.join(homeDir, '.dsh');
       default: return undefined;
     }
   }
@@ -127,6 +128,7 @@ function resolveNativeHome(pathResolverId, env, commandRunner, homeDir, hasInjec
     case 'gemini': return getGeminiDir();
     case 'opencode': return getOpenCodeConfigDir() || getOpenCodeDataDir();
     case 'omp': return getOmpAgentDir(env, { commandRunner });
+    case 'dsh': return env.DSH_HOME || path.join(homeDir, '.dsh');
     default: return undefined;
   }
 }

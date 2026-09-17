@@ -56,6 +56,14 @@
             Agents 代理
           </n-tooltip>
         </template>
+        <n-tooltip v-if="dshResourcesChannel" trigger="hover">
+          <template #trigger>
+            <n-button text size="small" class="toolbar-btn" @click="handleShowDshResources">
+              <template #icon><n-icon :size="18"><LayersOutline /></n-icon></template>
+            </n-button>
+          </template>
+          DSH 资源
+        </n-tooltip>
         <!-- 通用功能 -->
         <n-tooltip v-if="supportsCapability('sessions')" trigger="hover">
           <template #trigger>
@@ -140,6 +148,7 @@ import {
   TerminalOutline,
   PersonOutline,
   CubeOutline,
+  LayersOutline,
   SyncOutline
 } from '@vicons/ionicons5'
 import ClaudeChannelPanel from './channel/ClaudeChannelPanel.vue'
@@ -216,6 +225,7 @@ const skillsChannel = computed(() => supportsResource('skills'))
 const commandsChannel = computed(() => supportsResource('commands'))
 const pluginChannel = computed(() => supportsResource('plugins'))
 const agentsChannel = computed(() => supportsResource('agents'))
+const dshResourcesChannel = computed(() => currentChannel.value === 'dsh' && supportsCapability('api'))
 const proxyToggleLabel = computed(() => (
   currentPlatform.value?.proxyLabels?.toggle || '动态切换'
 ))
@@ -307,6 +317,11 @@ function handleShowAgents(event) {
 // 处理显示 Plugins
 function handleShowPlugins(event) {
   window.dispatchEvent(new CustomEvent('open-plugins-drawer', { detail: { platform: currentChannel.value } }))
+  blurToolbarButton(event)
+}
+
+function handleShowDshResources(event) {
+  window.dispatchEvent(new CustomEvent('open-dsh-resources-drawer'))
   blurToolbarButton(event)
 }
 
