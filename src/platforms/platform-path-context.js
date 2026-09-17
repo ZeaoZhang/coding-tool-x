@@ -147,7 +147,8 @@ function getDefaultNativePaths(platform, homeDir, env, rootOverride) {
     codex: rootOverride || path.join(homeDir, '.codex'),
     gemini: rootOverride || path.join(homeDir, '.gemini'),
     opencode: rootOverride || getOpenCodeConfigDir(homeDir, env),
-    omp: rootOverride || getOmpFallbackDir(homeDir, env)
+    omp: rootOverride || getOmpFallbackDir(homeDir, env),
+    dsh: rootOverride || env.DSH_HOME || path.join(homeDir, '.dsh')
   };
   const root = roots[platform] || homeDir;
 
@@ -219,6 +220,15 @@ function getDefaultNativePaths(platform, homeDir, env, rootOverride) {
         themes: path.join(root, 'themes'),
         packages: path.join(root, 'packages')
       };
+    case 'dsh':
+      return {
+        dir: root,
+        settings: path.join(root, 'settings.yaml'),
+        credentials: path.join(root, '.credentials.yaml'),
+        sessions: path.join(root, 'sessions'),
+        profiles: path.join(root, 'profiles'),
+        patch: path.join(root, 'cordis.patch.yml')
+      };
     default:
       return { dir: homeDir };
   }
@@ -239,7 +249,7 @@ function createPlatformPathContext({ key, platform, manifest, resolvedPaths = {}
   const homeDir = pathOptions.homeDir || resolveDefaultHomeDir();
   const env = { ...process.env, ...(pathOptions.env || {}) };
   const resolverId = manifest && manifest.pathResolverId;
-  const nativeKey = ['claude', 'codex', 'gemini', 'opencode', 'omp'].includes(resolverId)
+  const nativeKey = ['claude', 'codex', 'gemini', 'opencode', 'omp', 'dsh'].includes(resolverId)
     ? resolverId
     : platformKey;
   const resolvedHome = resolvedPaths.home || homeDir;

@@ -32,9 +32,18 @@ const CLAUDE_DIRS = {
 // Valid config types
 const CONFIG_TYPES = ['skills', 'commands', 'agents', 'plugins'];
 
+function supportsManagedResources(platform) {
+  const resourceTypes = platform?.resourceTypes;
+  if (!resourceTypes || typeof resourceTypes !== 'object' || Array.isArray(resourceTypes)) {
+    return true;
+  }
+  return CONFIG_TYPES.some(type => resourceTypes[type] !== false);
+}
+
 function getSupportedPlatforms(registry = getPlatformContext().registry) {
   if (!registry || typeof registry.list !== 'function') return [];
   return registry.list()
+    .filter(supportsManagedResources)
     .map(platform => platform && platform.key)
     .filter(Boolean);
 }
@@ -43,7 +52,7 @@ function buildPlatformSupport(registry = getPlatformContext().registry) {
   const support = Object.fromEntries(CONFIG_TYPES.map(type => [type, {}]));
   for (const platform of (registry?.list?.() || [])) {
     const key = platform && platform.key;
-    if (!key) continue;
+    if (!key || !supportsManagedResources(platform)) continue;
     const resourceDriver = platform.capabilities?.resourceSync;
     for (const type of CONFIG_TYPES) {
       const typeCapability = platform.capabilities && Object.prototype.hasOwnProperty.call(platform.capabilities, type)
