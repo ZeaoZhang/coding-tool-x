@@ -4,7 +4,12 @@ const express = require('express');
 const path = require('path');
 const chalk = require('chalk');
 const { loadConfig } = require('../config/loader');
-const { PATHS, ensureStorageDirMigrated, getPlatformStatePath } = require('../config/paths');
+const {
+  PATHS,
+  ensureStorageDirMigrated,
+  getPlatformStatePath,
+  persistOmpAgentPath
+} = require('../config/paths');
 const { startWebSocketServer: attachWebSocketServer } = require('./websocket-server');
 const {
   isPortInUse,
@@ -74,6 +79,9 @@ function printPortToolIssue(issue = getPortToolIssue()) {
 async function startServer(port, host = '127.0.0.1', options = {}) {
   ensureStorageDirMigrated();
   const config = loadConfig();
+  if (typeof persistOmpAgentPath === 'function') {
+    persistOmpAgentPath();
+  }
   // 使用配置的端口，如果没有传入参数
   if (!port) {
     port = config.ports?.webUI || 19999;

@@ -58,6 +58,59 @@ test('runtime passes legacy manifests through while injecting resolved path cont
   expect(runtime.invoke('claude', 'sessions', 'list')).toEqual(['legacy-session']);
 });
 
+test('reuses the default resolved path context across legacy driver creations', () => {
+  const driverRegistry = { create: vi.fn(() => ({})) };
+  const manifest = { key: 'omp', capabilities: { proxy: 'legacy:omp', channels: 'legacy:omp' } };
+  const registry = {
+    getCapability: (_platform, capability) => manifest.capabilities[capability],
+    resolve: () => manifest,
+    resolvePathContext: vi.fn(() => ({
+      paths: { home: '/tmp/omp' },
+      native: { dir: '/tmp/omp' },
+      state: {}
+    }))
+  };
+  const runtime = createPlatformRuntime({ registry, driverRegistry });
+
+  runtime.getDriver('omp', 'proxy');
+  runtime.getDriver('omp', 'channels');
+
+  expect(registry.resolvePathContext).toHaveBeenCalledTimes(1);
+  expect(driverRegistry.create).toHaveBeenCalledTimes(2);
+  expect(driverRegistry.create.mock.calls[0][1].pathContext)
+    .toBe(driverRegistry.create.mock.calls[1][1].pathContext);
+});
+
+test('refreshes the default path context when path environment changes', () => {
+  const previousProfile = process.env.OMP_PROFILE;
+  const driverRegistry = { create: vi.fn(() => ({})) };
+  const manifest = { key: 'omp', pathResolverId: 'omp', capabilities: { proxy: 'legacy:omp' } };
+  const registry = {
+    getCapability: () => 'legacy:omp',
+    resolve: () => manifest,
+    resolvePathContext: vi.fn(() => ({
+      paths: { home: `/tmp/${process.env.OMP_PROFILE}` },
+      native: { dir: `/tmp/${process.env.OMP_PROFILE}` },
+      state: {}
+    }))
+  };
+  const runtime = createPlatformRuntime({ registry, driverRegistry });
+
+  try {
+    process.env.OMP_PROFILE = 'runtime-profile-a';
+    runtime.getDriver('omp', 'proxy');
+    process.env.OMP_PROFILE = 'runtime-profile-b';
+    runtime.getDriver('omp', 'proxy');
+  } finally {
+    if (previousProfile === undefined) delete process.env.OMP_PROFILE;
+    else process.env.OMP_PROFILE = previousProfile;
+  }
+
+  expect(registry.resolvePathContext).toHaveBeenCalledTimes(2);
+  expect(driverRegistry.create.mock.calls[0][1].pathContext.paths.home).toBe('/tmp/runtime-profile-a');
+  expect(driverRegistry.create.mock.calls[1][1].pathContext.paths.home).toBe('/tmp/runtime-profile-b');
+});
+
 test('runtime passes resolved paths and flat dependencies into a generic driver', async () => {
   const fsImpl = {
     readdir: async () => ['session-1.jsonl'],

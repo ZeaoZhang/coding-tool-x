@@ -24,6 +24,19 @@ const RUNTIME_DIR = path.join(STORAGE_DIR, 'runtime');
 const CACHE_DIR = path.join(STORAGE_DIR, 'cache');
 const CACHE_SKILLS_DIR = path.join(CACHE_DIR, 'skills');
 const CACHE_PLUGINS_DIR = path.join(CACHE_DIR, 'plugins');
+const OMP_PATH_CACHE_VERSION = 1;
+const OMP_PATH_CACHE_FILE = path.join(CONFIG_DIR, 'omp-path.json');
+const OMP_PATH_ENV_KEYS = [
+  'HOME',
+  'USERPROFILE',
+  'APPDATA',
+  'PATH',
+  'OMP_COMMAND',
+  'OMP_CONFIG_DIR',
+  'OMP_PROFILE',
+  'PI_CODING_AGENT_DIR',
+  'OMP_CODING_AGENT_DIR'
+];
 const REPOS_DIR = path.join(STORAGE_DIR, 'repos');
 const REPOS_SKILLS_DIR = path.join(REPOS_DIR, 'skills');
 const REPOS_PLUGINS_DIR = path.join(REPOS_DIR, 'plugins');
@@ -381,6 +394,7 @@ const PATHS = {
 
   // 全局配置
   configFile: path.join(CONFIG_DIR, 'config.json'),
+  ompPathCache: OMP_PATH_CACHE_FILE,
   uiConfig: path.join(CONFIG_DIR, 'ui-config.json'),
   platforms: path.join(CONFIG_DIR, 'platforms.json'),
   prompts: path.join(CONFIG_DIR, 'prompts.json'),
@@ -869,7 +883,66 @@ function normalizeOmpProfileName(profile = '') {
   return value && value !== 'default' ? value : '';
 }
 
+function getOmpPathFingerprint(env = process.env) {
+  return {
+    homeDir: HOME_DIR,
+    ...Object.fromEntries(OMP_PATH_ENV_KEYS.map(key => [key, String(env[key] || '')]))
+  };
+}
+
+function fingerprintsMatch(left, right) {
+  if (!left || !right) return false;
+  return Object.keys(getOmpPathFingerprint()).every(key => left[key] === right[key]);
+}
+
+function readPersistedOmpAgentDir(env = process.env, options = {}) {
+  if (options.resolveRuntime === false) return '';
+  const cacheFile = options.cacheFile || OMP_PATH_CACHE_FILE;
+  try {
+    const cached = JSON.parse(fs.readFileSync(cacheFile, 'utf8'));
+    if (cached.version !== OMP_PATH_CACHE_VERSION
+      || !fingerprintsMatch(cached.fingerprint, getOmpPathFingerprint(env))) {
+      return '';
+    }
+    const rawAgentDir = String(cached.agentDir || '').trim();
+    if (!rawAgentDir) return '';
+    const agentDir = path.resolve(expandHomePath(rawAgentDir));
+    if (!fs.statSync(agentDir).isDirectory()) return '';
+    return agentDir;
+  } catch {
+    return '';
+  }
+}
+
+function canReuseInProcessOmpPath(options = {}) {
+  return !options.commandRunner || options.commandRunner === execFileSync;
+}
+
+let lastOmpPathResolution = null;
+
+function rememberOmpPathResolution(agentDir, source, env) {
+  lastOmpPathResolution = {
+    agentDir,
+    source,
+    fingerprint: getOmpPathFingerprint(env)
+  };
+}
+
 function getOmpAgentDir(env = process.env, options = {}) {
+  const persistedAgentDir = readPersistedOmpAgentDir(env, options);
+  if (persistedAgentDir) {
+    rememberOmpPathResolution(persistedAgentDir, 'cache', env);
+    return persistedAgentDir;
+  }
+
+  if (canReuseInProcessOmpPath(options)
+    && lastOmpPathResolution
+    && lastOmpPathResolution.source !== 'fallback'
+    && fingerprintsMatch(lastOmpPathResolution.fingerprint, getOmpPathFingerprint(env))
+    && fs.existsSync(lastOmpPathResolution.agentDir)) {
+    return lastOmpPathResolution.agentDir;
+  }
+
   if (options.resolveRuntime !== false) {
     const command = String(env.OMP_COMMAND || 'omp').trim() || 'omp';
     const commandRunner = options.commandRunner || execFileSync;
@@ -883,7 +956,12 @@ function getOmpAgentDir(env = process.env, options = {}) {
       });
       const configuredByCli = String(output || '').trim().split(/\r?\n/).find(Boolean);
       if (configuredByCli) {
-        return path.resolve(expandHomePath(configuredByCli));
+        const agentDir = path.resolve(expandHomePath(configuredByCli));
+        rememberOmpPathResolution(agentDir, 'cli', env);
+        if (canReuseInProcessOmpPath(options)) {
+          persistOmpAgentPath(agentDir, { ...options, env });
+        }
+        return agentDir;
       }
     } catch {
       // Fall through to environment/profile compatibility paths.
@@ -897,7 +975,9 @@ function getOmpAgentDir(env = process.env, options = {}) {
     env.PI_CODING_AGENT_DIR || env.OMP_CODING_AGENT_DIR
   );
   if (configuredDir) {
-    return path.resolve(expandHomePath(configuredDir));
+    const resolvedConfiguredDir = path.resolve(expandHomePath(configuredDir));
+    rememberOmpPathResolution(resolvedConfiguredDir, 'fallback', env);
+    return resolvedConfiguredDir;
   }
   const profile = normalizeOmpProfileName(env.OMP_PROFILE);
   const configRoot = expandHomePath(
@@ -906,7 +986,34 @@ function getOmpAgentDir(env = process.env, options = {}) {
   const agentDir = profile
     ? path.join(configRoot, 'profiles', profile, 'agent')
     : path.join(configRoot, 'agent');
-  return path.resolve(agentDir);
+  const resolvedAgentDir = path.resolve(agentDir);
+  rememberOmpPathResolution(resolvedAgentDir, 'fallback', env);
+  return resolvedAgentDir;
+}
+
+function persistOmpAgentPath(agentDir = lastOmpPathResolution?.agentDir, options = {}) {
+  const resolution = lastOmpPathResolution;
+  const env = options.env || process.env;
+  const normalizedAgentDir = agentDir ? path.resolve(agentDir) : '';
+  if (!resolution
+    || resolution.source !== 'cli'
+    || !normalizedAgentDir
+    || normalizedAgentDir !== resolution.agentDir
+    || !fingerprintsMatch(resolution.fingerprint, getOmpPathFingerprint(env))) {
+    return false;
+  }
+
+  try {
+    writeJsonFile(options.cacheFile || OMP_PATH_CACHE_FILE, {
+      version: OMP_PATH_CACHE_VERSION,
+      agentDir: normalizedAgentDir,
+      fingerprint: resolution.fingerprint,
+      savedAt: new Date().toISOString()
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const OMP_AGENT_DIR = getOmpAgentDir();
@@ -1002,6 +1109,7 @@ module.exports = {
   getOpenCodeDataDir,
   getOpenCodeConfigDir,
   getOmpAgentDir,
+  persistOmpAgentPath,
   getPlatformStatePath,
   getPlatformStatePaths,
   normalizePlatformStateKey

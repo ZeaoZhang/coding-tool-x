@@ -2,10 +2,23 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const yaml = require('js-yaml');
-const { HOME_DIR, PATHS = {} } = require('../../../config/paths');
+const {
+  HOME_DIR,
+  PATHS = {},
+  getOmpAgentDir: resolveSharedOmpAgentDir
+} = require('../../../config/paths');
 
 const DEFAULT_OMP_COMMAND = 'omp';
+const OMP_RUNTIME_ENV_KEYS = [
+  'PATH',
+  'OMP_COMMAND',
+  'OMP_CONFIG_DIR',
+  'OMP_PROFILE',
+  'PI_CODING_AGENT_DIR',
+  'OMP_CODING_AGENT_DIR'
+];
 let nativePathsOverride = null;
+let cachedRuntimeResolution = null;
 
 function configure({ pathContext } = {}) {
   nativePathsOverride = pathContext?.customized && pathContext.native?.dir
@@ -95,6 +108,10 @@ function readOmpAgentDirFromCommand(command, env = process.env, options = {}) {
 function getOmpAgentDir(env = process.env, options = {}) {
   const runtime = options.runtime || (options.resolveRuntime === false ? null : resolveOmpRuntime(env, options));
   if (runtime?.runtime === 'omp' && runtime.installed) {
+    if (!options.commandRunner && typeof resolveSharedOmpAgentDir === 'function') {
+      const configuredAgentDir = resolveSharedOmpAgentDir(env);
+      if (configuredAgentDir) return configuredAgentDir;
+    }
     const commandAgentDir = readOmpAgentDirFromCommand(runtime.command, env, options);
     if (commandAgentDir) {
       return commandAgentDir;
@@ -243,6 +260,11 @@ function getOmpCommand(env = process.env) {
   return String(env.OMP_COMMAND || DEFAULT_OMP_COMMAND).trim() || DEFAULT_OMP_COMMAND;
 }
 
+function getRuntimeCacheKey(env = process.env, options = {}) {
+  if (typeof options.commandRunner === 'function') return '';
+  return JSON.stringify(OMP_RUNTIME_ENV_KEYS.map(key => [key, String(env[key] || '')]));
+}
+
 function commandExists(command, env = process.env, options = {}) {
   try {
     runOmpCommand(command, ['--version'], env, options, 'ignore');
@@ -253,35 +275,42 @@ function commandExists(command, env = process.env, options = {}) {
 }
 
 function resolveOmpRuntime(env = process.env, options = {}) {
+  const cacheKey = getRuntimeCacheKey(env, options);
+  if (cacheKey && cachedRuntimeResolution?.key === cacheKey) {
+    return cachedRuntimeResolution.value;
+  }
+
   const configured = env.OMP_COMMAND;
+  let result;
   if (configured) {
     const command = getOmpCommand(env);
-    return {
+    result = {
       command,
       runtime: 'omp',
       installed: commandExists(command, env, options),
       configured: true,
       commandSource: 'OMP_COMMAND'
     };
-  }
-
-  if (commandExists(DEFAULT_OMP_COMMAND, env, options)) {
-    return {
+  } else if (commandExists(DEFAULT_OMP_COMMAND, env, options)) {
+    result = {
       command: DEFAULT_OMP_COMMAND,
       runtime: 'omp',
       installed: true,
       configured: false,
       commandSource: 'path'
     };
+  } else {
+    result = {
+      command: DEFAULT_OMP_COMMAND,
+      runtime: 'omp',
+      installed: false,
+      configured: false,
+      commandSource: 'fallback'
+    };
   }
 
-  return {
-    command: DEFAULT_OMP_COMMAND,
-    runtime: 'omp',
-    installed: false,
-    configured: false,
-    commandSource: 'fallback'
-  };
+  if (cacheKey) cachedRuntimeResolution = { key: cacheKey, value: result };
+  return result;
 }
 
 function isOmpInstalled(env = process.env, options = {}) {
