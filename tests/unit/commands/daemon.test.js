@@ -207,6 +207,10 @@ describe('daemon stop helpers', () => {
     expect(daemon._test.buildStartOptions(19999, false, false).kill_timeout).toBe(5000);
   });
 
+  test('explicitly hides the PM2-managed Node process on Windows', () => {
+    expect(daemon._test.buildStartOptions(19999, false, false).windowsHide).toBe(true);
+  });
+
   test('should only send stop to active pm2 states', () => {
     expect(daemon._test.shouldStopPM2Process('online')).toBe(true);
     expect(daemon._test.shouldStopPM2Process('stopped')).toBe(false);

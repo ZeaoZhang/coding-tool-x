@@ -1,4 +1,4 @@
-const { execSync } = require('child_process');
+const { execFileSync, execSync } = require('child_process');
 const net = require('net');
 const { isWindowsLikePlatform } = require('./home-dir');
 
@@ -91,6 +91,28 @@ function parsePidsFromNetstatOutput(output, port) {
   return Array.from(pids);
 }
 
+function buildWindowsPortProbeSpec() {
+  return {
+    command: 'netstat.exe',
+    args: ['-ano'],
+    options: {
+      encoding: 'utf-8',
+      windowsHide: true
+    }
+  };
+}
+
+function buildWindowsKillSpec(pid) {
+  return {
+    command: 'taskkill.exe',
+    args: ['/F', '/PID', String(pid)],
+    options: {
+      stdio: 'ignore',
+      windowsHide: true
+    }
+  };
+}
+
 /**
  * 检查端口是否被占用
  */
@@ -137,24 +159,15 @@ function findProcessByPort(port) {
   const isWindows = isWindowsLikeRuntime();
   if (isWindows) {
     try {
-      // Windows: 优先使用 findstr 过滤，避免解析全量 netstat 输出（全量输出在连接数多时极慢）
-      const result = execSync(`netstat -ano | findstr ":${port} "`, { encoding: 'utf-8', windowsHide: true });
+      // 直接调用 netstat，避免为一次端口探测额外启动 cmd.exe/findstr。
+      const spec = buildWindowsPortProbeSpec();
+      const result = execFileSync(spec.command, spec.args, spec.options);
       return parsePidsFromNetstatOutput(result, port);
-    } catch (e) {
-      // findstr 未匹配到任何行时 exit code = 1，属于正常情况
-      if (e.status === 1) {
-        return [];
+    } catch (err) {
+      if (isMissingCommandError(err)) {
+        rememberPortToolIssue(createPortToolIssue('netstat', 'lookup', true));
       }
-      // findstr 不可用时回退到全量解析
-      try {
-        const result = execSync('netstat -ano', { encoding: 'utf-8', windowsHide: true });
-        return parsePidsFromNetstatOutput(result, port);
-      } catch (e2) {
-        if (isMissingCommandError(e2)) {
-          rememberPortToolIssue(createPortToolIssue('netstat', 'lookup', true));
-        }
-        return [];
-      }
+      return [];
     }
   }
 
@@ -193,7 +206,8 @@ function killProcessByPort(port) {
     pids.forEach(pid => {
       try {
         if (isWindows) {
-          execSync(`taskkill /F /PID ${pid}`, { stdio: 'ignore', windowsHide: true });
+          const spec = buildWindowsKillSpec(pid);
+          execFileSync(spec.command, spec.args, spec.options);
         } else {
           execSync(`kill -9 ${pid}`, { stdio: 'ignore', windowsHide: true });
         }
@@ -241,6 +255,8 @@ module.exports = {
   _test: {
     isMissingCommandError,
     createPortToolIssue,
-    formatPortToolIssue
+    formatPortToolIssue,
+    buildWindowsPortProbeSpec,
+    buildWindowsKillSpec
   }
 };

@@ -1,10 +1,56 @@
 const chalk = require('chalk');
+const path = require('path');
+const { spawn } = require('child_process');
 const { startServer } = require('../server');
 const open = require('open');
 const { getProxyStatus } = require('../platforms/drivers/claude/proxy-implementation');
 const { loadConfig } = require('../config/loader');
 const { shutdownNativeCliLogObserver } = require('../server/services/native-log-observer');
 const { hasHostFlag } = require('../utils/cli-flags');
+
+function getWindowsPowerShellPath(env = process.env) {
+  const systemRoot = env.SystemRoot || env.SYSTEMROOT;
+  return systemRoot
+    ? path.win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    : 'powershell.exe';
+}
+
+function quotePowerShellLiteral(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function buildWindowsOpenSpec(url, env = process.env) {
+  return {
+    command: getWindowsPowerShellPath(env),
+    args: [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      `Start-Process -FilePath ${quotePowerShellLiteral(url)}`
+    ],
+    options: {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true
+    }
+  };
+}
+
+function openUrl(url, options = {}) {
+  const platform = options.platform || process.platform;
+  if (platform !== 'win32') {
+    return (options.openImpl || open)(url);
+  }
+
+  const spec = buildWindowsOpenSpec(url, options.env || process.env);
+  const child = (options.spawnImpl || spawn)(spec.command, spec.args, spec.options);
+  if (child && typeof child.unref === 'function') {
+    child.unref();
+  }
+  return Promise.resolve(child);
+}
 
 async function handleUI() {
   // 检查是否为 daemon 模式（PM2 启动）
@@ -40,7 +86,7 @@ async function handleUI() {
     if (!isDaemon) {
       setTimeout(async () => {
         try {
-          await open(url);
+          await openUrl(url);
           console.log(chalk.green(`[OK] 已在浏览器中打开: ${url}\n`));
         } catch (err) {
           console.log(chalk.yellow(`[TIP] 请手动打开: ${url}\n`));
@@ -120,4 +166,12 @@ async function handleUI() {
   }
 }
 
-module.exports = { handleUI };
+module.exports = {
+  handleUI,
+  _test: {
+    buildWindowsOpenSpec,
+    getWindowsPowerShellPath,
+    openUrl,
+    quotePowerShellLiteral
+  }
+};

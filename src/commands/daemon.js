@@ -470,6 +470,7 @@ function buildStartOptions(port, enableHost, enableHttps) {
     script: path.join(__dirname, '../index.js'),
     args: pmArgs,
     interpreter: 'node',
+    windowsHide: true,
     autorestart: true,
     kill_timeout: 5000,
     max_memory_restart: '500M',
