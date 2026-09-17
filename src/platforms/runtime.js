@@ -5,6 +5,23 @@ const { createPlatformRegistry } = require('./registry');
 const { resolveTemplate } = require('./path-resolver');
 const { createPlatformPathContext } = require('./platform-path-context');
 
+const PATH_CONTEXT_ENV_KEYS = [
+  'HOME',
+  'USERPROFILE',
+  'APPDATA',
+  'CLAUDE_CONFIG_DIR',
+  'CODEX_HOME',
+  'XDG_CONFIG_HOME',
+  'XDG_DATA_HOME',
+  'XDG_STATE_HOME',
+  'PATH',
+  'OMP_COMMAND',
+  'OMP_CONFIG_DIR',
+  'OMP_PROFILE',
+  'PI_CODING_AGENT_DIR',
+  'OMP_CODING_AGENT_DIR'
+];
+
 let platformRegistry;
 let platformRuntime;
 let defaultDependencies = Object.freeze({});
@@ -104,6 +121,40 @@ function getDefaultDependencies() {
   return { ...defaultDependencies };
 }
 
+function canReuseDefaultPathContext(pathOptions = {}) {
+  return !pathOptions || (
+    typeof pathOptions === 'object'
+    && !Array.isArray(pathOptions)
+    && Object.keys(pathOptions).length === 0
+  );
+}
+
+function getDefaultPathContextFingerprint(platform, manifest) {
+  try {
+    const pathConfig = require('../config/paths');
+    const nativeKey = manifest?.pathResolverId || platform;
+    const native = pathConfig.NATIVE_PATHS?.[nativeKey] || null;
+    const state = typeof pathConfig.getPlatformStatePaths === 'function'
+      ? pathConfig.getPlatformStatePaths(platform)
+      : null;
+    let homeDir = pathConfig.HOME_DIR || '';
+    if (!homeDir) {
+      const { resolvePreferredHomeDir } = require('../utils/home-dir');
+      homeDir = typeof resolvePreferredHomeDir === 'function'
+        ? resolvePreferredHomeDir(process.platform, process.env, require('os').homedir())
+        : '';
+    }
+    return JSON.stringify({
+      homeDir,
+      native,
+      state,
+      env: Object.fromEntries(PATH_CONTEXT_ENV_KEYS.map(key => [key, process.env[key] || '']))
+    });
+  } catch {
+    return '';
+  }
+}
+
 function configureDefaultDependencies(dependencies = {}) {
   if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies)) {
     throw new TypeError('Platform default dependencies must be an object');
@@ -115,6 +166,7 @@ function configureDefaultDependencies(dependencies = {}) {
 function createPlatformRuntime({ registry, driverRegistry, dependencies = {} } = {}) {
   const resolvedDependencies = { ...dependencies };
   const resolvedRegistry = registry || createPlatformRegistry();
+  const defaultPathContextCache = new Map();
   const runtime = {
     getDriver(platform, capability, context = {}) {
       const driverId = resolvedRegistry.getCapability(platform, capability);
@@ -124,17 +176,36 @@ function createPlatformRuntime({ registry, driverRegistry, dependencies = {} } =
       const pathOptions = context.pathResolver || context.pathResolverOptions || resolvedDependencies.pathResolver || resolvedDependencies.pathResolverOptions || {};
       let pathContext = null;
       let resolvedPaths = null;
-      if (rawManifest && typeof resolvedRegistry.resolvePathContext === 'function') {
-        pathContext = resolvedRegistry.resolvePathContext(platform, pathOptions);
-        resolvedPaths = pathContext && pathContext.paths;
-      } else if (rawManifest && typeof resolvedRegistry.resolvePaths === 'function') {
-        resolvedPaths = resolvedRegistry.resolvePaths(platform, pathOptions);
-        pathContext = createPlatformPathContext({
-          key: platform,
-          manifest: rawManifest,
-          resolvedPaths,
-          pathOptions
-        });
+      if (rawManifest) {
+        const cacheKey = String(platform || '').trim().toLowerCase();
+        const useCache = canReuseDefaultPathContext(pathOptions);
+        const cached = useCache ? defaultPathContextCache.get(cacheKey) : null;
+        const pathContextFingerprint = useCache
+          ? getDefaultPathContextFingerprint(cacheKey, rawManifest)
+          : '';
+        if (cached && cached.fingerprint === pathContextFingerprint) {
+          ({ pathContext, resolvedPaths } = cached);
+        } else {
+          if (typeof resolvedRegistry.resolvePathContext === 'function') {
+            pathContext = resolvedRegistry.resolvePathContext(platform, pathOptions);
+            resolvedPaths = pathContext && pathContext.paths;
+          } else if (typeof resolvedRegistry.resolvePaths === 'function') {
+            resolvedPaths = resolvedRegistry.resolvePaths(platform, pathOptions);
+            pathContext = createPlatformPathContext({
+              key: platform,
+              manifest: rawManifest,
+              resolvedPaths,
+              pathOptions
+            });
+          }
+          if (useCache && (pathContext || resolvedPaths)) {
+            defaultPathContextCache.set(cacheKey, {
+              pathContext,
+              resolvedPaths,
+              fingerprint: pathContextFingerprint
+            });
+          }
+        }
       }
       const manifest = isLegacyDriverId(driverId)
         ? rawManifest
