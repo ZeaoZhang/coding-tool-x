@@ -191,7 +191,12 @@ function publicSkill(skill, includeContent) {
 
 function listSkills(context = {}, options = {}) {
   const resolved = resolveSkillRoots(context, options);
-  const candidates = resolved.roots.flatMap(discoverRoot)
+  const roots = options.scope === 'project'
+    ? resolved.roots.filter(root => root.source.startsWith('project-'))
+    : options.scope === 'user'
+      ? resolved.roots.filter(root => !root.source.startsWith('project-'))
+      : resolved.roots;
+  const candidates = roots.flatMap(discoverRoot)
     .sort((left, right) => left.rank - right.rank || left.name.localeCompare(right.name) || left.path.localeCompare(right.path));
   const winners = new Map();
   for (const candidate of candidates) {
@@ -201,7 +206,7 @@ function listSkills(context = {}, options = {}) {
   return {
     profile: resolved.profile,
     cwd: resolved.cwd,
-    roots: resolved.roots.map(root => ({
+    roots: roots.map(root => ({
       path: root.path,
       source: root.source,
       exists: pathIsReadableDirectory(root.path)

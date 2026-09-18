@@ -7,7 +7,7 @@ export const MINIMAL_PLATFORM_FALLBACK = [
   { key: 'gemini', label: 'Gemini', capabilities: { channels: true, projects: true, sessions: true, proxy: true, statistics: true, resourceSync: true, skills: true, commands: true, agents: true, nativeConfig: true } },
   { key: 'opencode', label: 'OpenCode', capabilities: { channels: true, projects: true, sessions: true, proxy: true, statistics: true, resourceSync: true, skills: true, commands: true, agents: true, nativeConfig: true } },
   { key: 'omp', label: 'OMP', capabilities: { channels: true, projects: true, sessions: true, proxy: true, statistics: true, resourceSync: true, skills: true, commands: true, plugins: true, agents: false, nativeConfig: true } },
-  { key: 'dsh', label: 'DSH', title: 'DeepSeek Harness', command: 'dsh', iconToken: 'terminal', color: '#2563eb', defaultVisible: true, capabilities: { projects: true, sessions: true, nativeConfig: true, api: true }, resourceTypes: { skills: false, commands: false, agents: false, plugins: false } }
+  { key: 'dsh', label: 'DSH', title: 'DeepSeek Harness', command: 'dsh', iconToken: 'terminal', color: '#2563eb', defaultVisible: true, capabilities: { channels: true, projects: true, sessions: true, proxy: true, nativeConfig: true, api: true }, resourceTypes: { skills: true, commands: false, agents: false, plugins: true }, resourceActions: { skills: { create: false, repositories: false, import: false, refresh: false }, plugins: { repositories: false, market: false, install: false, uninstall: false, import: false, syncRepos: false } } }
 ]
 
 function normalizeCapabilities(platform = {}) {
@@ -35,6 +35,16 @@ function normalizeResourceTypes(resourceTypes) {
   return Object.fromEntries(Object.entries(resourceTypes).filter(([, value]) => typeof value === 'boolean'))
 }
 
+function normalizeResourceActions(resourceActions) {
+  if (!resourceActions || typeof resourceActions !== 'object' || Array.isArray(resourceActions)) return {}
+  return Object.fromEntries(Object.entries(resourceActions).map(([resourceType, actions]) => [
+    resourceType,
+    actions && typeof actions === 'object' && !Array.isArray(actions)
+      ? Object.fromEntries(Object.entries(actions).filter(([, value]) => typeof value === 'boolean'))
+      : {}
+  ]))
+}
+
 export function normalizePublicPlatform(platform = {}) {
   if (!platform || typeof platform !== 'object' || Array.isArray(platform)) return null
   const key = String(platform?.key || '').trim().toLowerCase()
@@ -60,6 +70,7 @@ export function normalizePublicPlatform(platform = {}) {
     custom: platform?.custom === true,
     capabilities,
     resourceTypes: normalizeResourceTypes(platform.resourceTypes),
+    resourceActions: normalizeResourceActions(platform.resourceActions),
     promptLabel: typeof platform?.promptLabel === 'string' ? platform.promptLabel.trim() : '',
     supportsProxy: capabilities.proxy === true,
     supportsProjects: capabilities.projects === true,

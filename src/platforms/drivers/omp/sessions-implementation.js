@@ -331,7 +331,7 @@ function scanSessionFiles(rootDir = getOmpSessionPaths().sessions) {
 }
 
 async function getAllSessions(options = {}) {
-  const projects = await getSessionHistoryIndex().listProjects('omp', options);
+  const projects = await getSessionHistoryIndex().getAllProjects('omp', options);
   const groups = await Promise.all(projects.map(project => getSessionHistoryIndex().listSessions('omp', project.name, options)));
   return groups.flat().map(session => normalizeSession({
     ...session,
@@ -417,6 +417,24 @@ async function getProjects(options = {}) {
   return projects;
 }
 
+async function getProjectsPage(options = {}) {
+  const payload = await getSessionHistoryIndex().listProjectsPage('omp', options);
+  return {
+    ...payload,
+    projects: payload.projects.map(p => ({
+      name: p.name,
+      path: p.fullPath || p.path || '',
+      fullPath: p.fullPath || '',
+      displayName: p.displayName || p.name,
+      sessionCount: p.sessionCount || 0,
+      latestSession: p.latestSession || null,
+      mtime: p.lastUsed || null,
+      mtimeMs: p.lastUsed ? new Date(p.lastUsed).getTime() : 0,
+      source: 'omp'
+    }))
+  };
+}
+
 async function getSessionsByProject(projectName, options = {}) {
   const idxSessions = await getSessionHistoryIndex().listSessions('omp', projectName, options);
   const sessions = idxSessions.map(s => ({
@@ -448,6 +466,27 @@ async function getSessionsByProject(projectName, options = {}) {
     return (b.mtimeMs || 0) - (a.mtimeMs || 0);
   });
   return sessions.map(normalizeSession);
+}
+
+async function getSessionsPage(projectName, options = {}) {
+  const payload = await getSessionHistoryIndex().listSessionsPage('omp', projectName, options);
+  return {
+    ...payload,
+    sessions: payload.sessions.map(s => normalizeSession({
+      sessionId: s.sessionId,
+      filePath: s.filePath,
+      firstMessage: s.firstMessage,
+      provider: s.provider,
+      model: s.model,
+      size: s.size,
+      mtime: new Date(s.mtime).toISOString(),
+      mtimeMs: s.mtime,
+      directory: s.projectFullPath,
+      cwd: s.projectFullPath,
+      messageCount: s.messageCount,
+      usage: s.tokens
+    }))
+  };
 }
 
 function normalizeSession(session) {
@@ -611,10 +650,12 @@ module.exports = {
   getOmpSessionPaths,
   getProjectAndSessionCounts,
   getProjects,
+  getProjectsPage,
   getRecentSessions,
   getSessionById,
   getSessionMessages,
   getSessionsByProject,
+  getSessionsPage,
   isOmpInstalled: isOmpCliInstalled,
   normalizeSession,
   parseSessionFile,

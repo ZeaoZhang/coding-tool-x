@@ -18,7 +18,7 @@
         </n-tag>
       </div>
       <div class="toolbar-right">
-        <!-- Skills: Claude / Codex / Gemini / OpenCode / OMP 支持 -->
+        <!-- Skills: 按平台能力声明显示 -->
         <n-tooltip trigger="hover" v-if="skillsChannel">
           <template #trigger>
             <n-button text size="small" class="toolbar-btn" @click="handleShowSkills">
@@ -27,7 +27,7 @@
           </template>
           Skills 技能
         </n-tooltip>
-        <!-- Claude / Codex / OpenCode 共享功能 -->
+        <!-- Plugins: 按平台能力声明显示 -->
         <template v-if="pluginChannel">
           <n-tooltip trigger="hover">
             <template #trigger>
@@ -56,14 +56,6 @@
             Agents 代理
           </n-tooltip>
         </template>
-        <n-tooltip v-if="dshResourcesChannel" trigger="hover">
-          <template #trigger>
-            <n-button text size="small" class="toolbar-btn" @click="handleShowDshResources">
-              <template #icon><n-icon :size="18"><LayersOutline /></n-icon></template>
-            </n-button>
-          </template>
-          DSH 资源
-        </n-tooltip>
         <!-- 通用功能 -->
         <n-tooltip v-if="supportsCapability('sessions')" trigger="hover">
           <template #trigger>
@@ -148,7 +140,6 @@ import {
   TerminalOutline,
   PersonOutline,
   CubeOutline,
-  LayersOutline,
   SyncOutline
 } from '@vicons/ionicons5'
 import ClaudeChannelPanel from './channel/ClaudeChannelPanel.vue'
@@ -199,6 +190,8 @@ const panelComponents = {
   opencode: OpenCodeChannelPanel,
   omp: OmpChannelPanel
 }
+// Platforms without a dedicated component, including DSH, use BaseChannelPanel's
+// manifest-driven generic channel form and lifecycle.
 const currentPanelComponent = computed(() => (
   panelComponents[currentChannel.value] || BaseChannelPanel
 ))
@@ -225,7 +218,6 @@ const skillsChannel = computed(() => supportsResource('skills'))
 const commandsChannel = computed(() => supportsResource('commands'))
 const pluginChannel = computed(() => supportsResource('plugins'))
 const agentsChannel = computed(() => supportsResource('agents'))
-const dshResourcesChannel = computed(() => currentChannel.value === 'dsh' && supportsCapability('api'))
 const proxyToggleLabel = computed(() => (
   currentPlatform.value?.proxyLabels?.toggle || '动态切换'
 ))
@@ -317,11 +309,6 @@ function handleShowAgents(event) {
 // 处理显示 Plugins
 function handleShowPlugins(event) {
   window.dispatchEvent(new CustomEvent('open-plugins-drawer', { detail: { platform: currentChannel.value } }))
-  blurToolbarButton(event)
-}
-
-function handleShowDshResources(event) {
-  window.dispatchEvent(new CustomEvent('open-dsh-resources-drawer'))
   blurToolbarButton(event)
 }
 

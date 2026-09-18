@@ -244,6 +244,9 @@ const emptyText = computed(() => {
   if (filterStatus.value === 'installed') return '暂无已安装的插件'
   if (filterStatus.value === 'uninstalled') return '所有插件都已安装'
   if (capabilities.value.supportsPlugins === false) return capabilities.value.disabledReason || `${currentPlatformLabel.value} 暂未提供插件管理能力`
+  if (!capabilities.value.repositories && !capabilities.value.market && !capabilities.value.install && !capabilities.value.uninstall) {
+    return capabilities.value.disabledReason || `${currentPlatformLabel.value} 当前没有可展示的插件`
+  }
   return '暂无可用插件，请配置仓库源'
 })
 

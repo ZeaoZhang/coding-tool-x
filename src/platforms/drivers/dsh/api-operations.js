@@ -6,6 +6,8 @@ const { createDriver: createSessionsDriver } = require('./sessions');
 const { listProfiles, listProfilePlugins, listProfileCapabilities, listProfileMcp, listProfilePrompts, listPlugins, upsertProfilePatchRow, deleteProfilePatchRow } = require('./common');
 const { listSkills, getSkill, createSkill, updateSkill, deleteSkill } = require('./resources');
 const { installPlugin, uninstallPlugin, updatePlugin } = require('./plugin-manager');
+const { createDriver: createChannelsDriver } = require('./channels');
+const { createDriver: createProxyDriver } = require('./proxy');
 
 function requiredId(value, label) {
   const id = String(value || '').trim();
@@ -85,12 +87,23 @@ function createDriver(context = {}) {
   const native = createNativeConfigDriver(context);
   const projects = createProjectsDriver(context);
   const sessions = createSessionsDriver(context);
+  const channels = createChannelsDriver(context);
+  const proxy = createProxyDriver(context);
   const driver = {
     ...projects,
     ...sessions,
     platform: 'dsh',
     capability: 'api'
   };
+
+  // Keep the aggregate DSH API driver compatible with the manifest consistency
+  // contract. Actual descriptor requests are still dispatched by capability.
+  for (const operation of ['list', 'current', 'enabled', 'create', 'update', 'remove', 'applyToSettings', 'sync', 'order']) {
+    driver[operation] = (...args) => channels[operation](...args);
+  }
+  for (const operation of ['status', 'start', 'stop']) {
+    driver[operation] = (...args) => proxy[operation](...args);
+  }
 
   driver.getConfig = async request => resultFor(request, 'ok', native.getConfig());
   driver.updateConfig = async request => {
@@ -104,7 +117,7 @@ function createDriver(context = {}) {
   driver.getConfigAuthProviders = async request => resultFor(request, 'ok', native.getConfigAuthProviders());
   driver.getConfigResources = async request => resultFor(request, 'ok', native.getConfigResources(request));
   driver.listProfiles = async request => resultFor(request, 'ok', { profiles: listProfiles(context) });
-  driver.listPlugins = async request => resultFor(request, 'ok', listPlugins(context));
+  driver.listPlugins = request => resultFor(request, 'ok', listPlugins(context));
   driver.listProfilePlugins = async (request = {}) => {
     const profile = request.params?.profileName;
     const result = listProfilePlugins(context, profile);
@@ -193,11 +206,13 @@ function createDriver(context = {}) {
   driver.listSkills = async (request = {}) => resultFor(request, 'ok', listSkills(context, {
     profile: request.query?.profile,
     cwd: request.query?.cwd,
+    scope: request.query?.scope,
     includeContent: request.query?.includeContent === '1'
   }));
   driver.getSkill = async (request = {}) => {
     const result = getSkill(context, request.query?.profile, request.params?.skillName, {
-      cwd: request.query?.cwd
+      cwd: request.query?.cwd,
+      scope: request.query?.scope
     });
     return result ? resultFor(request, 'ok', result) : resultFor(request, 'unsupported');
   };

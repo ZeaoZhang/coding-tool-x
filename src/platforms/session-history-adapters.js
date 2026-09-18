@@ -13,6 +13,7 @@ function optionalAdapter(name) {
   } catch (_) {
     return {
       inventory: async () => [],
+      summarize: async descriptor => ({ sessionId: descriptor?.sessionId || null }),
       parse: async () => ({ session: null, messages: [] })
     };
   }

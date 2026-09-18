@@ -56,7 +56,8 @@ const DEFAULT_REPOS_BY_PLATFORM = {
   codex: [],
   gemini: [],
   opencode: [],
-  omp: []
+  omp: [],
+  dsh: []
 };
 const PLATFORM_CAPABILITIES = {
   claude: {
@@ -124,6 +125,19 @@ const PLATFORM_CAPABILITIES = {
     repositoryToggle: false,
     repositoryAuth: false,
     installMetadataMode: 'omp'
+  },
+  dsh: {
+    platform: 'dsh',
+    supportsPlugins: true,
+    repositories: false,
+    market: false,
+    install: false,
+    uninstall: false,
+    toggle: false,
+    config: false,
+    import: false,
+    syncRepos: false,
+    disabledReason: 'DSH 插件由 profile 管理，当前面板仅提供只读查看'
   }
 };
 
@@ -442,11 +456,18 @@ function stripJsonComments(input = '') {
 }
 
 class PluginsService {
-  constructor(platform = 'claude', { registry } = {}) {
+  constructor(platform = 'claude', { registry, runtime } = {}) {
     this.platform = resolveManagedPlatform(platform).platform;
     this.registry = registry || (() => {
       try {
         return require('../../platforms/runtime').getPlatformRegistry();
+      } catch {
+        return null;
+      }
+    })();
+    this.runtime = runtime || (() => {
+      try {
+        return require('../platform-context').getPlatformContext().runtime;
       } catch {
         return null;
       }
@@ -802,6 +823,10 @@ class PluginsService {
 
   _isOpenCode() {
     return this.platform === 'opencode';
+  }
+
+  _isDsh() {
+    return this.platform === 'dsh';
   }
 
   _isOmp() {
@@ -1337,12 +1362,52 @@ class PluginsService {
     return this._clone(value);
   }
 
+  _listDshPlugins(options = {}) {
+    const driver = this.runtime?.getDriver?.('dsh', 'api');
+    if (!driver?.listPlugins) return { plugins: [] };
+    const request = { query: { ...(options.cwd ? { cwd: options.cwd } : {}) } };
+    const result = driver.listPlugins(request);
+    if (result && typeof result.then === 'function') {
+      // The DSH Driver is normally synchronous for this operation. Keep the
+      // service contract synchronous, matching the existing plugin API.
+      return { plugins: [] };
+    }
+    if (result?.status !== 'ok') return { plugins: [] };
+    const profiles = Array.isArray(result.data?.profiles) ? result.data.profiles : [];
+    const plugins = [];
+    for (const profile of profiles) {
+      for (const plugin of Array.isArray(profile?.plugins) ? profile.plugins : []) {
+        const name = String(plugin.name || '').trim();
+        if (!name) continue;
+        const profileName = String(profile.profile || plugin.profile || '').trim();
+        const key = `dsh:${profileName}:${name}`;
+        plugins.push({
+          ...plugin,
+          key,
+          pluginId: key,
+          name,
+          profile: profileName,
+          source: 'dsh-profile',
+          pluginType: 'dsh-profile',
+          enabled: true,
+          readonly: true,
+          description: plugin.description || '',
+          directory: plugin.name || name
+        });
+      }
+    }
+    return { plugins };
+  }
+
   /**
    * List all installed plugins with their status
    * Reads from Claude Code's native installed_plugins.json
    * @returns {Object} { plugins: Array }
    */
   _listPluginsUncached(options = {}) {
+    if (this._isDsh()) {
+      return this._listDshPlugins(options);
+    }
     if (!this._pluginsSupported()) {
       return { plugins: [] };
     }
@@ -1518,6 +1583,11 @@ class PluginsService {
    * @returns {Object|null} Plugin details or null
    */
   getPlugin(name, options = {}) {
+    if (this._isDsh()) {
+      return this.listPlugins(options).plugins.find(plugin => (
+        plugin.key === name || plugin.pluginId === name || plugin.name === name
+      )) || null;
+    }
     if (this._isCodex()) {
       const plugin = this.listPlugins().plugins.find(p => p.name === name || `${p.name}@${p.marketplace}` === name);
       if (!plugin) return null;
@@ -1601,6 +1671,13 @@ class PluginsService {
       return {
         success: false,
         error: 'Codex plugin install expects repository metadata, a GitHub/GitLab tree URL, or a Git repository URL'
+      };
+    }
+
+    if (!this.getCapabilities().install) {
+      return {
+        success: false,
+        error: `${this.platform} plugin installation is not supported`
       };
     }
 
@@ -2042,6 +2119,13 @@ class PluginsService {
       };
     }
 
+    if (!this.getCapabilities().uninstall) {
+      return {
+        success: false,
+        error: `${this.platform} plugin uninstallation is not supported`
+      };
+    }
+
     if (!this._pluginsSupported()) {
       return {
         success: false,
@@ -2181,6 +2265,10 @@ class PluginsService {
         enabled,
         success: true
       };
+    }
+
+    if (!this.getCapabilities().toggle) {
+      throw new Error(`${this.platform} plugin toggles are not supported`);
     }
 
     if (!this._pluginsSupported()) {
@@ -2457,6 +2545,7 @@ class PluginsService {
    * @returns {Array} Updated repos list
    */
   addRepo(repo, options = {}) {
+    if (!this.getCapabilities().repositories) return [];
     if (this._isOmp()) {
       const source = repo.source || repo.sourceUri || repo.repoUrl || repo.url
         || repo.localPath || [repo.owner, repo.name].filter(Boolean).join('/');
@@ -2488,6 +2577,7 @@ class PluginsService {
    * @returns {Array} Updated repos list
    */
   removeRepo(owner, name, repoId = '', options = {}) {
+    if (!this.getCapabilities().repositories) return [];
     if (this._isOmp()) {
       return this.ompNativeAdapter.removeMarketplace(repoId || name, options);
     }
@@ -2511,6 +2601,7 @@ class PluginsService {
    * @returns {Array} Updated repos list
    */
   toggleRepo(owner, name, enabled, repoId = '', options = {}) {
+    if (!this.getCapabilities().repositories) return [];
     if (this._isOmp()) {
       throw new Error('OMP native marketplaces do not support repository toggles');
     }
@@ -2529,6 +2620,7 @@ class PluginsService {
   }
 
   updateRepoAuth(owner, name, token = '', clearToken = false, repoId = '') {
+    if (!this.getCapabilities().repositories) return [];
     if (this._isOmp()) {
       throw new Error('OMP native marketplaces do not support per-repository authentication');
     }

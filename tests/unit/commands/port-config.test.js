@@ -20,14 +20,16 @@ describe('port config helpers', () => {
       codexProxy: '20089',
       geminiProxy: '20090',
       opencodeProxy: '20091',
-      ompProxy: '20092'
+      ompProxy: '20092',
+      dshProxy: '20093'
     })).toEqual({
       webUI: 19999,
       proxy: 20088,
       codexProxy: 20089,
       geminiProxy: 20090,
       opencodeProxy: 20091,
-      ompProxy: 20092
+      ompProxy: 20092,
+      dshProxy: 20093
     });
   });
 

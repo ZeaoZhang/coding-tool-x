@@ -339,11 +339,67 @@ function parseSession(filePath) {
   };
 }
 
+/**
+ * Read only the beginning of a rollout for list views. Codex rollouts can be
+ * hundreds of megabytes; this helper must never call readJSONL/parseSession.
+ */
+function parseSessionSummary(filePath, { sessionId = null, mtimeMs = null } = {}) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const buffer = Buffer.alloc(64 * 1024);
+    const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
+    const lines = buffer.subarray(0, bytesRead).toString('utf8')
+      .split(/\r?\n/)
+      .filter(line => line.trim())
+      .map(line => {
+        try { return JSON.parse(line); } catch (_) { return null; }
+      })
+      .filter(Boolean);
+    const meta = extractSessionMeta(lines);
+    if (!meta) return null;
+    const firstUser = lines.find(line => {
+      const payload = line.type === 'response_item' ? line.payload : null;
+      return payload?.type === 'message' && payload.role === 'user' && Array.isArray(payload.content);
+    });
+    const content = firstUser?.payload?.content
+      ?.map(block => block?.text || block?.input_text || '')
+      .join('\n')
+      .trim() || null;
+    const nativeSessionId = typeof meta.sessionId === 'string' && meta.sessionId.trim()
+      ? meta.sessionId.trim()
+      : sessionId;
+    const projectName = extractCodexProjectName(meta);
+    return {
+      session: {
+        sessionId: nativeSessionId,
+        projectName,
+        projectDisplayName: projectName,
+        projectFullPath: typeof meta.cwd === 'string' && meta.cwd.trim() ? meta.cwd.trim() : null,
+        firstMessage: content,
+        gitBranch: meta.git?.branch || null,
+        provider: meta.provider || null,
+        model: null,
+        startedAt: meta.timestamp ? new Date(meta.timestamp).getTime() : null,
+        updatedAt: mtimeMs,
+        extraJson: JSON.stringify({ cwd: meta.cwd || null })
+      }
+    };
+  } catch (_) {
+    return null;
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch (_) {}
+    }
+  }
+}
+
 module.exports = {
   readJSONL,
   extractSessionMeta,
   extractMessages,
   extractTokenUsage,
   parseSession,
-  parseSessionMeta
+  parseSessionMeta,
+  parseSessionSummary
 };

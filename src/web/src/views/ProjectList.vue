@@ -4,7 +4,7 @@
       <div class="header">
         <div class="header-text">
           <n-h2 style="margin: 0;">我的项目</n-h2>
-          <n-text depth="3">选择一个项目查看会话，拖拽可调整顺序</n-text>
+          <n-text depth="3">选择一个项目查看会话（共 {{ store.projectsPagination.total }} 个）</n-text>
         </div>
         <n-space>
           <n-button type="primary" size="medium" @click="handleNewProjectCommand">
@@ -51,31 +51,10 @@
         {{ store.error }}
       </n-alert>
 
-      <!-- Projects Grid with Draggable (only when not searching) -->
-      <draggable
-      v-else-if="!searchQuery && orderedProjects.length > 0"
-      v-model="orderedProjects"
-      item-key="name"
-      class="projects-grid"
-      ghost-class="ghost"
-      chosen-class="chosen"
-      drag-class="drag"
-      animation="200"
-      @end="handleDragEnd"
-    >
-      <template #item="{ element }">
+      <!-- Projects Grid -->
+      <div v-else-if="orderedProjects.length > 0" class="projects-grid">
         <ProjectCard
-          :project="element"
-          @click="handleProjectClick(element.name)"
-          @delete="handleDeleteProject"
-        />
-      </template>
-    </draggable>
-
-      <!-- Projects Grid (static when searching) -->
-      <div v-else-if="searchQuery && filteredProjects.length > 0" class="projects-grid">
-        <ProjectCard
-          v-for="project in filteredProjects"
+          v-for="project in orderedProjects"
           :key="project.name"
           :project="project"
           @click="handleProjectClick(project.name)"
@@ -83,9 +62,19 @@
         />
       </div>
 
+      <n-pagination
+        v-if="store.projectsPagination.total > store.projectsPagination.limit"
+        v-model:page="projectPage"
+        :page-count="Math.ceil(store.projectsPagination.total / store.projectsPagination.limit)"
+        :page-size="store.projectsPagination.limit"
+        show-quick-jumper
+        @update:page="handleProjectPageChange"
+        class="list-pagination"
+      />
+
       <!-- Empty State -->
       <n-empty
-        v-if="!store.loading && !store.error && !store.projectsPending && ((!searchQuery && store.projects.length === 0) || (searchQuery && filteredProjects.length === 0))"
+        v-if="!store.loading && !store.error && !store.projectsPending && store.projects.length === 0"
         :description="searchQuery ? '没有匹配的项目' : '没有找到项目'"
         style="margin-top: 60px;"
       >
@@ -173,9 +162,8 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { NH2, NText, NSpin, NAlert, NEmpty, NIcon, NInput, NModal, NButton, NTag, NSpace } from 'naive-ui'
+import { NH2, NText, NSpin, NAlert, NEmpty, NIcon, NInput, NModal, NButton, NTag, NSpace, NPagination } from 'naive-ui'
 import { FolderOpenOutline, SearchOutline, TerminalOutline, AddOutline } from '@vicons/ionicons5'
-import draggable from 'vuedraggable'
 import { useSessionsStore } from '../stores/sessions'
 import ProjectCard from '../components/ProjectCard.vue'
 import message, { dialog } from '../utils/message'
@@ -194,8 +182,10 @@ const currentChannel = computed(() => getRoutePlatform(route))
 
 // Search query
 const searchQuery = ref('')
+const projectPage = ref(1)
+let projectSearchTimer = null
 
-// Local ordered projects for draggable
+// Keep a stable local array while a page refresh is in flight.
 const orderedProjects = ref([])
 
 // Content element ref for scroll preservation
@@ -208,20 +198,17 @@ const globalSearchResults = ref(null)
 const globalSearching = ref(false)
 const globalSearchInputRef = ref(null)
 
-// Filtered projects based on search (only used when searching)
-const filteredProjects = computed(() => {
-  const query = searchQuery.value.toLowerCase()
-  return orderedProjects.value.filter(project => {
-    // 搜索显示名称和完整路径
-    const displayName = (project.displayName || '').toLowerCase()
-    const fullPath = (project.fullPath || '').toLowerCase()
-    return displayName.includes(query) || fullPath.includes(query)
-  })
-})
-
 // Sync with store
 watch(() => store.projects, (newProjects) => {
   orderedProjects.value = [...newProjects]
+})
+
+watch(searchQuery, (query) => {
+  if (projectSearchTimer) clearTimeout(projectSearchTimer)
+  projectSearchTimer = setTimeout(() => {
+    projectPage.value = 1
+    store.fetchProjects({ page: 1, limit: store.projectsPagination.limit, query }).catch(() => {})
+  }, 180)
 })
 
 function handleProjectClick(projectName) {
@@ -231,10 +218,13 @@ function handleProjectClick(projectName) {
   })
 }
 
-async function handleDragEnd() {
-  // Save the new order
-  const order = orderedProjects.value.map(p => p.name)
-  await store.saveProjectOrder(order)
+function handleProjectPageChange(page) {
+  projectPage.value = page
+  return store.fetchProjects({
+    page,
+    limit: store.projectsPagination.limit,
+    query: searchQuery.value
+  })
 }
 
 function handleDeleteProject(project) {
@@ -336,6 +326,7 @@ watch(showGlobalSearch, (newVal) => {
 
 // 监听 channel 变化
 watch(currentChannel, (newChannel) => {
+  projectPage.value = 1
   store.setChannel(newChannel)
   store.fetchProjects()
 }, { immediate: true })
@@ -348,6 +339,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  if (projectSearchTimer) clearTimeout(projectSearchTimer)
   // 【暂时移除】清理事件监听
   // document.removeEventListener('visibilitychange', handleVisibilityChange)
   // window.removeEventListener('focus', handleWindowFocus)
@@ -451,6 +443,11 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 12px;
+}
+
+.list-pagination {
+  justify-content: center;
+  margin: 24px 0 8px;
 }
 
 /* 拖动时的半透明虚影 */

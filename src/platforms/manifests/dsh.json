@@ -11,12 +11,38 @@
   "modelConfig": { "catalogKey": "dsh" },
   "helpLabel": "DSH 本地配置与会话",
   "cliSelectable": false,
+  "portKey": "dshProxy",
+  "defaultPort": 20093,
+  "proxyMode": "managed",
+  "proxyLabels": {
+    "serviceLabel": "DSH 动态代理",
+    "proxyLabel": "动态切换",
+    "startAction": "启动",
+    "stopAction": "停止",
+    "portLabel": "代理端口"
+  },
   "pathResolverId": "dsh",
   "resourceTypes": {
-    "skills": false,
+    "skills": true,
     "commands": false,
     "agents": false,
-    "plugins": false
+    "plugins": true
+  },
+  "resourceActions": {
+    "skills": {
+      "create": false,
+      "repositories": false,
+      "import": false,
+      "refresh": false
+    },
+    "plugins": {
+      "repositories": false,
+      "market": false,
+      "install": false,
+      "uninstall": false,
+      "import": false,
+      "syncRepos": false
+    }
   },
   "agentCapabilities": {
     "projectScope": false,
@@ -142,6 +168,102 @@
         "path": "/sessions/:projectName/:sessionId/launch",
         "capability": "sessions",
         "operation": "launch",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/channels",
+        "capability": "channels",
+        "operation": "list",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/channels/current",
+        "capability": "channels",
+        "operation": "current",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/channels/enabled",
+        "capability": "channels",
+        "operation": "enabled",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/channels",
+        "capability": "channels",
+        "operation": "create",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "PUT",
+        "path": "/channels/:channelId",
+        "capability": "channels",
+        "operation": "update",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "DELETE",
+        "path": "/channels/:channelId",
+        "capability": "channels",
+        "operation": "remove",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/channels/:channelId/apply",
+        "capability": "channels",
+        "operation": "applyToSettings",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/channels/sync",
+        "capability": "channels",
+        "operation": "sync",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/channels/order",
+        "capability": "channels",
+        "operation": "order",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/proxy/status",
+        "capability": "proxy",
+        "operation": "status",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/proxy/start",
+        "capability": "proxy",
+        "operation": "start",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/proxy/stop",
+        "capability": "proxy",
+        "operation": "stop",
         "request": "default",
         "response": "default"
       },
@@ -351,6 +473,8 @@
     "projects": "dsh-projects",
     "sessions": "dsh-sessions",
     "nativeConfig": "dsh-native-config",
-    "api": "dsh-api"
+    "api": "dsh-api",
+    "channels": "dsh-channels",
+    "proxy": "dsh-proxy"
   }
 }

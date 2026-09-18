@@ -6,8 +6,13 @@ export async function getProjects(channel = 'claude', options = {}) {
     return getPlatformProjects(channel, options)
   }
   const prefix = getChannelPrefix(channel)
+  const params = {}
+  if (options.page != null) params.page = options.page
+  if (options.limit != null) params.limit = options.limit
+  if (options.q || options.search) params.q = options.q || options.search
+  if (options.fresh) params.fresh = '1'
   const response = await client.get(`${prefix}/projects`, {
-    params: options.fresh ? { fresh: '1' } : undefined
+    params
   })
   return response.data
 }

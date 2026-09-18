@@ -8,6 +8,9 @@ export async function getSessions(projectName, channel = 'claude', options = {})
   }
   const prefix = getChannelPrefix(channel)
   const params = {}
+  if (options.page != null) params.page = options.page
+  if (options.limit != null) params.limit = options.limit
+  if (options.q || options.search) params.q = options.q || options.search
   if (options.fresh) {
     params.fresh = '1'
   }

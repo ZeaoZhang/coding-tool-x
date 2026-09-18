@@ -25,6 +25,8 @@ const INVENTORY_LOCK_WAIT_MS = 30000;
 const INVENTORY_PARSE_BATCH_SIZE = 8;
 /** @type {number} Maximum number of files parsed concurrently */
 const INVENTORY_PARSE_CONCURRENCY = 2;
+const SUMMARY_REFRESH_CONCURRENCY = 8;
+const SUMMARY_VERSION = 1;
 const BUILTIN_SESSION_SOURCES = new Set(['claude', 'codex', 'gemini', 'omp']);
 // Keep synchronized with the parserVersion exposed by the built-in session drivers.
 const BUILTIN_SESSION_PARSER_VERSIONS = Object.freeze({ claude: 2, codex: 2, gemini: 2, omp: 2 });
@@ -103,8 +105,8 @@ function _tryAcquireInventoryLock(dbPath, source) {
   return null;
 }
 
-async function _acquireInventoryLock(dbPath, source) {
-  const deadline = Date.now() + INVENTORY_LOCK_WAIT_MS;
+async function _acquireInventoryLock(dbPath, source, waitMs = INVENTORY_LOCK_WAIT_MS) {
+  const deadline = Date.now() + Math.max(0, Number(waitMs) || 0);
   while (true) {
     const lock = _tryAcquireInventoryLock(dbPath, source);
     if (lock?.busy) {
@@ -114,6 +116,21 @@ async function _acquireInventoryLock(dbPath, source) {
     }
     if (Date.now() >= deadline) return null;
     await new Promise(resolve => setTimeout(resolve, 50));
+  }
+}
+
+function _hasActiveInventoryLock(dbPath) {
+  const lockPath = _inventoryLockPath(dbPath);
+  try {
+    const owner = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+    const ageMs = Math.max(0, Date.now() - fs.statSync(lockPath).mtimeMs);
+    const ownerPid = Number(owner?.pid);
+    return _isProcessAlive(ownerPid) || (
+      (!Number.isInteger(ownerPid) || ownerPid <= 0)
+      && ageMs < INVENTORY_LOCK_STALE_MS
+    );
+  } catch (_) {
+    return false;
   }
 }
 
@@ -199,8 +216,37 @@ const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS source_state (
   source            TEXT PRIMARY KEY,
   last_inventory_ms INTEGER,
-  last_error        TEXT
+  last_error        TEXT,
+  summary_inventory_ms INTEGER,
+  summary_error        TEXT
 );
+
+CREATE TABLE IF NOT EXISTS session_summary (
+  source               TEXT NOT NULL,
+  file_path            TEXT NOT NULL,
+  session_id           TEXT NOT NULL,
+  project_name         TEXT NOT NULL,
+  project_display_name TEXT,
+  project_full_path    TEXT,
+  first_message        TEXT,
+  git_branch           TEXT,
+  provider             TEXT,
+  model                TEXT,
+  size                 INTEGER NOT NULL DEFAULT 0,
+  mtime_ms             INTEGER NOT NULL DEFAULT 0,
+  started_at           INTEGER,
+  updated_at           INTEGER,
+  summary_version      INTEGER NOT NULL DEFAULT 1,
+  extra_json           TEXT,
+  PRIMARY KEY (source, file_path),
+  UNIQUE (source, session_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_summary_project
+  ON session_summary(source, project_name, updated_at DESC, session_id ASC);
+
+CREATE INDEX IF NOT EXISTS idx_session_summary_updated
+  ON session_summary(source, updated_at DESC, session_id ASC);
 
 CREATE TABLE IF NOT EXISTS session_file (
   source               TEXT NOT NULL,
@@ -221,6 +267,7 @@ CREATE TABLE IF NOT EXISTS session_file (
   usage_json           TEXT,
   extra_json           TEXT,
   parser_version       INTEGER NOT NULL DEFAULT 0,
+  content_indexed      INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (source, file_path),
   UNIQUE (source, session_id)
 );
@@ -308,6 +355,17 @@ function _normalizePageOpts(options = {}) {
   if (limit < 1) limit = 1;
   if (limit > 200) limit = 200;
   return { page, limit, order };
+}
+
+/**
+ * Normalize the bounded list pagination contract. Project/session lists are
+ * intentionally capped at 100 even when a caller supplies a larger limit.
+ */
+function _normalizeListOpts(options = {}) {
+  const page = Math.max(1, Number.parseInt(options.page, 10) || 1);
+  const limit = Math.max(1, Math.min(100, Number.parseInt(options.limit, 10) || 20));
+  const query = String(options.q ?? options.search ?? '').trim();
+  return { page, limit, query };
 }
 
 /**
@@ -478,7 +536,39 @@ function _adaptRuntimeSessionsDriver(driver) {
       await unwrap(await driver.parse(descriptor, ...args)),
       descriptor,
       { preservePayloadUpdatedAt: driver.preservePayloadUpdatedAt === true }
-    )
+    ),
+    summarize: typeof driver.summarize === 'function'
+      ? async (descriptor, ...args) => _normalizeRuntimeSummaryResult(
+        await unwrap(await driver.summarize(descriptor, ...args)),
+        descriptor
+      )
+      : null
+  };
+}
+
+function _normalizeRuntimeSummaryResult(result, descriptor = {}) {
+  if (!result || typeof result !== 'object') return null;
+  const source = result.session && typeof result.session === 'object' ? result.session : result;
+  if (!source.sessionId && !descriptor.sessionId) return null;
+  const projectHint = descriptor.projectHint || source.projectHint || source.projectName || '';
+  const projectName = source.projectName || projectHint || 'unknown';
+  const extra = _safeParseObject(source.extraJson);
+  return {
+    sessionId: String(source.sessionId || descriptor.sessionId),
+    projectName,
+    projectDisplayName: source.projectDisplayName || projectName,
+    projectFullPath: source.projectFullPath || source.projectPath || null,
+    firstMessage: source.firstMessage || null,
+    gitBranch: source.gitBranch || null,
+    provider: source.provider || null,
+    model: source.model || null,
+    startedAt: source.startedAt || null,
+    updatedAt: source.updatedAt ?? descriptor.mtimeMs ?? null,
+    extraJson: JSON.stringify({
+      ...extra,
+      projectHint: projectHint || null,
+      mtimeMs: descriptor.mtimeMs ?? null
+    })
   };
 }
 // ---------------------------------------------------------------------------
@@ -513,6 +603,10 @@ function createSessionHistoryIndex(opts = {}) {
   let _ftsAvailable = null;
   /** @type {Map<string, Promise<void>>} */
   const _inflight = new Map();
+  /** @type {Map<string, Promise<void>>} */
+  const _summaryInflight = new Map();
+  /** @type {Map<string, Promise<void>>} */
+  const _contentInflight = new Map();
 
   function _getDb() {
     if (_db) return _db;
@@ -533,6 +627,29 @@ function createSessionHistoryIndex(opts = {}) {
     if (explicitAdapters) return _parserVersionForDriver(adapters[source]);
     const runtimeDriver = _getRuntimeSessionsDriver(runtime, source, indexConfig);
     return _parserVersionForDriver(runtimeDriver);
+  }
+
+  function _resolveSessionsAdapter(source, config = indexConfig) {
+    let adapter = null;
+    if (explicitAdapters) {
+      adapter = adapters[source];
+    } else {
+      const runtimeDriver = _getRuntimeSessionsDriver(runtime, source, config);
+      if (_isTypedSessionsResult(runtimeDriver)) {
+        throw _typedFailureToError(runtimeDriver);
+      }
+      if (runtimeDriver) {
+        adapter = _adaptRuntimeSessionsDriver(runtimeDriver);
+      } else if (BUILTIN_SESSION_SOURCES.has(source) && adapters[source]) {
+        adapter = adapters[source];
+      } else {
+        throw _typedFailureToError(_typedSessionsUnsupported(
+          source,
+          new Error(`unsupported sessions source: ${source}`)
+        ));
+      }
+    }
+    return adapter;
   }
 
   /**
@@ -586,10 +703,31 @@ function createSessionHistoryIndex(opts = {}) {
   function _initSchema(db) {
     db.exec('PRAGMA journal_mode = WAL');
     db.exec(SCHEMA_SQL);
-    const columns = db.prepare('PRAGMA table_info(session_file)').all();
-    if (!columns.some((column) => column.name === 'parser_version')) {
-      db.exec('ALTER TABLE session_file ADD COLUMN parser_version INTEGER NOT NULL DEFAULT 0');
-    }
+    const ensureColumn = (table, name, definition) => {
+      const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+      if (!columns.some((column) => column.name === name)) {
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+      }
+    };
+    ensureColumn('source_state', 'summary_inventory_ms', 'INTEGER');
+    ensureColumn('source_state', 'summary_error', 'TEXT');
+    ensureColumn('session_file', 'parser_version', 'INTEGER NOT NULL DEFAULT 0');
+    ensureColumn('session_file', 'content_indexed', 'INTEGER NOT NULL DEFAULT 1');
+
+    // The first migration is deliberately a metadata-only copy. It reuses
+    // rows already present in session_file and never touches JSONL files or
+    // the message/FTS tables.
+    db.exec(`
+      INSERT OR IGNORE INTO session_summary(
+        source, file_path, session_id, project_name, project_display_name,
+        project_full_path, first_message, git_branch, provider, model,
+        size, mtime_ms, started_at, updated_at, summary_version, extra_json
+      )
+      SELECT source, file_path, session_id, project_name, project_display_name,
+             project_full_path, first_message, git_branch, provider, model,
+             size, mtime_ms, started_at, updated_at, ${SUMMARY_VERSION}, extra_json
+      FROM session_file
+    `);
   }
 
   function _initFts(db) {
@@ -598,6 +736,234 @@ function createSessionHistoryIndex(opts = {}) {
     } catch (_err) {
       _ftsAvailable = false;
     }
+  }
+
+  function _isSummaryFresh(source) {
+    const row = _getDb().prepare(
+      'SELECT summary_inventory_ms FROM source_state WHERE source = ?'
+    ).get(source);
+    return Boolean(
+      row?.summary_inventory_ms
+      && Date.now() - Number(row.summary_inventory_ms) < INDEX_INVENTORY_TTL_MS
+    );
+  }
+
+  function _hasSummaryData(source) {
+    return Boolean(_getDb().prepare(
+      'SELECT 1 AS indexed FROM session_summary WHERE source = ? LIMIT 1'
+    ).get(source));
+  }
+
+  function _summaryFromDescriptor(descriptor = {}) {
+    const projectName = descriptor.projectHint || descriptor.projectName || 'unknown';
+    return {
+      sessionId: String(descriptor.sessionId || ''),
+      projectName,
+      projectDisplayName: descriptor.projectDisplayName || projectName,
+      projectFullPath: descriptor.projectFullPath || descriptor.projectPath || null,
+      firstMessage: descriptor.firstMessage || null,
+      gitBranch: descriptor.gitBranch || null,
+      provider: descriptor.provider || null,
+      model: descriptor.model || null,
+      startedAt: descriptor.startedAt || null,
+      updatedAt: descriptor.updatedAt ?? descriptor.mtimeMs ?? null,
+      extraJson: JSON.stringify({ projectHint: descriptor.projectHint || null, mtimeMs: descriptor.mtimeMs ?? null })
+    };
+  }
+
+  async function _summarizeDescriptor(adapter, descriptor) {
+    if (typeof adapter?.summarize !== 'function') {
+      return _summaryFromDescriptor(descriptor);
+    }
+    const result = await adapter.summarize({ ...descriptor, projectsDir: explicitProjectsDir });
+    if (_isTypedFailureResult(result)) throw _typedFailureToError(result);
+    const summary = _normalizeRuntimeSummaryResult(result, descriptor) || _summaryFromDescriptor(descriptor);
+    if (!summary.sessionId) summary.sessionId = String(descriptor.sessionId || '');
+    return summary;
+  }
+
+  function _recordSummaryState(db, source, inventoryMs, error) {
+    db.prepare(`
+      INSERT INTO source_state(source, summary_inventory_ms, summary_error)
+      VALUES(?, ?, ?)
+      ON CONFLICT(source) DO UPDATE SET
+        summary_inventory_ms = excluded.summary_inventory_ms,
+        summary_error = excluded.summary_error
+    `).run(source, inventoryMs, error || null);
+  }
+
+  function _upsertSummary(db, source, descriptor, summary) {
+    const sessionId = String(summary.sessionId || descriptor.sessionId || '');
+    if (!sessionId) return;
+    db.prepare(
+      'DELETE FROM session_summary WHERE source = ? AND session_id = ? AND file_path <> ?'
+    ).run(source, sessionId, descriptor.filePath);
+    db.prepare(`
+      INSERT INTO session_summary(
+        source, file_path, session_id, project_name, project_display_name,
+        project_full_path, first_message, git_branch, provider, model,
+        size, mtime_ms, started_at, updated_at, summary_version, extra_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(source, file_path) DO UPDATE SET
+        session_id = excluded.session_id,
+        project_name = excluded.project_name,
+        project_display_name = excluded.project_display_name,
+        project_full_path = excluded.project_full_path,
+        first_message = excluded.first_message,
+        git_branch = excluded.git_branch,
+        provider = excluded.provider,
+        model = excluded.model,
+        size = excluded.size,
+        mtime_ms = excluded.mtime_ms,
+        started_at = excluded.started_at,
+        updated_at = excluded.updated_at,
+        summary_version = excluded.summary_version,
+        extra_json = excluded.extra_json
+    `).run(
+      source,
+      descriptor.filePath,
+      sessionId,
+      summary.projectName || 'unknown',
+      summary.projectDisplayName || summary.projectName || 'unknown',
+      summary.projectFullPath || null,
+      summary.firstMessage || null,
+      summary.gitBranch || null,
+      summary.provider || null,
+      summary.model || null,
+      Number(descriptor.size) || 0,
+      Number(descriptor.mtimeMs) || 0,
+      summary.startedAt || null,
+      summary.updatedAt ?? descriptor.mtimeMs ?? null,
+      SUMMARY_VERSION,
+      summary.extraJson || null
+    );
+  }
+
+  async function _runSummaryInventory(source, { force = false, config = indexConfig } = {}) {
+    // A list request must never wait behind the expensive full-content
+    // inventory lock. It can serve the previous summaries and expose the
+    // refreshing/stale state instead.
+    const inventoryLock = await _acquireInventoryLock(dbPath, source, 100);
+    if (!inventoryLock) return;
+    let db = null;
+    let errorMsg = null;
+    let stateToRecord = null;
+    try {
+      db = _getDb();
+      if (!force && _isSummaryFresh(source)) return;
+      const adapter = _resolveSessionsAdapter(source, config);
+      const inventoryResult = await adapter.inventory({
+        projectsDir: source === 'claude' ? config.projectsDir : explicitProjectsDir
+      });
+      if (_isTypedFailureResult(inventoryResult)) throw _typedFailureToError(inventoryResult);
+
+      const winners = new Map();
+      for (const descriptor of Array.isArray(inventoryResult) ? inventoryResult : []) {
+        if (!descriptor?.filePath) continue;
+        const current = winners.get(descriptor.sessionId || descriptor.filePath);
+        if (!current
+          || Number(descriptor.mtimeMs) > Number(current.mtimeMs)
+          || (Number(descriptor.mtimeMs) === Number(current.mtimeMs) && descriptor.filePath < current.filePath)) {
+          winners.set(descriptor.sessionId || descriptor.filePath, descriptor);
+        }
+      }
+
+      const indexed = new Map(db.prepare(`
+        SELECT file_path, size, mtime_ms, summary_version, session_id
+        FROM session_summary WHERE source = ?
+      `).all(source).map(row => [row.file_path, row]));
+      const activePaths = new Set();
+      const changed = [];
+      for (const descriptor of winners.values()) {
+        activePaths.add(descriptor.filePath);
+        const row = indexed.get(descriptor.filePath);
+        if (!row
+          || Number(row.size) !== Number(descriptor.size)
+          || Number(row.mtime_ms) !== Number(descriptor.mtimeMs)
+          || Number(row.summary_version) !== SUMMARY_VERSION) {
+          changed.push(descriptor);
+        }
+      }
+
+      const summaries = new Array(changed.length);
+      let next = 0;
+      const summarizeWorker = async () => {
+        while (true) {
+          const index = next++;
+          if (index >= changed.length) return;
+          const descriptor = changed[index];
+          try {
+            summaries[index] = { descriptor, value: await _summarizeDescriptor(adapter, descriptor) };
+          } catch (error) {
+            summaries[index] = { descriptor, error };
+          }
+        }
+      };
+      await Promise.all(Array.from({
+        length: Math.min(SUMMARY_REFRESH_CONCURRENCY, changed.length)
+      }, summarizeWorker));
+
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        for (const row of indexed.values()) {
+          if (!activePaths.has(row.file_path)) {
+            db.prepare('DELETE FROM session_summary WHERE source = ? AND file_path = ?')
+              .run(source, row.file_path);
+          }
+        }
+        for (const item of summaries) {
+          if (item?.error) {
+            const detail = `${item.descriptor.filePath}: ${item.error.message}`;
+            errorMsg = errorMsg ? `${errorMsg}; ${detail}` : detail;
+            continue;
+          }
+          if (item?.value) _upsertSummary(db, source, item.descriptor, item.value);
+        }
+        db.exec('COMMIT');
+      } catch (error) {
+        try { db.exec('ROLLBACK'); } catch (_) {}
+        throw error;
+      }
+      stateToRecord = { inventoryMs: Date.now(), error: errorMsg };
+    } catch (error) {
+      errorMsg = error?.message || String(error);
+      stateToRecord = { inventoryMs: null, error: errorMsg };
+      // Summary refresh is best-effort. Keep the previous lightweight rows
+      // available when a directory changes underneath inventory (or SQLite
+      // is temporarily busy); callers can inspect source meta for stale/error
+      // state and retry on the next refresh.
+      return null;
+    } finally {
+      if (stateToRecord && db) {
+        try { _recordSummaryState(db, source, stateToRecord.inventoryMs, stateToRecord.error); } catch (_) {}
+      }
+      _releaseInventoryLock(inventoryLock);
+    }
+  }
+
+  async function ensureSummaryIndexed(source, options = {}) {
+    const consistency = options.consistency || 'stale-ok';
+    const force = options.force === true;
+    const key = `summary:${source}`;
+    if (!force && _isSummaryFresh(source)) return;
+    if (_summaryInflight.has(key)) {
+      if (consistency === 'complete' || !_hasSummaryData(source)) return _summaryInflight.get(key);
+      return;
+    }
+    const promise = _runSummaryInventory(source, {
+      force,
+      config: options.config || indexConfig
+    });
+    _summaryInflight.set(key, promise);
+    promise.finally(() => {
+      if (_summaryInflight.get(key) === promise) _summaryInflight.delete(key);
+    }).catch(() => {});
+    if (consistency === 'complete') return promise;
+    if (_hasSummaryData(source)) return;
+    await Promise.race([
+      promise,
+      new Promise(resolve => setTimeout(resolve, INDEX_COLD_WAIT_MS))
+    ]);
   }
 
   /**
@@ -819,11 +1185,15 @@ function createSessionHistoryIndex(opts = {}) {
           content, timestamp, model, provider, user_message_number, extra_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
+      const statements = { deletePath, deleteSession, insertFile, insertMessage, db };
 
       db.exec('BEGIN IMMEDIATE');
       try {
         for (const filePath of indexedFiles.keys()) {
-          if (!activePaths.has(filePath)) deletePath.run(source, filePath);
+          if (!activePaths.has(filePath)) {
+            deletePath.run(source, filePath);
+            db.prepare('DELETE FROM session_summary WHERE source = ? AND file_path = ?').run(source, filePath);
+          }
         }
         db.exec('COMMIT');
       } catch (error) {
@@ -863,7 +1233,7 @@ function createSessionHistoryIndex(opts = {}) {
           for (const item of parsed) {
             if (item?.value) {
               const { descriptor, parseResult } = item.value;
-              _insertSession({ deletePath, deleteSession, insertFile, insertMessage }, source, descriptor, parseResult.session, parseResult.messages, parserVersion);
+              _insertSession(statements, source, descriptor, parseResult.session, parseResult.messages, parserVersion);
             }
           }
           db.exec('COMMIT');
@@ -924,6 +1294,7 @@ function createSessionHistoryIndex(opts = {}) {
       session.extraJson || null,
       parserVersion
     );
+    _upsertSummary(statements.db || _getDb(), source, descriptor, session);
 
     let ordinal = 0;
     for (const msg of messages) {
@@ -950,89 +1321,311 @@ function createSessionHistoryIndex(opts = {}) {
 
   // ---- Public query methods ----
 
-  /**
-   * @param {string} source
-   * @param {object} [options]
-   * @returns {Promise<Array<{name, displayName, fullPath, path, sessionCount, lastUsed, latestSession, source}>>}
-   */
-  async function listProjects(source, options = {}) {
-    await ensureSourceIndexed(source, {
+  function _projectRowsToPayload(rows, source, page, limit, total) {
+    return {
+      projects: rows.map(r => ({
+        name: r.project_name,
+        displayName: r.project_display_name || r.project_name,
+        fullPath: r.project_full_path || '',
+        path: r.project_full_path || '',
+        sessionCount: Number(r.session_count) || 0,
+        lastUsed: r.last_used,
+        latestSession: r.latest_session,
+        source
+      })),
+      currentProject: null,
+      pagination: {
+        page,
+        limit,
+        total,
+        hasMore: page * limit < total
+      }
+    };
+  }
+
+  function _sessionRowToSummary(r) {
+    const extra = _safeParseObject(r.extra_json);
+    return {
+      sessionId: r.session_id,
+      filePath: r.file_path,
+      size: Number(r.size) || 0,
+      mtime: r.mtime_ms,
+      firstMessage: r.first_message,
+      gitBranch: r.git_branch,
+      provider: r.provider,
+      model: r.model,
+      messageCount: r.message_count == null ? null : Number(r.message_count),
+      tokens: _safeParseJson(r.usage_json, null),
+      extra,
+      source: r.source,
+      projectName: r.project_name,
+      projectHint: extra.projectHint || r.project_name,
+      projectDisplayName: r.project_display_name,
+      projectFullPath: r.project_full_path,
+      startedAt: r.started_at,
+      updatedAt: r.updated_at
+    };
+  }
+
+  async function listProjectsPage(source, options = {}) {
+    await ensureSummaryIndexed(source, {
       force: options.force === true,
       consistency: options.consistency || 'stale-ok',
-      allowStaleData: true,
       config: options.config
     });
     const db = _getDb();
-
+    const { page, limit, query } = _normalizeListOpts(options);
+    const pattern = `%${query.replace(/[%_]/g, ch => `\\${ch}`)}%`;
+    const queryClause = query
+      ? `AND (project_name LIKE ? ESCAPE '\\' OR project_display_name LIKE ? ESCAPE '\\' OR project_full_path LIKE ? ESCAPE '\\')`
+      : '';
+    const queryParams = query ? [pattern, pattern, pattern] : [];
+    const total = Number(db.prepare(`
+      SELECT COUNT(*) AS total FROM (
+        SELECT project_name FROM session_summary
+        WHERE source = ? ${queryClause}
+        GROUP BY project_name
+      )
+    `).get(source, ...queryParams)?.total) || 0;
     const rows = db.prepare(`
-      SELECT project_name, project_display_name, project_full_path,
+      SELECT project_name, MAX(project_display_name) AS project_display_name,
+             MAX(project_full_path) AS project_full_path,
              COUNT(*) AS session_count,
              MAX(updated_at) AS last_used,
-             (SELECT session_id FROM session_file sf2
+             (SELECT session_id FROM session_summary sf2
               WHERE sf2.source = ? AND sf2.project_name = sf.project_name
-              ORDER BY updated_at DESC LIMIT 1) AS latest_session
-      FROM session_file sf
-      WHERE source = ?
+              ORDER BY updated_at DESC, session_id ASC LIMIT 1) AS latest_session
+      FROM session_summary sf
+      WHERE source = ? ${queryClause}
       GROUP BY project_name
-      ORDER BY last_used DESC
-    `).all(source, source);
-
-    return rows.map(r => ({
-      name: r.project_name,
-      displayName: r.project_display_name || r.project_name,
-      fullPath: r.project_full_path || '',
-      path: r.project_full_path || '',
-      sessionCount: r.session_count,
-      lastUsed: r.last_used,
-      latestSession: r.latest_session,
-      source
-    }));
+      ORDER BY last_used DESC, project_name ASC
+      LIMIT ? OFFSET ?
+    `).all(source, source, ...queryParams, limit, (page - 1) * limit);
+    return _projectRowsToPayload(rows, source, page, limit, total);
   }
 
-  /**
-   * @param {string} source
-   * @param {string} projectName
-   * @param {object} [options]
-   * @returns {Promise<Array>}
-   */
+  async function getAllProjects(source, options = {}) {
+    const projects = [];
+    let page = 1;
+    const limit = 100;
+    while (true) {
+      const payload = await listProjectsPage(source, {
+        ...options,
+        page,
+        limit,
+        // A forced refresh is only needed once. Repeating it for every page
+        // would serialize needless metadata scans.
+        force: page === 1 ? options.force === true : false
+      });
+      projects.push(...(Array.isArray(payload.projects) ? payload.projects : []));
+      if (!payload.pagination?.hasMore) break;
+      page += 1;
+    }
+    return projects;
+  }
+
+  async function listProjects(source, options = {}) {
+    return getAllProjects(source, options);
+  }
+
+  async function listSessionsPage(source, projectName, options = {}) {
+    await ensureSummaryIndexed(source, {
+      force: options.force === true,
+      consistency: options.consistency || 'stale-ok',
+      config: options.config
+    });
+    const db = _getDb();
+    const { page, limit, query } = _normalizeListOpts(options);
+    const pattern = `%${query.replace(/[%_]/g, ch => `\\${ch}`)}%`;
+    const queryClause = query
+      ? `AND (session_id LIKE ? ESCAPE '\\' OR first_message LIKE ? ESCAPE '\\' OR git_branch LIKE ? ESCAPE '\\')`
+      : '';
+    const queryParams = query ? [pattern, pattern, pattern] : [];
+    const countRow = db.prepare(`
+      SELECT COUNT(*) AS total, COALESCE(SUM(size), 0) AS total_size
+      FROM session_summary
+      WHERE source = ? AND project_name = ? ${queryClause}
+    `).get(source, projectName, ...queryParams);
+    const total = Number(countRow?.total) || 0;
+    const totalSize = Number(countRow?.total_size) || 0;
+    const rows = db.prepare(`
+      SELECT s.*,
+             f.message_count AS content_message_count,
+             f.usage_json AS content_usage_json,
+             f.extra_json AS content_extra_json
+      FROM session_summary s
+      LEFT JOIN session_file f ON f.source = s.source AND f.session_id = s.session_id
+      WHERE s.source = ? AND s.project_name = ? ${queryClause}
+      ORDER BY s.updated_at DESC, s.session_id ASC
+      LIMIT ? OFFSET ?
+    `).all(source, projectName, ...queryParams, limit, (page - 1) * limit);
+    const sessions = rows.map(r => _sessionRowToSummary({
+      ...r,
+      session_id: r.session_id,
+      file_path: r.file_path,
+      size: r.size,
+      mtime_ms: r.mtime_ms,
+      first_message: r.first_message,
+      git_branch: r.git_branch,
+      provider: r.provider,
+      model: r.model,
+      project_name: r.project_name,
+      project_display_name: r.project_display_name,
+      project_full_path: r.project_full_path,
+      started_at: r.started_at,
+      updated_at: r.updated_at,
+      source: r.source,
+      extra_json: r.content_extra_json || r.extra_json,
+      message_count: r.content_message_count,
+      usage_json: r.content_usage_json
+    }));
+    return {
+      sessions,
+      totalSize,
+      projectInfo: { sessionCount: total, totalSize },
+      pagination: { page, limit, total, hasMore: page * limit < total }
+    };
+  }
+
   async function listSessions(source, projectName, options = {}) {
+    // Keep the historical internal API stable for commands and callers that
+    // explicitly request the complete index. HTTP list routes use
+    // listSessionsPage above and therefore never enter this path.
     await ensureSourceIndexed(source, {
       force: options.force === true,
       consistency: options.consistency || 'stale-ok',
       config: options.config
     });
-
     const db = _getDb();
     const rows = db.prepare(`
       SELECT * FROM session_file
       WHERE source = ? AND project_name = ?
-      ORDER BY updated_at DESC
+      ORDER BY updated_at DESC, session_id ASC
     `).all(source, projectName);
+    return rows.map(_sessionRowToSummary);
+  }
 
-    return rows.map(r => {
-      const extra = _safeParseObject(r.extra_json);
+  async function _parseSingleSessionContent(source, summaryRow, config = indexConfig) {
+    const adapter = _resolveSessionsAdapter(source, config);
+    const descriptor = {
+      filePath: summaryRow.file_path,
+      size: Number(summaryRow.size) || 0,
+      mtimeMs: Number(summaryRow.mtime_ms) || 0,
+      sessionId: summaryRow.session_id,
+      projectHint: summaryRow.project_name,
+      projectsDir: source === 'claude' ? config.projectsDir : explicitProjectsDir
+    };
+    const parseResult = await adapter.parse(descriptor);
+    if (_isTypedFailureResult(parseResult)) throw _typedFailureToError(parseResult);
+    if (!parseResult?.session || typeof parseResult.session !== 'object'
+      || typeof parseResult.session.sessionId !== 'string'
+      || !parseResult.session.sessionId.trim()
+      || !Array.isArray(parseResult.messages)) {
+      throw new Error('invalid parsed session result');
+    }
+    return { descriptor, parseResult };
+  }
 
-      return {
-        sessionId: r.session_id,
-        filePath: r.file_path,
-        size: r.size,
-        mtime: r.mtime_ms,
-        firstMessage: r.first_message,
-        gitBranch: r.git_branch,
-        provider: r.provider,
-        model: r.model,
-        messageCount: r.message_count,
-        tokens: _safeParseJson(r.usage_json, null),
-        extra,
-        source: r.source,
-        projectName: r.project_name,
-        projectHint: extra.projectHint || r.project_name,
-        projectDisplayName: r.project_display_name,
-        projectFullPath: r.project_full_path,
-        startedAt: r.started_at,
-        updatedAt: r.updated_at
-      };
-    });
+  /**
+   * Parse and index exactly one file for detail requests. This map is shared
+   * by outline, messages, and status callers so opening a session while the
+   * drawer fires concurrent requests cannot duplicate the expensive parse.
+   */
+  async function ensureSessionContentIndexed(source, sessionId, options = {}) {
+    const key = `content:${source}:${sessionId}`;
+    if (_contentInflight.has(key)) return _contentInflight.get(key);
+    const promise = (async () => {
+      await ensureSummaryIndexed(source, {
+        force: options.force === true,
+        consistency: 'complete',
+        config: options.config || indexConfig
+      });
+      const db = _getDb();
+      const summaryRow = db.prepare(
+        'SELECT * FROM session_summary WHERE source = ? AND session_id = ?'
+      ).get(source, sessionId);
+      if (!summaryRow) return null;
+
+      let stat;
+      try {
+        stat = await fs.promises.stat(summaryRow.file_path);
+      } catch (_) {
+        db.prepare('DELETE FROM session_summary WHERE source = ? AND file_path = ?')
+          .run(source, summaryRow.file_path);
+        db.prepare('DELETE FROM session_file WHERE source = ? AND file_path = ?')
+          .run(source, summaryRow.file_path);
+        return null;
+      }
+
+      const current = db.prepare(`
+        SELECT * FROM session_file
+        WHERE source = ? AND session_id = ? AND file_path = ?
+      `).get(source, sessionId, summaryRow.file_path);
+      if (current
+        && Number(current.size) === Number(stat.size)
+        && Number(current.mtime_ms) === Number(stat.mtimeMs)
+        && Number(current.content_indexed ?? 1) === 1) {
+        return current;
+      }
+
+      const parsed = await _parseSingleSessionContent(source, {
+        ...summaryRow,
+        size: stat.size,
+        mtime_ms: stat.mtimeMs
+      }, options.config || indexConfig);
+      let afterStat;
+      try {
+        afterStat = await fs.promises.stat(summaryRow.file_path);
+      } catch (_) {
+        return null;
+      }
+      if (afterStat.size !== stat.size || afterStat.mtimeMs !== stat.mtimeMs) {
+        // A growing session is left as a stale summary. The next detail
+        // request retries it after the writer has produced a stable file.
+        return null;
+      }
+
+      const deletePath = db.prepare('DELETE FROM session_file WHERE source = ? AND file_path = ?');
+      const deleteSession = db.prepare('DELETE FROM session_file WHERE source = ? AND session_id = ?');
+      const insertFile = db.prepare(`
+        INSERT INTO session_file(
+          source, file_path, size, mtime_ms, session_id,
+          project_name, project_display_name, project_full_path,
+          first_message, git_branch, provider, model,
+          started_at, updated_at, message_count, usage_json, extra_json,
+          parser_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      const insertMessage = db.prepare(`
+        INSERT INTO session_message(
+          source, session_id, ordinal, message_id, role, type, subtype,
+          content, timestamp, model, provider, user_message_number, extra_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        _insertSession(
+          { deletePath, deleteSession, insertFile, insertMessage, db },
+          source,
+          { ...parsed.descriptor, size: afterStat.size, mtimeMs: afterStat.mtimeMs },
+          parsed.parseResult.session,
+          parsed.parseResult.messages,
+          _parserVersionForSource(source, _resolveSessionsAdapter(source, options.config || indexConfig))
+        );
+        db.exec('COMMIT');
+      } catch (error) {
+        try { db.exec('ROLLBACK'); } catch (_) {}
+        throw error;
+      }
+      return db.prepare(
+        'SELECT * FROM session_file WHERE source = ? AND session_id = ?'
+      ).get(source, parsed.parseResult.session.sessionId);
+    })();
+    _contentInflight.set(key, promise);
+    promise.finally(() => {
+      if (_contentInflight.get(key) === promise) _contentInflight.delete(key);
+    }).catch(() => {});
+    return promise;
   }
 
   /**
@@ -1042,10 +1635,10 @@ function createSessionHistoryIndex(opts = {}) {
    * @returns {Promise<{sessionId, lastModified, size, filePath}|null>}
    */
   async function getSessionStatus(source, sessionId, options = {}) {
-    await _ensureSessionCurrent(source, sessionId);
+    await _ensureSessionCurrent(source, sessionId, options);
     const db = _getDb();
     const row = db.prepare(
-      'SELECT session_id, mtime_ms, size, file_path FROM session_file WHERE source = ? AND session_id = ?'
+      'SELECT session_id, mtime_ms, size, file_path FROM session_summary WHERE source = ? AND session_id = ?'
     ).get(source, sessionId);
     if (!row) return null;
 
@@ -1064,7 +1657,7 @@ function createSessionHistoryIndex(opts = {}) {
    * @returns {Promise<{sessionId, items: Array}|null>}
    */
   async function getSessionOutline(source, sessionId, options = {}) {
-    await _ensureSessionCurrent(source, sessionId);
+    await ensureSessionContentIndexed(source, sessionId, options);
     const db = _getDb();
 
     const rows = db.prepare(`
@@ -1098,7 +1691,7 @@ function createSessionHistoryIndex(opts = {}) {
    * @returns {Promise<{messages: Array, metadata: object, pagination: object}|null>}
    */
   async function getMessagePage(source, sessionId, options = {}) {
-    await _ensureSessionCurrent(source, sessionId);
+    await ensureSessionContentIndexed(source, sessionId, options);
     const db = _getDb();
     const { page, limit, order } = _normalizePageOpts(options);
 
@@ -1153,7 +1746,7 @@ function createSessionHistoryIndex(opts = {}) {
    * @returns {Promise<Array>}
    */
   async function getRecentSessions(source, limit = 5, options = {}) {
-    await ensureSourceIndexed(source, {
+    await ensureSummaryIndexed(source, {
       force: options.force === true,
       consistency: options.consistency || 'stale-ok',
       config: options.config
@@ -1161,27 +1754,22 @@ function createSessionHistoryIndex(opts = {}) {
     const db = _getDb();
 
     const rows = db.prepare(`
-      SELECT * FROM session_file
-      WHERE source = ?
-      ORDER BY updated_at DESC
+      SELECT s.*,
+             f.message_count AS content_message_count,
+             f.usage_json AS content_usage_json,
+             f.extra_json AS content_extra_json
+      FROM session_summary s
+      LEFT JOIN session_file f ON f.source = s.source AND f.session_id = s.session_id
+      WHERE s.source = ?
+      ORDER BY s.updated_at DESC, s.session_id ASC
       LIMIT ?
     `).all(source, Math.max(1, Math.min(limit, 100)));
 
-    return rows.map(r => ({
-      sessionId: r.session_id,
-      filePath: r.file_path,
-      size: r.size,
-      mtime: r.mtime_ms,
-      firstMessage: r.first_message,
-      gitBranch: r.git_branch,
-      provider: r.provider,
-      model: r.model,
-      messageCount: r.message_count,
-      projectName: r.project_name,
-      projectDisplayName: r.project_display_name,
-      projectFullPath: r.project_full_path,
-      source: r.source,
-      updatedAt: r.updated_at
+    return rows.map(r => _sessionRowToSummary({
+      ...r,
+      message_count: r.content_message_count,
+      usage_json: r.content_usage_json,
+      extra_json: r.content_extra_json || r.extra_json
     }));
   }
 
@@ -1393,12 +1981,30 @@ function createSessionHistoryIndex(opts = {}) {
   /**
    * Ensure the indexed data for a session is current by checking file mtime.
    */
-  async function _ensureSessionCurrent(source, sessionId) {
-    await ensureSourceIndexed(source, { consistency: 'stale-ok' });
+  async function _ensureSessionCurrent(source, sessionId, options = {}) {
     const db = _getDb();
-    const row = db.prepare(
-      'SELECT file_path, size, mtime_ms FROM session_file WHERE source = ? AND session_id = ?'
+    let row = db.prepare(
+      'SELECT file_path, size, mtime_ms FROM session_summary WHERE source = ? AND session_id = ?'
     ).get(source, sessionId);
+    if (!row) {
+      const fullState = db.prepare(
+        'SELECT last_inventory_ms FROM source_state WHERE source = ?'
+      ).get(source);
+      const fullIndexIsFresh = fullState?.last_inventory_ms
+        && Date.now() - Number(fullState.last_inventory_ms) < INDEX_INVENTORY_TTL_MS;
+      // A completed legacy inventory with no matching session row is a
+      // definitive miss (including malformed files). Do not start a second
+      // summary scan merely because this status probe is lightweight.
+      if (fullIndexIsFresh && options.force !== true) return;
+      await ensureSummaryIndexed(source, {
+        force: options.force === true,
+        consistency: 'complete',
+        config: options.config || indexConfig
+      });
+      row = db.prepare(
+        'SELECT file_path, size, mtime_ms FROM session_summary WHERE source = ? AND session_id = ?'
+      ).get(source, sessionId);
+    }
     if (!row) return;
 
     const fileKey = `${source}:${row.file_path}`;
@@ -1418,6 +2024,7 @@ function createSessionHistoryIndex(opts = {}) {
         currentStat = await fs.promises.stat(row.file_path);
       } catch (_) {
         fileVersions.set(fileKey, { size: -1, mtimeMs: -1, checkedAt: Date.now(), missing: true });
+        db.prepare('DELETE FROM session_summary WHERE source = ? AND file_path = ?').run(source, row.file_path);
         db.prepare('DELETE FROM session_file WHERE source = ? AND file_path = ?').run(source, row.file_path);
         return;
       }
@@ -1428,7 +2035,11 @@ function createSessionHistoryIndex(opts = {}) {
         checkedAt: Date.now()
       });
       if (currentStat.size !== row.size || currentStat.mtimeMs !== row.mtime_ms) {
-        await ensureSourceIndexed(source, { force: true, consistency: 'complete' });
+        await ensureSummaryIndexed(source, {
+          force: true,
+          consistency: 'complete',
+          config: options.config || indexConfig
+        });
       }
     })();
     fileChecks.set(fileKey, check);
@@ -1449,14 +2060,19 @@ function createSessionHistoryIndex(opts = {}) {
 
     if (options.deleted && options.sessionId) {
       db.prepare('DELETE FROM session_file WHERE source = ? AND session_id = ?').run(source, options.sessionId);
+      db.prepare('DELETE FROM session_summary WHERE source = ? AND session_id = ?').run(source, options.sessionId);
     }
     if (options.projectName) {
       db.prepare('DELETE FROM session_file WHERE source = ? AND project_name = ?').run(source, options.projectName);
+      db.prepare('DELETE FROM session_summary WHERE source = ? AND project_name = ?').run(source, options.projectName);
     }
 
     // Mark state as stale
     db.prepare(
       'UPDATE source_state SET last_inventory_ms = NULL WHERE source = ?'
+    ).run(source);
+    db.prepare(
+      'UPDATE source_state SET summary_inventory_ms = NULL, summary_error = NULL WHERE source = ?'
     ).run(source);
     for (const key of fileVersions.keys()) {
       if (key.startsWith(`${source}:`)) fileVersions.delete(key);
@@ -1464,17 +2080,22 @@ function createSessionHistoryIndex(opts = {}) {
   }
   function getSourceIndexMeta(source) {
     const row = _getDb().prepare(
-      'SELECT last_inventory_ms, last_error FROM source_state WHERE source = ?'
+      'SELECT last_inventory_ms, last_error, summary_inventory_ms, summary_error FROM source_state WHERE source = ?'
     ).get(source);
-    const generatedAt = row?.last_inventory_ms ? Number(row.last_inventory_ms) : null;
-    const stale = !generatedAt || Date.now() - generatedAt >= INDEX_INVENTORY_TTL_MS;
-    const refreshing = _inflight.has(`ensure:${source}`);
+    const generatedAt = row?.summary_inventory_ms
+      ? Number(row.summary_inventory_ms)
+      : (row?.last_inventory_ms ? Number(row.last_inventory_ms) : null);
+    const error = row?.summary_error || row?.last_error || null;
+    const stale = Boolean(error) || !generatedAt || Date.now() - generatedAt >= INDEX_INVENTORY_TTL_MS;
+    const refreshing = _summaryInflight.has(`summary:${source}`)
+      || _inflight.has(`ensure:${source}`)
+      || _hasActiveInventoryLock(dbPath);
     return {
       generatedAt,
       stale,
       refreshing,
-      fallback: Boolean(row?.last_error && !_hasUsableIndexedData(source)),
-      error: row?.last_error || null
+      fallback: Boolean(error && !_hasSummaryData(source)),
+      error
     };
   }
   function closeSessionHistoryIndex() {
@@ -1482,13 +2103,20 @@ function createSessionHistoryIndex(opts = {}) {
     _db = null;
     fileVersions.clear();
     fileChecks.clear();
+    _summaryInflight.clear();
+    _contentInflight.clear();
   }
 
   // Build the API object
   const api = {
     ensureSourceIndexed,
+    ensureSummaryIndexed,
+    ensureSessionContentIndexed,
+    getAllProjects,
     listProjects,
+    listProjectsPage,
     listSessions,
+    listSessionsPage,
     getSessionStatus,
     getSessionOutline,
     getMessagePage,
@@ -1529,8 +2157,28 @@ async function listProjects(source, options) {
   return _getDefaultIndex(options).listProjects(source, options);
 }
 
+async function ensureSummaryIndexed(source, options) {
+  return _getDefaultIndex(options).ensureSummaryIndexed(source, options);
+}
+
+async function ensureSessionContentIndexed(source, sessionId, options) {
+  return _getDefaultIndex(options).ensureSessionContentIndexed(source, sessionId, options);
+}
+
+async function listProjectsPage(source, options) {
+  return _getDefaultIndex(options).listProjectsPage(source, options);
+}
+
+async function getAllProjects(source, options) {
+  return _getDefaultIndex(options).getAllProjects(source, options);
+}
+
 async function listSessions(source, projectName, options) {
   return _getDefaultIndex().listSessions(source, projectName, options);
+}
+
+async function listSessionsPage(source, projectName, options) {
+  return _getDefaultIndex().listSessionsPage(source, projectName, options);
 }
 
 async function getSessionStatus(source, sessionId, options) {
@@ -1578,8 +2226,13 @@ async function _defaultWorkerRunner(source, indexDbPath, options = {}) {
 module.exports = {
   createSessionHistoryIndex,
   ensureSourceIndexed,
+  ensureSummaryIndexed,
+  ensureSessionContentIndexed,
+  getAllProjects,
   listProjects,
+  listProjectsPage,
   listSessions,
+  listSessionsPage,
   getSessionStatus,
   getSessionOutline,
   getMessagePage,

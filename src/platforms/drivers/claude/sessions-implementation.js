@@ -208,6 +208,10 @@ async function getProjectsWithStats(config = {}, options = {}) {
   return getSessionHistoryIndex(config).listProjects('claude', { ...options, config });
 }
 
+async function getProjectsPage(config = {}, options = {}) {
+  return getSessionHistoryIndex(config).listProjectsPage('claude', { ...options, config });
+}
+
 // ===== Path resolution helpers (kept for mutation/conversion paths) =====
 
 function parseRealProjectPath(encodedName, config = {}) {
@@ -327,7 +331,7 @@ function extractCwdFromSessionHeader(sessionFile) {
 // ===== Counts: delegates to index =====
 
 async function getProjectAndSessionCounts(config = {}, options = {}) {
-  const projects = await getSessionHistoryIndex().listProjects('claude', { ...options, config });
+  const projects = await getSessionHistoryIndex().getAllProjects('claude', { ...options, config });
   let sessionCount = 0;
   for (const project of projects) sessionCount += project.sessionCount || 0;
   return { projectCount: projects.length, sessionCount };
@@ -361,6 +365,23 @@ async function getSessionsForProject(config, projectName, options = {}) {
 
   const totalSize = sessions.reduce((sum, s) => sum + (s.size || 0), 0);
   return { sessions, totalSize };
+}
+
+async function getSessionsPage(config, projectName, options = {}) {
+  const payload = await getSessionHistoryIndex(config).listSessionsPage('claude', projectName, { ...options, config });
+  const forkRelations = getForkRelations();
+  return {
+    ...payload,
+    sessions: payload.sessions.map(session => ({
+      sessionId: session.sessionId,
+      mtime: session.mtime,
+      size: session.size,
+      filePath: session.filePath,
+      gitBranch: session.gitBranch || null,
+      firstMessage: session.firstMessage || null,
+      forkedFrom: forkRelations[session.sessionId] || null
+    }))
+  };
 }
 // ===== Mutations (sync) =====
 
@@ -513,7 +534,9 @@ module.exports = {
   configure,
   getProjects,
   getProjectsWithStats,
+  getProjectsPage,
   getSessionsForProject,
+  getSessionsPage,
   deleteSession,
   forkSession,
   launch,

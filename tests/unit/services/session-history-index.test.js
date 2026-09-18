@@ -2411,6 +2411,54 @@ describe('session-history-index runtime selection', () => {
     expect(runtimeInventory).not.toHaveBeenCalled();
     expect(runtimeParse).not.toHaveBeenCalled();
   });
+  it('serves paged summaries without parsing JSONL and parses only the opened session', async () => {
+    const fixture = createFixtureState();
+    const localIndex = createSessionHistoryIndex({
+      dbPath: fixture.dbPath,
+      adapterRegistry: { claude: fixture.adapter },
+      workerRunner: vi.fn(async () => {}),
+      ftsEnabledOverride: false
+    });
+    for (const [name, sessionId, projectName] of [
+      ['project-a.jsonl', 'session-a', 'project-a'],
+      ['project-b.jsonl', 'session-b', 'project-b'],
+      ['session-1.jsonl', 'session-1', 'shared-project'],
+      ['session-2.jsonl', 'session-2', 'shared-project'],
+      ['session-3.jsonl', 'session-3', 'shared-project']
+    ]) {
+      fixture.writeFixtureFile({
+        name,
+        content: `{\"type\":\"metadata\",\"session\":\"${sessionId}\"}\n`,
+        session: makeSessionFixture(sessionId, projectName),
+        messages: makeMessageFixtures(4)
+      });
+    }
+
+    try {
+      const projects = await localIndex.listProjectsPage('claude', { page: 1, limit: 2 });
+      expect(projects.projects).toHaveLength(2);
+      expect(projects.pagination).toMatchObject({ page: 1, limit: 2, total: 3, hasMore: true });
+      expect(fixture.parseCounts.size).toBe(0);
+
+      const sessions = await localIndex.listSessionsPage('claude', 'shared-project', { page: 2, limit: 2 });
+      expect(sessions.sessions).toHaveLength(1);
+      expect(sessions.pagination).toMatchObject({ page: 2, limit: 2, total: 3, hasMore: false });
+      expect(sessions.totalSize).toBeGreaterThan(0);
+      expect(sessions.sessions[0]).not.toHaveProperty('messages');
+      expect(fixture.parseCounts.size).toBe(0);
+
+      await Promise.all([
+        localIndex.getSessionOutline('claude', 'session-1'),
+        localIndex.getMessagePage('claude', 'session-1', { page: 1, limit: 2 })
+      ]);
+      expect(fixture.parseCounts.get(path.join(fixture.rootDir, 'session-1.jsonl'))).toBe(1);
+      expect(fixture.parseCounts.size).toBe(1);
+    } finally {
+      localIndex.closeSessionHistoryIndex();
+      fixture.cleanup();
+    }
+  });
+
   it('exposes source freshness metadata without treating successful empty inventory as fallback', async () => {
     const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-session-meta-'));
     const index = createSessionHistoryIndex({

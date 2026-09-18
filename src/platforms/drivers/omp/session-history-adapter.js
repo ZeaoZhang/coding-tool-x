@@ -194,6 +194,47 @@ async function inventory({ projectsDir } = {}) {
   return descriptors;
 }
 
+async function summarize(descriptor) {
+  let entries = [];
+  let fd;
+  try {
+    fd = fs.openSync(descriptor.filePath, 'r');
+    const buffer = Buffer.alloc(64 * 1024);
+    const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
+    entries = buffer.subarray(0, bytesRead).toString('utf8')
+      .split(/\r?\n/).filter(line => line.trim()).map(line => {
+        try { return JSON.parse(line); } catch (_) { return null; }
+      }).filter(Boolean);
+  } catch (_) {
+    entries = [];
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch (_) {}
+    }
+  }
+  const header = entries.find(entry => entry?.type === 'session') || {};
+  const messages = entries.map(convertOmpEntry).filter(Boolean);
+  const firstUser = messages.find(message => message.type === 'user' && message.content);
+  const modelChange = [...entries].reverse().find(entry => entry?.type === 'model_change');
+  const cwd = header.cwd || header.project?.cwd || '';
+  const sessionId = header.id || descriptor.sessionId || parseOmpSessionId(descriptor.filePath);
+  return {
+    session: {
+      sessionId,
+      projectName: cwd ? encodeProjectName(cwd) : 'unknown',
+      projectDisplayName: getDisplayName(cwd),
+      projectFullPath: cwd || null,
+      firstMessage: firstUser?.content || null,
+      gitBranch: header.gitBranch || null,
+      provider: modelChange?.provider || messages.find(message => message.provider)?.provider || null,
+      model: modelChange?.modelId || modelChange?.model || messages.find(message => message.model)?.model || null,
+      startedAt: header.timestamp ? new Date(header.timestamp).getTime() : null,
+      updatedAt: descriptor.mtimeMs,
+      extraJson: JSON.stringify({ cwd: cwd || null })
+    }
+  };
+}
+
 /**
  * Parse an OMP session file.
  */
@@ -277,4 +318,4 @@ async function parse(descriptor) {
   return { session, messages };
 }
 
-module.exports = { configure, inventory, parse, convertOmpEntry, parseUsage, encodeProjectName: encodeProjectName, getDisplayName, readJsonLines, extractMessageText, normalizeTextContent };
+module.exports = { configure, inventory, summarize, parse, convertOmpEntry, parseUsage, encodeProjectName: encodeProjectName, getDisplayName, readJsonLines, extractMessageText, normalizeTextContent };

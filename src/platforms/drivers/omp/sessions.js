@@ -11,10 +11,11 @@ function createDriver(context = {}) {
     servicePath: './omp/sessions-implementation',
     localServicePath: '../platforms/drivers/omp/sessions-implementation',
     adapterLocalPath: '../platforms/drivers/omp/session-history-adapter',
-    adapterMethods: { inventory: 'inventory', parse: 'parse' },
+    adapterMethods: { inventory: 'inventory', summarize: 'summarize', parse: 'parse' },
     methods: {
       getProjects: 'getProjects',
       listSessions: 'getSessionsByProject',
+      listSessionsPage: 'getSessionsPage',
       recent: 'getRecentSessions',
       search: 'searchSessions',
       getSessionById: 'getSessionById',
