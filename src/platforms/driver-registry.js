@@ -54,7 +54,9 @@ function getDriverRegistry() {
         'dsh-sessions': require('./drivers/dsh/sessions').createDriver,
         'dsh-native-config': require('./drivers/dsh/native-config').createDriver,
         'dsh-channels': require('./drivers/dsh/channels').createDriver,
-        'dsh-proxy': require('./drivers/dsh/proxy').createDriver
+        'dsh-proxy': require('./drivers/dsh/proxy').createDriver,
+        'dsh-statistics': require('./drivers/dsh/statistics').createDriver,
+        'dsh-native-logs': require('./drivers/dsh/native-logs').createDriver
       }
     });
     registerLegacyDrivers(defaultRegistry);

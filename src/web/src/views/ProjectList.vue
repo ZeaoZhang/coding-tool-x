@@ -4,7 +4,7 @@
       <div class="header">
         <div class="header-text">
           <n-h2 style="margin: 0;">我的项目</n-h2>
-          <n-text depth="3">选择一个项目查看会话（共 {{ store.projectsPagination.total }} 个）</n-text>
+          <n-text depth="3">选择一个项目查看会话（共 {{ store.projects.length }} 个）</n-text>
         </div>
         <n-space>
           <n-button type="primary" size="medium" @click="handleNewProjectCommand">
@@ -62,16 +62,6 @@
         />
       </div>
 
-      <n-pagination
-        v-if="store.projectsPagination.total > store.projectsPagination.limit"
-        v-model:page="projectPage"
-        :page-count="Math.ceil(store.projectsPagination.total / store.projectsPagination.limit)"
-        :page-size="store.projectsPagination.limit"
-        show-quick-jumper
-        @update:page="handleProjectPageChange"
-        class="list-pagination"
-      />
-
       <!-- Empty State -->
       <n-empty
         v-if="!store.loading && !store.error && !store.projectsPending && store.projects.length === 0"
@@ -103,7 +93,7 @@
         <n-input
           ref="globalSearchInputRef"
           v-model:value="globalSearchQuery"
-          placeholder="搜索所有项目的对话内容..."
+          placeholder="搜索对话内容..."
           clearable
           @keyup.enter="handleGlobalSearch"
           :disabled="globalSearching"
@@ -119,12 +109,39 @@
         </n-input>
       </div>
 
+      <n-space align="center" style="margin-bottom: 16px;">
+        <n-text depth="3">搜索范围</n-text>
+        <n-select
+          v-model:value="globalSearchScope"
+          size="small"
+          :options="globalSearchScopeOptions"
+          style="width: 130px;"
+          :disabled="globalSearching"
+        />
+        <n-select
+          v-if="globalSearchScope === 'project'"
+          v-model:value="globalSearchProject"
+          size="small"
+          filterable
+          remote
+          clearable
+          placeholder="选择项目"
+          :options="globalSearchProjectOptions"
+          @search="handleGlobalProjectSearch"
+          style="min-width: 240px;"
+          :disabled="globalSearching"
+        />
+        <n-tag v-else-if="globalSearchScope === 'current' && currentSearchProject" size="small" :bordered="false">
+          {{ currentSearchProjectDisplayName }}
+        </n-tag>
+      </n-space>
+
       <div v-if="globalSearchResults" style="max-height: 60vh; overflow-y: auto;">
         <n-alert type="info" style="margin-bottom: 16px;">
           关键词 "{{ globalSearchResults.keyword }}" 共找到 {{ globalSearchResults.totalMatches }} 处匹配
         </n-alert>
 
-        <div v-for="session in globalSearchResults.sessions" :key="`${session.projectName}-${session.sessionId}`" class="search-result-item">
+        <div v-for="session in globalSearchResults.sessions" :key="`${session.channel || currentChannel}-${session.projectName}-${session.projectFullPath || ''}-${session.sessionId}`" class="search-result-item">
           <div class="search-result-header">
             <div class="search-result-title">
               <n-text strong style="font-size: 15px; font-weight: 700;">
@@ -136,7 +153,7 @@
               </n-text>
               <n-tag size="small" :bordered="false">{{ session.matchCount }} 个匹配</n-tag>
             </div>
-            <n-button size="small" type="primary" @click="handleLaunchTerminalFromGlobal(session.projectName, session.sessionId)">
+            <n-button size="small" type="primary" @click="handleLaunchTerminalFromGlobal(session.projectName, session.sessionId, session.channel)">
               <template #icon>
                 <n-icon><TerminalOutline /></n-icon>
               </template>
@@ -162,15 +179,17 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { NH2, NText, NSpin, NAlert, NEmpty, NIcon, NInput, NModal, NButton, NTag, NSpace, NPagination } from 'naive-ui'
+import { NH2, NText, NSpin, NAlert, NEmpty, NIcon, NInput, NModal, NButton, NTag, NSpace, NSelect } from 'naive-ui'
 import { FolderOpenOutline, SearchOutline, TerminalOutline, AddOutline } from '@vicons/ionicons5'
 import { useSessionsStore } from '../stores/sessions'
 import ProjectCard from '../components/ProjectCard.vue'
 import message, { dialog } from '../utils/message'
 import { searchSessionsGlobally, copySessionLaunchCommand } from '../api/sessions'
+import { getProjects } from '../api/projects'
 import { copyTextToClipboard } from '../utils/clipboard'
 import { getRoutePlatform } from '../config/platformCatalog'
 import { usePlatformStore } from '../stores/platforms'
+import { filterDisplayableProjects, filterDisplayableSessions } from '../utils/session-visibility'
 
 const router = useRouter()
 const route = useRoute()
@@ -179,10 +198,12 @@ const platformStore = usePlatformStore()
 
 // 当前渠道
 const currentChannel = computed(() => getRoutePlatform(route))
+// Keep teardown scoped to the channel this view started with. During a route
+// switch Vue may update the shared route object before the old view unmounts.
+const mountedChannel = currentChannel.value
 
 // Search query
 const searchQuery = ref('')
-const projectPage = ref(1)
 let projectSearchTimer = null
 
 // Keep a stable local array while a page refresh is in flight.
@@ -197,6 +218,30 @@ const globalSearchQuery = ref('')
 const globalSearchResults = ref(null)
 const globalSearching = ref(false)
 const globalSearchInputRef = ref(null)
+const globalSearchScope = ref('workspace')
+const globalSearchProject = ref(null)
+const globalSearchScopeOptions = [
+  { label: '全工作区', value: 'workspace' },
+  { label: '当前项目', value: 'current' },
+  { label: '指定项目', value: 'project' }
+]
+
+const currentSearchProject = computed(() => store.currentProject || orderedProjects.value[0]?.name || null)
+const currentSearchProjectDisplayName = computed(() => {
+  const project = orderedProjects.value.find(item => item.name === currentSearchProject.value)
+  return project?.displayName || project?.name || currentSearchProject.value || '未选择项目'
+})
+const projectOptionsFor = projects => projects.map(project => ({
+  label: project.displayName && project.displayName !== project.name
+    ? `${project.displayName} (${project.name})`
+    : project.name,
+  value: project.name
+}))
+const globalSearchProjectOptions = ref([])
+
+watch(orderedProjects, (projects) => {
+  globalSearchProjectOptions.value = projectOptionsFor(projects)
+}, { immediate: true })
 
 // Sync with store
 watch(() => store.projects, (newProjects) => {
@@ -206,8 +251,7 @@ watch(() => store.projects, (newProjects) => {
 watch(searchQuery, (query) => {
   if (projectSearchTimer) clearTimeout(projectSearchTimer)
   projectSearchTimer = setTimeout(() => {
-    projectPage.value = 1
-    store.fetchProjects({ page: 1, limit: store.projectsPagination.limit, query }).catch(() => {})
+    store.fetchProjects({ query }).catch(() => {})
   }, 180)
 })
 
@@ -215,15 +259,6 @@ function handleProjectClick(projectName) {
   router.push({
     name: 'cli-sessions',
     params: { platform: currentChannel.value, projectName }
-  })
-}
-
-function handleProjectPageChange(page) {
-  projectPage.value = page
-  return store.fetchProjects({
-    page,
-    limit: store.projectsPagination.limit,
-    query: searchQuery.value
   })
 }
 
@@ -271,10 +306,38 @@ async function handleNewProjectCommand() {
 async function handleGlobalSearch() {
   if (!globalSearchQuery.value) return
 
+  let projectName = null
+  if (globalSearchScope.value === 'current') {
+    projectName = currentSearchProject.value
+    if (!projectName) {
+      message.warning('当前没有可搜索的项目')
+      return
+    }
+  } else if (globalSearchScope.value === 'project') {
+    projectName = globalSearchProject.value
+    if (!projectName) {
+      message.warning('请选择要搜索的项目')
+      return
+    }
+  }
+
   globalSearching.value = true
   try {
-    const data = await searchSessionsGlobally(globalSearchQuery.value, 35, currentChannel.value)
-    globalSearchResults.value = data
+    const data = await searchSessionsGlobally(globalSearchQuery.value, 35, currentChannel.value, {
+      projectName,
+      limit: 35
+    })
+    const sessions = filterDisplayableSessions(
+      Array.isArray(data?.sessions) ? data.sessions : (Array.isArray(data) ? data : [])
+    )
+    globalSearchResults.value = {
+      ...(data && typeof data === 'object' && !Array.isArray(data) ? data : {}),
+      keyword: globalSearchQuery.value,
+      sessions,
+      totalMatches: sessions.reduce((sum, session) => sum + (Number(session.matchCount) || 0), 0),
+      scope: globalSearchScope.value,
+      projectName
+    }
   } catch (err) {
     message.error('搜索失败: ' + err.message)
   } finally {
@@ -282,9 +345,24 @@ async function handleGlobalSearch() {
   }
 }
 
-async function handleLaunchTerminalFromGlobal(projectName, sessionId) {
+async function handleGlobalProjectSearch(query) {
+  const normalizedQuery = String(query || '').trim()
+  if (!normalizedQuery) {
+    globalSearchProjectOptions.value = projectOptionsFor(orderedProjects.value)
+    return
+  }
   try {
-    const { copyResult } = await copySessionLaunchCommand(projectName, sessionId, currentChannel.value)
+    const data = await getProjects(currentChannel.value, { page: 1, limit: 50, query: normalizedQuery })
+    const projects = filterDisplayableProjects(data?.projects)
+    globalSearchProjectOptions.value = projectOptionsFor(projects)
+  } catch (_) {
+    // Keep the already loaded project choices usable when remote filtering fails.
+  }
+}
+
+async function handleLaunchTerminalFromGlobal(projectName, sessionId, channel = currentChannel.value) {
+  try {
+    const { copyResult } = await copySessionLaunchCommand(projectName, sessionId, channel || currentChannel.value)
     if (copyResult?.method === 'manual') {
       message.warning('自动复制失败，已弹出手动复制框')
     } else {
@@ -321,12 +399,13 @@ watch(showGlobalSearch, (newVal) => {
   if (!newVal) {
     globalSearchQuery.value = ''
     globalSearchResults.value = null
+    globalSearchScope.value = 'workspace'
+    globalSearchProject.value = null
   }
 })
 
 // 监听 channel 变化
 watch(currentChannel, (newChannel) => {
-  projectPage.value = 1
   store.setChannel(newChannel)
   store.fetchProjects()
 }, { immediate: true })
@@ -340,6 +419,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (projectSearchTimer) clearTimeout(projectSearchTimer)
+  store.pauseProjectRefresh(mountedChannel)
   // 【暂时移除】清理事件监听
   // document.removeEventListener('visibilitychange', handleVisibilityChange)
   // window.removeEventListener('focus', handleWindowFocus)
@@ -443,11 +523,6 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 12px;
-}
-
-.list-pagination {
-  justify-content: center;
-  margin: 24px 0 8px;
 }
 
 /* 拖动时的半透明虚影 */

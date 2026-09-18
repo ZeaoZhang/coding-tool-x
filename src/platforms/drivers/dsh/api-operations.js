@@ -8,6 +8,7 @@ const { listSkills, getSkill, createSkill, updateSkill, deleteSkill } = require(
 const { installPlugin, uninstallPlugin, updatePlugin } = require('./plugin-manager');
 const { createDriver: createChannelsDriver } = require('./channels');
 const { createDriver: createProxyDriver } = require('./proxy');
+const { createDriver: createStatisticsDriver } = require('./statistics');
 
 function requiredId(value, label) {
   const id = String(value || '').trim();
@@ -74,7 +75,7 @@ function resultFor(context = {}, status, data, error, cause) {
   const result = {
     status,
     platform: context.platform || 'dsh',
-    capability: route.capability || 'api',
+    capability: route.capability || context.capability || 'api',
     operation: route.operation || context.operation
   };
   if (status === 'ok') result.data = data;
@@ -83,26 +84,116 @@ function resultFor(context = {}, status, data, error, cause) {
   return result;
 }
 
+function resolveProfileName(context = {}, requested = '') {
+  const profiles = listProfiles(context);
+  const requestedName = String(requested || '').trim();
+  if (requestedName) return requestedName;
+  const envProfile = String(process.env.DSH_PROFILE || '').trim();
+  if (envProfile && profiles.some(profile => profile.name === envProfile)) return envProfile;
+  return profiles.find(profile => profile.name === 'default')?.name || profiles[0]?.name || null;
+}
+
+function profileNameForRequest(context = {}, request = {}) {
+  return resolveProfileName(
+    context,
+    request.profile
+      || request.query?.profile
+      || request.body?.profile
+      || request.params?.profileName
+  );
+}
+
+function dshMcpConfigToSpec(config = {}) {
+  const transport = config.transport === 'streamable-http' ? 'streamable_http' : config.transport || 'stdio';
+  const spec = { type: transport };
+  if (transport === 'stdio') {
+    if (config.command) spec.command = config.command;
+    if (Array.isArray(config.args)) spec.args = [...config.args];
+    if (config.env && typeof config.env === 'object') spec.env = { ...config.env };
+  } else {
+    if (config.url) spec.url = config.url;
+    if (config.headers && typeof config.headers === 'object') spec.headers = { ...config.headers };
+  }
+  return spec;
+}
+
+function dshMcpSpecToConfig(spec = {}, serverName) {
+  const type = spec.type === 'streamable_http' ? 'streamable-http' : spec.type || 'stdio';
+  if (!['stdio', 'streamable-http'].includes(type)) {
+    throw new Error(`DSH MCP does not support transport: ${spec.type || type}`);
+  }
+  const config = { serverName, transport: type };
+  if (type === 'stdio') {
+    if (spec.command) config.command = spec.command;
+    if (Array.isArray(spec.args)) config.args = [...spec.args];
+    if (spec.env && typeof spec.env === 'object') config.env = { ...spec.env };
+  } else {
+    if (spec.url) config.url = spec.url;
+    if (spec.headers && typeof spec.headers === 'object') config.headers = { ...spec.headers };
+  }
+  return config;
+}
+
+function readDshMcpEntries(context = {}) {
+  const profile = resolveProfileName(context);
+  if (!profile) return {};
+  const result = listProfileMcp(context, profile);
+  const entries = {};
+  for (const server of result?.servers || []) {
+    if (!server?.id || server.disabled) continue;
+    entries[server.id] = dshMcpConfigToSpec(server.config || {});
+  }
+  return entries;
+}
+
+function promptContentFromDshConfig(config = {}) {
+  for (const key of ['content', 'prompt', 'text']) {
+    if (typeof config[key] === 'string') return config[key];
+  }
+  return [config.personaPrefix, config.personaSuffix]
+    .filter(value => typeof value === 'string' && value.trim())
+    .join('\n')
+    .trim();
+}
+
+function readDshPrompt(context = {}) {
+  const profile = resolveProfileName(context);
+  if (!profile) return '';
+  const result = listProfilePrompts(context, profile);
+  const prompt = [...(result?.prompts || [])]
+    .filter(entry => entry && entry.disabled !== true)
+    .pop();
+  return promptContentFromDshConfig(prompt?.config || {});
+}
+
+function dshCapabilityContext(context, capability, operation) {
+  return { ...context, capability, operation };
+}
+
 function createDriver(context = {}) {
   const native = createNativeConfigDriver(context);
   const projects = createProjectsDriver(context);
   const sessions = createSessionsDriver(context);
   const channels = createChannelsDriver(context);
   const proxy = createProxyDriver(context);
+  const statistics = createStatisticsDriver(context);
   const driver = {
     ...projects,
     ...sessions,
     platform: 'dsh',
-    capability: 'api'
+    capability: context.capability || 'api'
   };
 
   // Keep the aggregate DSH API driver compatible with the manifest consistency
   // contract. Actual descriptor requests are still dispatched by capability.
-  for (const operation of ['list', 'current', 'enabled', 'create', 'update', 'remove', 'applyToSettings', 'sync', 'order']) {
+  for (const operation of ['list', 'current', 'enabled', 'create', 'update', 'remove', 'applyToSettings', 'sync', 'order', 'models', 'probeModels', 'speedTest', 'speedTestAll']) {
     driver[operation] = (...args) => channels[operation](...args);
   }
   for (const operation of ['status', 'start', 'stop']) {
     driver[operation] = (...args) => proxy[operation](...args);
+  }
+  for (const operation of ['summary', 'today', 'daily']) {
+    driver[operation] = (...args) => statistics[operation](...args);
   }
 
   driver.getConfig = async request => resultFor(request, 'ok', native.getConfig());
@@ -203,6 +294,85 @@ function createDriver(context = {}) {
     );
     return resultFor(request, 'ok', patchResult(context, request, profileName, 'deletePrompt', patch));
   };
+
+  if (context.capability === 'mcp') {
+    const mcpContext = operation => dshCapabilityContext(context, 'mcp', operation);
+    driver.entries = () => resultFor(mcpContext('entries'), 'ok', readDshMcpEntries(context));
+    driver.read = () => resultFor(mcpContext('read'), 'ok', { mcpServers: readDshMcpEntries(context) });
+    driver.normalize = spec => resultFor(mcpContext('normalize'), 'ok', spec);
+    driver.sync = async server => {
+    const profileName = profileNameForRequest(context, server);
+    const id = String(server?.id || '').trim();
+    if (!id) throw new Error('MCP server id is required');
+    const patch = requirePatchResult(
+      upsertProfilePatchRow(context, profileName, {
+        id,
+        name: '@deepseek-ai/dsh-mcp-client',
+        config: dshMcpSpecToConfig(server.server || {}, id)
+      }),
+      profileName
+    );
+    return resultFor(mcpContext('sync'), 'ok', patch);
+  };
+  driver.remove = async serverId => {
+    const profileName = profileNameForRequest(context);
+    const id = String(serverId || '').trim();
+    if (!id) throw new Error('MCP server id is required');
+    if (!profileName) return resultFor(mcpContext('remove'), 'ok', true);
+    const patch = requirePatchResult(deleteProfilePatchRow(context, profileName, id), profileName);
+    return resultFor(mcpContext('remove'), 'ok', patch);
+  };
+    driver.import = async servers => {
+    const entries = readDshMcpEntries(context);
+    let count = 0;
+    for (const [id, spec] of Object.entries(entries)) {
+      if (servers[id]) {
+        servers[id].apps = { ...(servers[id].apps || {}), dsh: true };
+        continue;
+      }
+      const now = Date.now();
+      servers[id] = {
+        id,
+        name: id,
+        server: spec,
+        apps: { dsh: true },
+        createdAt: now,
+        updatedAt: now
+      };
+      count++;
+    }
+    return resultFor(mcpContext('import'), 'ok', count);
+    };
+  }
+
+  if (context.capability === 'prompts') {
+    const promptContext = operation => dshCapabilityContext(context, 'prompts', operation);
+    driver.read = () => resultFor(promptContext('read'), 'ok', readDshPrompt(context));
+    driver.write = async content => {
+    const profileName = profileNameForRequest(context);
+    if (!profileName) throw new Error('No DSH profile is available');
+    if (typeof content !== 'string') throw new Error('Prompt text must be a string');
+    const patch = requirePatchResult(
+      upsertProfilePatchRow(context, profileName, {
+        id: 'system-prompt',
+        name: '@deepseek-ai/dsh-system-prompt',
+        config: { personaPrefix: content }
+      }),
+      profileName
+    );
+    return resultFor(promptContext('write'), 'ok', patch);
+    };
+    driver.remove = async () => {
+    const profileName = profileNameForRequest(context);
+    if (!profileName) return resultFor(promptContext('remove'), 'ok', true);
+    const patch = requirePatchResult(
+      deleteProfilePatchRow(context, profileName, 'system-prompt'),
+      profileName
+    );
+    return resultFor(promptContext('remove'), 'ok', patch);
+    };
+  }
+
   driver.listSkills = async (request = {}) => resultFor(request, 'ok', listSkills(context, {
     profile: request.query?.profile,
     cwd: request.query?.cwd,

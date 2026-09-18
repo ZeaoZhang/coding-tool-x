@@ -157,6 +157,7 @@ function runInventoryWorker(source, indexDbPath, options = {}) {
         CC_TOOL_SESSION_HISTORY_SOURCE: source,
         CC_TOOL_SESSION_HISTORY_DB: indexDbPath,
         CC_TOOL_SESSION_HISTORY_FORCE: options.force === true ? '1' : '0',
+        CC_TOOL_SESSION_HISTORY_PROJECT_NAME: options.projectName || '',
         CC_TOOL_SESSION_HISTORY_PROJECTS_DIR: options.projectsDir || ''
       },
       silent: true,
@@ -228,6 +229,7 @@ function attachWorkerHandler() {
   const source = process.env.CC_TOOL_SESSION_HISTORY_SOURCE;
   const dbPath = process.env.CC_TOOL_SESSION_HISTORY_DB;
   const projectsDir = process.env.CC_TOOL_SESSION_HISTORY_PROJECTS_DIR || undefined;
+  const projectName = process.env.CC_TOOL_SESSION_HISTORY_PROJECT_NAME || undefined;
   const force = process.env.CC_TOOL_SESSION_HISTORY_FORCE === '1';
   if (!source || !dbPath) {
     process.exit(1);
@@ -246,7 +248,7 @@ function attachWorkerHandler() {
     _sendWorkerMessage(message, exitCode);
   };
 
-  index.ensureSourceIndexed(source, { consistency: 'complete', force })
+  index.ensureSourceIndexed(source, { consistency: 'complete', force, projectName })
     .then(() => finishWorker({ type: 'done' }, 0))
     .catch((err) => finishWorker({ type: 'error', error: _serializeWorkerError(err) }, 1));
 }

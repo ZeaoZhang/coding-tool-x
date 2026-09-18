@@ -24,6 +24,45 @@ export async function deletePlatformChannel(platform, channelId) {
   return response.data
 }
 
+// DSH channels
+export async function getDshChannels() {
+  return getPlatformChannels('dsh')
+}
+
+export async function createDshChannel(payload) {
+  return createPlatformChannel('dsh', payload)
+}
+
+export async function updateDshChannel(channelId, payload) {
+  return updatePlatformChannel('dsh', channelId, payload)
+}
+
+export async function deleteDshChannel(channelId) {
+  return deletePlatformChannel('dsh', channelId)
+}
+
+export async function syncCurrentDshChannel() {
+  const response = await client.post('/dsh/channels/sync')
+  return response.data
+}
+
+export async function applyDshChannelToSettings(channelId) {
+  const response = await client.post(`/dsh/channels/${encodeURIComponent(channelId)}/apply`)
+  return response.data
+}
+
+export async function testDshChannelSpeed(channelId, timeout = 20000) {
+  const response = await client.post(`/dsh/channels/${encodeURIComponent(channelId)}/speed-test`, { timeout })
+  return response.data
+}
+
+export async function fetchDshChannelModels(channelId, { forceRefresh = false } = {}) {
+  const response = await client.get(`/dsh/channels/${encodeURIComponent(channelId)}/models`, {
+    params: forceRefresh ? { forceRefresh: 'true' } : {}
+  })
+  return response.data
+}
+
 export async function getChannelAuth(tool, channelId = '') {
   const path = channelId
     ? `${platformChannelPath(tool)}/auth?channelId=${encodeURIComponent(channelId)}`

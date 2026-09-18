@@ -111,6 +111,7 @@ describe('prompts-service initialization and preset management', () => {
     expect(saved.apps).toEqual({
       claude: true,
       codex: true,
+      dsh: false,
       gemini: true,
       opencode: false,
       omp: true

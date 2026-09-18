@@ -66,23 +66,25 @@
         </div>
 
         <!-- Search Bar -->
-        <n-input
-          v-model:value="searchQuery"
-          placeholder="搜索会话..."
-          clearable
-          class="search-input"
-          @keyup.enter="handleSearch"
-          :disabled="searching"
-        >
-          <template #prefix>
-            <n-icon><SearchOutline /></n-icon>
-          </template>
-          <template #suffix>
-            <n-button text @click="handleSearch" :disabled="!searchQuery || searching" :loading="searching">
-              搜索
-            </n-button>
-          </template>
-        </n-input>
+        <div ref="searchInputContainer" class="search-input-container">
+          <n-input
+            v-model:value="searchQuery"
+            placeholder="搜索会话...（Cmd/Ctrl+K）"
+            clearable
+            class="search-input"
+            @keyup.enter="handleSearch"
+            :disabled="searching"
+          >
+            <template #prefix>
+              <n-icon><SearchOutline /></n-icon>
+            </template>
+            <template #suffix>
+              <n-button text @click="handleSearch" :disabled="!searchQuery || searching" :loading="searching">
+                搜索
+              </n-button>
+            </template>
+          </n-input>
+        </div>
       </div>
     </div>
 
@@ -399,6 +401,7 @@ const resolvedProjectName = ref(props.projectName)
 const effectiveProjectName = computed(() => resolvedProjectName.value || props.projectName)
 
 const searchQuery = ref('')
+const searchInputContainer = ref(null)
 const FULL_FORK_POINT = '__full__'
 const showAliasDialog = ref(false)
 const editingSession = ref(null)
@@ -906,12 +909,20 @@ watch([currentChannel, () => props.projectName], ([newChannel]) => {
 onMounted(() => {
   document.addEventListener('visibilitychange', handleVisibilityChange)
   window.addEventListener('focus', handleWindowFocus)
+  document.addEventListener('keydown', handleSearchShortcut)
 })
 
 onUnmounted(() => {
   document.removeEventListener('visibilitychange', handleVisibilityChange)
   window.removeEventListener('focus', handleWindowFocus)
+  document.removeEventListener('keydown', handleSearchShortcut)
 })
+
+function handleSearchShortcut(event) {
+  if (!(event.metaKey || event.ctrlKey) || String(event.key).toLowerCase() !== 'k') return
+  event.preventDefault()
+  searchInputContainer.value?.querySelector?.('input')?.focus?.()
+}
 </script>
 
 <style scoped>

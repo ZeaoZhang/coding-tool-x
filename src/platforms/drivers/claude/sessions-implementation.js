@@ -460,6 +460,7 @@ async function searchSessions(config, projectName, keyword, contextLength = 15, 
   const results = await getSessionHistoryIndex().searchSessions('claude', keyword, { projectName, contextLength, ...options, config });
   const aliases = loadAliases();
   return results.map(r => ({
+    ...r,
     sessionId: r.sessionId,
     alias: aliases[r.sessionId] || null,
     matchCount: r.matchCount,
@@ -486,18 +487,25 @@ async function getRecentSessions(config, limit = 5, options = {}) {
   }));
 }
 
-async function searchSessionsAcrossProjects(config, keyword, contextLength = 35) {
+async function searchSessionsAcrossProjects(config, keyword, limit = 35, options = {}) {
   const allResults = [];
+  const searchOptions = {
+    ...options,
+    contextLength: Number(options.contextLength) || 35,
+    limit: Math.max(1, Math.min(200, Number(limit) || 35)),
+    config,
+    projectName: options.projectName || null
+  };
 
   try {
-    const claudeResults = await getSessionHistoryIndex().searchSessions('claude', keyword, { contextLength });
+    const claudeResults = await getSessionHistoryIndex().searchSessions('claude', keyword, searchOptions);
     for (const r of claudeResults) allResults.push({ ...r, channel: 'claude' });
   } catch (_) {}
 
   try {
     if (fs.existsSync(CODEX_PROJECTS_DIR)) {
       const { searchSessions: codexSearch } = require('../codex/sessions-implementation');
-      const codexResults = await codexSearch(keyword);
+      const codexResults = await codexSearch(keyword, searchOptions);
       for (const r of codexResults) allResults.push({ ...r, channel: 'codex' });
     }
   } catch (_) {}
@@ -505,13 +513,24 @@ async function searchSessionsAcrossProjects(config, keyword, contextLength = 35)
   try {
     if (fs.existsSync(GEMINI_PROJECTS_DIR)) {
       const { searchSessions: geminiSearch } = require('../gemini/sessions-implementation');
-      const geminiResults = await geminiSearch(keyword, contextLength);
+      const geminiResults = await geminiSearch(keyword, searchOptions.contextLength, searchOptions);
       for (const r of geminiResults) allResults.push({ ...r, channel: 'gemini' });
     }
   } catch (_) {}
 
-  allResults.sort((a, b) => (b.matchCount || 0) - (a.matchCount || 0));
-  return allResults;
+  allResults.sort((a, b) => {
+    const updatedA = sessionTimestamp(a.updatedAt ?? a.lastUpdated ?? a.mtimeMs ?? a.mtime);
+    const updatedB = sessionTimestamp(b.updatedAt ?? b.lastUpdated ?? b.mtimeMs ?? b.mtime);
+    return updatedB - updatedA || String(a.sessionId || '').localeCompare(String(b.sessionId || ''));
+  });
+  return allResults.slice(0, searchOptions.limit);
+}
+
+function sessionTimestamp(value) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 function hasActualMessages(sessionFile) {
   if (!sessionFile || !fs.existsSync(sessionFile)) return false;

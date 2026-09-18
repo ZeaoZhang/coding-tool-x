@@ -96,10 +96,14 @@ function reportDriverFailure(result) {
 async function searchSessionsAcrossProjects(config = {}, keyword, limitOrOptions = 15, maybeOptions = {}) {
   const { limit, options } = resolveLimitAndOptions(limitOrOptions, maybeOptions);
   const spinner = ora(`[SEARCH] 正在搜索 "${keyword}"...`).start();
+  const operationOptions = { config };
+  for (const key of ['projectName', 'project', 'contextLength', 'force', 'consistency']) {
+    if (options[key] !== undefined) operationOptions[key] = options[key];
+  }
   const result = await invokeSessionOperation(
     config,
     'searchAcrossProjects',
-    [keyword, limit, { config }],
+    [keyword, limit, operationOptions],
     options
   );
   const searchResults = normalizeSearchResults(result);
@@ -128,7 +132,11 @@ async function searchSessionsAcrossProjects(config = {}, keyword, limitOrOptions
     return [];
   }
 
-  allResults.sort((a, b) => b.matchCount - a.matchCount);
+  allResults.sort((a, b) => {
+    const aUpdated = searchTimestamp(a.updatedAt ?? a.lastUpdated ?? a.mtimeMs ?? a.mtime);
+    const bUpdated = searchTimestamp(b.updatedAt ?? b.lastUpdated ?? b.mtimeMs ?? b.mtime);
+    return bUpdated - aUpdated || a.sessionId.localeCompare(b.sessionId);
+  });
   const totalMatches = allResults.reduce((sum, resultItem) => sum + resultItem.matchCount, 0);
 
   console.clear();
@@ -181,6 +189,13 @@ async function searchSessionsAcrossProjects(config = {}, keyword, limitOrOptions
   });
 
   return choices;
+}
+
+function searchTimestamp(value) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 /**

@@ -380,6 +380,7 @@ describe('mcp-service', () => {
       expect(saved.apps).toEqual({
         claude: true,
         codex: false,
+        dsh: false,
         gemini: false,
         opencode: false,
         omp: false
@@ -487,6 +488,7 @@ describe('mcp-service', () => {
         total: 2,
         claude: 1,
         codex: 1,
+        dsh: 0,
         gemini: 1,
         opencode: 0,
         omp: 0

@@ -72,4 +72,48 @@ describe('sessions project cache', () => {
     await Promise.all([first, second])
     expect(store.projects[0].name).toBe('deduped-project')
   })
+
+  it('ignores a late empty response from an older project request', async () => {
+    let resolveOld
+    let resolveCurrent
+    projectApi.getProjects
+      .mockImplementationOnce(() => new Promise(resolve => {
+        resolveOld = resolve
+      }))
+      .mockImplementationOnce(() => new Promise(resolve => {
+        resolveCurrent = resolve
+      }))
+
+    const store = useSessionsStore()
+    store.setChannel('late-empty')
+    const oldRequest = store.fetchProjects({ force: true })
+    const currentRequest = store.fetchProjects({ force: true })
+
+    resolveCurrent(projectResponse('current-project'))
+    await currentRequest
+    expect(store.projects[0].name).toBe('current-project')
+
+    resolveOld({ projects: [], currentProject: null, meta: {} })
+    await oldRequest
+    expect(store.projects[0].name).toBe('current-project')
+  })
+
+  it('does not expose projects whose name and path are unknown', async () => {
+    projectApi.getProjects.mockResolvedValue({
+      projects: [
+        { name: 'unknown', displayName: 'unknown', fullPath: '', sessionCount: 9 },
+        { name: 'known-project', displayName: 'Known project', fullPath: '/tmp/known-project', sessionCount: 1 }
+      ],
+      currentProject: 'unknown',
+      meta: { refreshing: false, fallback: false, stale: false }
+    })
+
+    const store = useSessionsStore()
+    store.setChannel('codex')
+    await store.fetchProjects()
+
+    expect(store.projects.map(project => project.name)).toEqual(['known-project'])
+    expect(store.currentProject).toBe('known-project')
+  })
+
 })

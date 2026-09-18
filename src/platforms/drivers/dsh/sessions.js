@@ -456,14 +456,14 @@ function createDriver(context = {}) {
       return matches.length ? [{ ...summary(artifact), matchCount: matches.length, matches }] : [];
     });
   };
-  const searchAllProjects = (keyword, limit = 35) => {
-    const all = readFull().flatMap(artifact => {
+  const searchAllProjects = (keyword, limit = 35, projectName = null) => {
+    const all = readFull().filter(artifact => !projectName || artifact.projectName === projectName).flatMap(artifact => {
       const matches = artifact.events.map((event, index) => ({ event, index, text: eventText(event) }))
         .filter(entry => entry.text && entry.text.toLowerCase().includes(String(keyword || '').toLowerCase()))
         .map(entry => ({ line: entry.index + 2, text: entry.text.slice(0, Math.max(20, Number(limit) || 35) * 20) }));
       return matches.length ? [{ ...summary(artifact), matchCount: matches.length, matches }] : [];
     });
-    return all.sort((left, right) => right.matchCount - left.matchCount).slice(0, Math.max(1, Number(limit) || 35));
+    return all.sort((left, right) => right.updatedAt - left.updatedAt || left.sessionId.localeCompare(right.sessionId)).slice(0, Math.max(1, Number(limit) || 35));
   };
   const messagesForSession = (sessionId, options = {}) => {
     const artifact = getById(sessionId);
@@ -542,9 +542,13 @@ function createDriver(context = {}) {
     searchAcrossProjects(requestOrKeyword, limit = 35, options = {}) {
       if (requestOrKeyword && typeof requestOrKeyword === 'object') {
         const request = requestOrKeyword;
-        return searchAllProjects(request.query?.keyword || request.query?.q || '', Number(request.query?.limit) || 35);
+        return searchAllProjects(
+          request.query?.keyword || request.query?.q || '',
+          Number(request.query?.limit) || 35,
+          request.query?.projectName || request.query?.project || null
+        );
       }
-      return searchAllProjects(requestOrKeyword, limit);
+      return searchAllProjects(requestOrKeyword, limit, options.projectName || options.project || null);
     },
     messages(requestOrSessionId, options = {}) {
       if (requestOrSessionId && typeof requestOrSessionId === 'object') {

@@ -23,7 +23,7 @@
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
-        <n-button text :focusable="false" @click="loadData(true)" :loading="loading" class="action-btn">
+        <n-button text :focusable="false" @click="handleRefresh" :loading="refreshing" class="action-btn">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
           刷新
         </n-button>
@@ -41,7 +41,7 @@
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
-        <n-button text :focusable="false" @click="loadData(true)" :loading="loading" class="action-btn">
+        <n-button text :focusable="false" @click="handleRefresh" :loading="refreshing" class="action-btn">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
           刷新
         </n-button>
@@ -120,12 +120,13 @@
       :platform="currentPlatform"
       :project-path="props.projectPath"
       :capabilities="capabilities"
-      @updated="loadData"
+      @updated="handleRepositoriesUpdated"
     />
     <PluginDetailDrawer
       v-model:visible="detailDrawerVisible"
       :plugin="selectedPlugin"
       :platform="currentPlatform"
+      :project-path="props.projectPath"
       @updated="loadData"
     />
   </div>
@@ -136,7 +137,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { NButton, NIcon, NInput, NSelect, NSpin, NEmpty, useMessage } from 'naive-ui'
 import { ArrowBackOutline, GitBranchOutline, RefreshOutline, SearchOutline, ExtensionPuzzleOutline, InformationCircleOutline, CloudDownloadOutline } from '@vicons/ionicons5'
-import { getPlugins, getMarketPlugins, getPluginCapabilities, installPlugin, uninstallPlugin, syncPluginRepos } from '../api/plugins'
+import { getPlugins, getMarketPlugins, getPluginCapabilities, installPlugin, uninstallPlugin, refreshPlugins, getPluginRefreshTask, invalidatePluginSessionCache } from '../api/plugins'
 import { importFromClaude } from '../api/config-registry'
 import PluginCard from './PluginCard.vue'
 import PluginRepoManager from './PluginRepoManager.vue'
@@ -169,6 +170,7 @@ const selectedPlugin = ref(null)
 const installingKeys = ref({})
 const uninstallingKeys = ref({})
 const importing = ref(false)
+const refreshing = ref(false)
 const loadRequestId = ref(0)
 const capabilities = ref({
   supportsPlugins: true,
@@ -284,7 +286,7 @@ async function loadCapabilities(platform, requestId) {
   return true
 }
 
-async function loadData(force = false) {
+async function loadData() {
   const requestId = ++loadRequestId.value
   const platform = currentPlatform.value
   if (!supportsCurrentPlatform.value) {
@@ -303,18 +305,17 @@ async function loadData(force = false) {
       return
     }
 
-    if (force && capabilities.value.syncRepos) {
-      await syncPluginRepos(platform, requestContext()).catch(() => {})
-      if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return
-    }
-
-    const installedRes = await getPlugins(platform, {
-      ...(props.projectPath ? { cwd: props.projectPath } : {})
-    })
+    const requestOptions = requestContext()
+    const [installedRes, marketRes] = await Promise.all([
+      getPlugins(platform, requestOptions),
+      capabilities.value.market
+        ? getMarketPlugins(platform, false, requestOptions)
+        : Promise.resolve({ success: true, plugins: [] })
+    ])
     if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return
 
     const installedList = installedRes.success ? installedRes.plugins : []
-    let marketList = []
+    const marketList = marketRes.success ? marketRes.plugins : []
 
     const mergePluginLists = (installed, market) => {
       const marketById = {}
@@ -364,18 +365,6 @@ async function loadData(force = false) {
     }
 
     plugins.value = mergePluginLists(installedList, marketList)
-
-    if (capabilities.value.market) {
-      getMarketPlugins(platform, force, {
-        ...(props.projectPath ? { cwd: props.projectPath } : {})
-      })
-        .catch(() => ({ success: true, plugins: [] }))
-        .then((marketRes) => {
-          if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return
-          marketList = marketRes.success ? marketRes.plugins : []
-          plugins.value = mergePluginLists(installedList, marketList)
-        })
-    }
   } catch (err) {
     if (requestId === loadRequestId.value && platform === currentPlatform.value) {
       message.error('加载插件失败: ' + err.message)
@@ -387,6 +376,40 @@ async function loadData(force = false) {
   }
 }
 
+async function waitForRefreshTask(task, platform) {
+  if (!task?.id) return task
+  let current = task
+  while (current && ['queued', 'running'].includes(current.status)) {
+    await new Promise(resolve => setTimeout(resolve, 250))
+    const result = await getPluginRefreshTask(current.id, {
+      platform,
+      ...requestContext()
+    })
+    current = result.task
+  }
+  return current
+}
+
+async function handleRefresh() {
+  if (refreshing.value || !supportsCurrentPlatform.value) return
+  const platform = currentPlatform.value
+  refreshing.value = true
+  try {
+    const result = await refreshPlugins(platform, requestContext())
+    const task = await waitForRefreshTask(result.task, platform)
+    if (task?.status === 'failed') {
+      message.error(task.error || '插件缓存刷新失败，已保留旧缓存')
+    } else if (task?.status === 'partial') {
+      message.warning('插件缓存已部分更新，未成功的内容保留旧缓存')
+    }
+    await loadData()
+  } catch (err) {
+    message.error('插件缓存刷新失败: ' + err.message)
+  } finally {
+    refreshing.value = false
+  }
+}
+
 async function handleImport() {
   if (!supportsCurrentPlatform.value || currentPlatform.value !== 'claude') return
   importing.value = true
@@ -394,7 +417,8 @@ async function handleImport() {
     const res = await importFromClaude('plugins')
     if (res.success) {
       message.success(`成功导入 ${res.imported} 个插件`)
-      await loadData(true)
+      invalidatePluginSessionCache(currentPlatform.value)
+      await loadData()
     } else {
       message.error(res.message || '导入失败')
     }
@@ -403,6 +427,11 @@ async function handleImport() {
   } finally {
     importing.value = false
   }
+}
+
+function handleRepositoriesUpdated() {
+  invalidatePluginSessionCache(currentPlatform.value)
+  loadData()
 }
 
 async function handleInstall(plugin) {
@@ -442,6 +471,7 @@ async function handleInstall(plugin) {
       )
     if (res.success) {
       message.success(`插件 "${plugin.name}" 安装成功`)
+      invalidatePluginSessionCache(currentPlatform.value)
       const idx = plugins.value.findIndex(p => p.key === plugin.key)
       if (idx !== -1) {
         plugins.value[idx] = {
@@ -466,6 +496,7 @@ async function handleUninstall(plugin) {
     )
     if (res.success) {
       message.success(`插件 "${plugin.name}" 已卸载`)
+      invalidatePluginSessionCache(currentPlatform.value)
       const idx = plugins.value.findIndex(p => p.key === plugin.key)
       if (idx !== -1) {
         plugins.value[idx] = {

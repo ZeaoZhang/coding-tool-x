@@ -317,6 +317,10 @@ class SkillService {
     this.storageDir = state.localSkills || platformConfig.storageDir;
     this.reposConfigPath = state.skillRepos || platformConfig.reposFile;
     this.cachePath = state.skillCaches || platformConfig.cacheFile;
+    this.metadataIndexPath = path.join(
+      path.dirname(this.cachePath),
+      `${this.platform}-skill-metadata-index.json`
+    );
     this.artifactStore = artifactStore || (
       PATHS.skillArtifacts
         ? new SkillArtifactStore({ root: PATHS.skillArtifacts })
@@ -343,6 +347,8 @@ class SkillService {
     this._remoteSkillsCache = null;
     this._remoteSkillsFetchedAt = 0;
     this._legacyMigrationChecked = false;
+    this._skillMetadataIndex = null;
+    this._skillMetadataIndexDirty = false;
 
     this.githubTokenCache = new Map();
 
@@ -355,7 +361,7 @@ class SkillService {
     return this.runtime?.getDriver?.('dsh', 'api') || null;
   }
 
-  _normalizeDshSkill(skill = {}) {
+  _normalizeDshSkill(skill = {}, includeContent = false) {
     const sourceScope = String(skill.source || '').startsWith('project-') ? 'project' : 'user';
     const sourcePath = skill.path || '';
     const controlKey = `dsh:${sourceScope}:${skill.name || sourcePath}`;
@@ -386,7 +392,7 @@ class SkillService {
       invocation: skill.invocation || null,
       ...(skill.whenToUse ? { whenToUse: skill.whenToUse } : {}),
       ...(skill.metadata ? { metadata: skill.metadata } : {}),
-      ...(skill.content !== undefined ? { content: skill.content } : {})
+      ...(includeContent && skill.content !== undefined ? { content: skill.content } : {})
     };
   }
 
@@ -406,16 +412,37 @@ class SkillService {
       throw new Error(result?.error || 'DSH Skills are unavailable');
     }
     const scope = options.scope || 'user';
-    const skills = (Array.isArray(result.data?.skills) ? result.data.skills : [])
+    const nativeSkills = (Array.isArray(result.data?.skills) ? result.data.skills : [])
       .filter(skill => {
         const isProject = String(skill.source || '').startsWith('project-');
         return scope === 'project' ? isProject : !isProject;
       })
-      .map(skill => this._normalizeDshSkill(skill));
+      .map(skill => this._normalizeDshSkill(skill, false));
+    const remoteSkills = [
+      ...this._artifactSkills({ ...options, scope }),
+      ...(options.includeRemote === false ? [] : this._legacyCachedSkills({ ...options, scope }))
+    ];
+    const seenNames = new Set(nativeSkills.map(skill => skill.name || skill.directory).filter(Boolean));
+    const skills = [
+      ...nativeSkills,
+      ...remoteSkills.filter(skill => {
+        const name = skill.name || skill.directory;
+        if (!name || seenNames.has(name)) return false;
+        seenNames.add(name);
+        return true;
+      })
+    ];
     return {
-      skills,
-      refresh: { state: 'unsupported', taskId: null, fetchedAt: null, error: null }
+      skills: skills.map(skill => this._sanitizeSkillListItem(skill)),
+      refresh: this._refreshSnapshot({ ...options, scope })
     };
+  }
+
+  _sanitizeSkillListItem(skill = {}) {
+    const sanitized = { ...skill };
+    delete sanitized.content;
+    delete sanitized.fullContent;
+    return sanitized;
   }
 
   refreshOmpPaths() {
@@ -515,6 +542,96 @@ class SkillService {
     return value.map(skill => ({ ...skill }));
   }
 
+  _readSkillFrontmatter(skillPath) {
+    const resolvedPath = path.resolve(skillPath);
+    let stat;
+    try {
+      stat = fs.statSync(resolvedPath);
+    } catch {
+      return {};
+    }
+    const index = this._loadSkillMetadataIndex();
+    const cached = index[resolvedPath];
+    if (
+      cached
+      && Number(cached.mtimeMs) === Number(stat.mtimeMs)
+      && Number(cached.size) === Number(stat.size)
+      && cached.metadata
+    ) {
+      return { ...cached.metadata };
+    }
+
+    let metadata = {};
+    const fd = fs.openSync(skillPath, 'r');
+    try {
+      const chunks = [];
+      const buffer = Buffer.alloc(8192);
+      let total = 0;
+      const maxBytes = 128 * 1024;
+      while (total < maxBytes) {
+        const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, total);
+        if (!bytesRead) break;
+        chunks.push(buffer.subarray(0, bytesRead));
+        total += bytesRead;
+        const partial = Buffer.concat(chunks).toString('utf8');
+        const header = partial.match(/^---\s*\r?\n[\s\S]*?\r?\n---(?:\s*\r?\n|$)/)?.[0];
+        if (header) {
+          const parsed = this.parseSkillMd(header);
+          metadata = {
+            ...(parsed.name ? { name: parsed.name } : {}),
+            ...(parsed.description ? { description: parsed.description } : {}),
+            ...(parsed.shortDescription ? { shortDescription: parsed.shortDescription } : {}),
+            ...(parsed.allowedTools ? { allowedTools: parsed.allowedTools } : {}),
+            ...(parsed.license ? { license: parsed.license } : {}),
+            ...(parsed.metadata ? { metadata: parsed.metadata } : {}),
+            ...(parsed.format ? { format: parsed.format } : {})
+          };
+          break;
+        }
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+    index[resolvedPath] = {
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+      metadata
+    };
+    this._skillMetadataIndexDirty = true;
+    return { ...metadata };
+  }
+
+  _loadSkillMetadataIndex() {
+    if (this._skillMetadataIndex) return this._skillMetadataIndex;
+    this._skillMetadataIndex = {};
+    try {
+      if (fs.existsSync(this.metadataIndexPath)) {
+        const parsed = JSON.parse(fs.readFileSync(this.metadataIndexPath, 'utf8'));
+        if (parsed && typeof parsed.entries === 'object' && !Array.isArray(parsed.entries)) {
+          this._skillMetadataIndex = parsed.entries;
+        }
+      }
+    } catch {
+      this._skillMetadataIndex = {};
+    }
+    return this._skillMetadataIndex;
+  }
+
+  _saveSkillMetadataIndex() {
+    if (!this._skillMetadataIndexDirty) return;
+    const tempPath = `${this.metadataIndexPath}.tmp-${process.pid}-${Date.now()}`;
+    try {
+      fs.mkdirSync(path.dirname(this.metadataIndexPath), { recursive: true });
+      fs.writeFileSync(tempPath, JSON.stringify({ version: 1, entries: this._loadSkillMetadataIndex() }), 'utf8');
+      fs.renameSync(tempPath, this.metadataIndexPath);
+      this._skillMetadataIndexDirty = false;
+    } catch {
+      try {
+        if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+      } catch (_) {}
+    }
+  }
+
   _artifactSkills(options = {}) {
     if (!this.artifactStore || typeof this.artifactStore.list !== 'function') return [];
     const artifacts = this.artifactStore.list({ platform: this.platform });
@@ -529,7 +646,7 @@ class SkillService {
       const skillPath = path.join(artifact.root, 'SKILL.md');
       try {
         if (!fs.existsSync(skillPath) || fs.lstatSync(skillPath).isSymbolicLink()) return null;
-        const metadata = this.parseSkillMd(fs.readFileSync(skillPath, 'utf8'));
+        const metadata = this._readSkillFrontmatter(skillPath);
         const rawSourceProvider = artifact.sourceProvider || 'remote';
         const sourceProvider = rawSourceProvider === 'remote'
           ? (artifact.repoProvider || 'remote')
@@ -1039,7 +1156,12 @@ class SkillService {
     const missingControls = this._controlOnlySkills(normalizedOptions, knownControlKeys);
     const skills = [...controlled, ...missingControls];
     this.deduplicateSkills(skills);
-    const preparedSkills = this._storePrepared(cacheKey, skills, generation);
+    const preparedSkills = this._storePrepared(
+      cacheKey,
+      skills.map(skill => this._sanitizeSkillListItem(skill)),
+      generation
+    );
+    this._saveSkillMetadataIndex();
     return {
       skills: preparedSkills,
       refresh: this._refreshSnapshot(normalizedOptions)
@@ -2282,8 +2404,7 @@ class SkillService {
     if (fs.existsSync(skillMdPath)) {
       try {
         if (fs.lstatSync(skillMdPath).isSymbolicLink()) return;
-        const content = fs.readFileSync(skillMdPath, 'utf-8');
-        const metadata = this.parseSkillMd(content);
+        const metadata = this._readSkillFrontmatter(skillMdPath);
         const fullDirectory = normalizeRepoPath(path.relative(repoRoot, currentDir));
         const directory = this.resolveSkillDirectory(fullDirectory, repo.directory || '', repo);
 
@@ -3014,8 +3135,7 @@ class SkillService {
       }
 
       try {
-        const content = fs.readFileSync(skillMdPath, 'utf-8');
-        const metadata = this.parseSkillMd(content);
+        const metadata = this._readSkillFrontmatter(skillMdPath);
         const sourceKey = protectedSkill
           ? `system:${this.platform}:${directory}`
           : (sourceProvider === 'native'
@@ -3532,7 +3652,7 @@ ${content}
       if (result?.status !== 'ok' || !result.data?.skill) {
         throw new Error(result?.error || `DSH skill not found: ${directory}`);
       }
-      return this._normalizeDshSkill(result.data.skill);
+      return this._normalizeDshSkill(result.data.skill, true);
     }
     const safeDirectory = this.normalizeSkillDirectory(directory);
     const scope = options.scope || 'user';

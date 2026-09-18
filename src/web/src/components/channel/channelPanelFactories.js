@@ -58,6 +58,16 @@ import {
   fetchOmpCatalogMetadata,
   testOmpChannelSpeed
 } from '../../api/channels'
+import {
+  getDshChannels,
+  createDshChannel,
+  updateDshChannel,
+  deleteDshChannel,
+  applyDshChannelToSettings,
+  syncCurrentDshChannel,
+  fetchDshChannelModels,
+  testDshChannelSpeed
+} from '../../api/channels'
 import { useDefaultModels } from '../../composables/useDefaultModels.js'
 import { resolveErrorMessage } from '../../utils/error-message'
 
@@ -454,6 +464,211 @@ const baseSections = {
 }
 
 const channelPanelFactories = {
+  dsh: () => ({
+    type: 'dsh',
+    displayName: 'DSH',
+    schedulerSource: 'dsh',
+    storageKeys: {
+      localCollapse: 'dshChannelCollapse',
+      collapseConfigKey: 'dsh',
+      orderConfigKey: 'dsh'
+    },
+    emptyDescription: '暂无 DSH 渠道',
+    showEmptyAction: true,
+    emptyActionText: '添加 DSH 渠道',
+    addTitle: '添加 DSH 渠道',
+    editTitle: '编辑 DSH 渠道',
+    modalWidth: 600,
+    formLabelWidth: 95,
+    showApplyButton: true,
+    formSections: [
+      {
+        title: '基本信息',
+        fields: [
+          { key: 'name', label: '渠道名称', type: 'text', required: true, placeholder: '显示名称' },
+          {
+            key: 'providerKey',
+            label: 'Provider Key',
+            type: 'text',
+            required: true,
+            disabledOnEdit: true,
+            placeholder: '英文标识，如 deepseek-official',
+            validate: validateProviderKey
+          },
+          {
+            key: 'providerApi',
+            label: '上游 API',
+            type: 'select',
+            options: [
+              { label: 'OpenAI Chat Completions', value: 'openai-completions' },
+              { label: 'OpenAI Responses', value: 'openai-responses' },
+              { label: 'Anthropic Messages', value: 'anthropic-messages' }
+            ]
+          },
+          {
+            key: 'baseUrl',
+            label: 'Base URL',
+            type: 'text',
+            required: true,
+            placeholder: 'https://api.example.com/v1',
+            validate: value => validateHttpUrl('Base URL', value, { required: true })
+          },
+          {
+            key: 'apiKey',
+            label: 'API Key',
+            type: 'password',
+            required: true,
+            placeholder: 'sk-...'
+          },
+          {
+            key: 'apiKeyEnv',
+            label: 'Key 环境变量',
+            type: 'text',
+            placeholder: 'CTX_DSH_PROVIDER_API_KEY'
+          },
+          {
+            key: 'model',
+            label: '默认模型',
+            type: 'select',
+            required: true,
+            placeholder: '输入或选择默认模型'
+          },
+          {
+            key: 'models',
+            label: '可用模型',
+            type: 'model-multi-select',
+            required: true,
+            placeholder: '输入模型名称后回车，可多选'
+          },
+          {
+            key: 'speedTestModel',
+            label: '测速模型',
+            type: 'select',
+            placeholder: '留空则使用默认模型',
+            options: getToolModelOptions('dsh'),
+            clearable: true
+          }
+        ]
+      },
+      {
+        title: '模型重定向',
+        description: '将代理收到的模型名重定向到该渠道的实际模型。',
+        collapsible: true,
+        fields: [{ key: 'modelRedirects', type: 'model-redirect', fullWidth: true }]
+      },
+      {
+        title: '调度配置',
+        fields: baseSections.schedule
+      }
+    ],
+    getInitialForm: () => ({
+      name: 'DSH 渠道',
+      providerKey: '',
+      providerApi: 'openai-completions',
+      baseUrl: '',
+      apiKey: '',
+      apiKeyEnv: '',
+      model: '',
+      models: [],
+      speedTestModel: '',
+      modelRedirects: [],
+      maxConcurrency: null,
+      weight: 1,
+      enabled: true,
+      availableModels: [],
+      modelsFetching: false,
+      modelsFetchError: null,
+      modelsFetchErrorHint: null
+    }),
+    mapChannelToForm: channel => ({
+      name: channel.name || '',
+      providerKey: channel.providerKey || '',
+      providerApi: channel.providerApi || 'openai-completions',
+      baseUrl: channel.baseUrl || '',
+      apiKey: channel.apiKey || '',
+      apiKeyEnv: channel.apiKeyEnv || '',
+      model: channel.model || channel.models?.[0]?.id || '',
+      models: Array.isArray(channel.models)
+        ? channel.models.map(item => typeof item === 'string' ? item : item?.id).filter(Boolean)
+        : [],
+      speedTestModel: channel.speedTestModel || '',
+      modelRedirects: channel.modelRedirects || [],
+      maxConcurrency: channel.maxConcurrency ?? null,
+      weight: channel.weight || 1,
+      enabled: channel.enabled !== false,
+      availableModels: [],
+      modelsFetching: false,
+      modelsFetchError: null,
+      modelsFetchErrorHint: null
+    }),
+    fetchModelsForChannel: async (channelId, form, { forceRefresh = false } = {}) => {
+      await loadDefaultModels()
+      const defaultOptions = getToolModelOptions('dsh')
+      if (!channelId) {
+        form.availableModels = defaultOptions
+        return
+      }
+      const result = await fetchDshChannelModels(channelId, { forceRefresh })
+      const models = Array.isArray(result?.models)
+        ? result.models.map(model => typeof model === 'string' ? model : model?.id).filter(Boolean)
+        : []
+      form.availableModels = mergeModelOptions(buildModelOptions(models), defaultOptions)
+      if (result?.fallbackUsed || result?.disabledByConfig) {
+        form.modelsFetchError = result.error || '无法自动获取模型列表'
+        form.modelsFetchErrorHint = result.errorHint || '已使用本地默认模型列表，也可以手动填写模型名称'
+      }
+    },
+    testFn: testDshChannelSpeed,
+    api: {
+      fetch: async () => normalizeChannelList(await getDshChannels()),
+      syncCurrent: syncCurrentDshChannel,
+      create: form => createDshChannel({
+        name: form.name,
+        providerKey: form.providerKey,
+        providerApi: form.providerApi,
+        baseUrl: form.baseUrl,
+        apiKey: form.apiKey,
+        apiKeyEnv: form.apiKeyEnv || undefined,
+        model: form.model,
+        models: form.models,
+        speedTestModel: form.speedTestModel || null,
+        modelRedirects: form.modelRedirects || [],
+        maxConcurrency: normalizeConcurrency(form.maxConcurrency),
+        weight: normalizeWeight(form.weight),
+        enabled: form.enabled
+      }),
+      update: (channel, form) => updateDshChannel(channel.id, {
+        name: form.name,
+        providerApi: form.providerApi,
+        baseUrl: form.baseUrl,
+        apiKey: form.apiKey,
+        apiKeyEnv: form.apiKeyEnv || undefined,
+        model: form.model,
+        models: form.models,
+        speedTestModel: form.speedTestModel || null,
+        modelRedirects: form.modelRedirects || [],
+        maxConcurrency: normalizeConcurrency(form.maxConcurrency),
+        weight: normalizeWeight(form.weight),
+        enabled: form.enabled
+      }),
+      toggle: (channel, enabled) => updateDshChannel(channel.id, { enabled }),
+      remove: deleteDshChannel,
+      applyToSettings: channel => applyDshChannelToSettings(channel.id)
+    },
+    getHeaderTags: (channel, helpers) => {
+      const tags = []
+      if (channel.health?.status === 'checking') tags.push({ text: '检测中', type: 'warning' })
+      if (channel.proxy) tags.push({ text: '代理中', type: 'info' })
+      return tags
+    },
+    buildInfoRows: (channel, helpers) => [
+      { label: 'Provider', value: channel.providerKey || '(未设置)', mono: true },
+      { label: 'API', value: channel.providerApi || 'openai-completions', mono: true },
+      { label: 'Model', value: channel.model || '(未设置)', mono: true },
+      { label: 'URL', value: channel.baseUrl, mono: true },
+      { label: 'Key', value: helpers.maskApiKey(channel.apiKey), mono: true }
+    ]
+  }),
   claude: () => ({
     type: 'claude',
     displayName: 'Claude',

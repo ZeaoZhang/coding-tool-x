@@ -68,18 +68,23 @@ export async function saveSessionOrder(projectName, order, channel = 'claude') {
   return response.data
 }
 
-export async function searchSessions(projectName, keyword, contextLength = 15, channel = 'claude') {
+export async function searchSessions(projectName, keyword, contextLength = 15, channel = 'claude', options = {}) {
   const prefix = getChannelPrefix(channel)
-  const response = await client.get(`${prefix}/sessions/${projectName}/search`, {
-    params: { keyword, context: contextLength }
+  const params = { keyword, context: contextLength }
+  if (options.limit != null) params.limit = options.limit
+  const response = await client.get(`${prefix}/sessions/${encodeURIComponent(projectName)}/search`, {
+    params
   })
   return response.data
 }
 
-export async function searchSessionsGlobally(keyword, contextLength = 35, channel = 'claude') {
+export async function searchSessionsGlobally(keyword, contextLength = 35, channel = 'claude', options = {}) {
   const prefix = getChannelPrefix(channel)
+  const params = { keyword, context: contextLength }
+  if (options.limit != null) params.limit = options.limit
+  if (options.projectName) params.projectName = options.projectName
   const response = await client.get(`${prefix}/sessions/search/global`, {
-    params: { keyword, context: contextLength }
+    params
   })
   return response.data
 }

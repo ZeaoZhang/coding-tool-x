@@ -67,11 +67,27 @@ function createDriver(context = {}) {
         contextLength,
         options
       ),
-      searchAcrossProjects: (service, keyword, limit, options = {}) => service.searchSessionsAcrossProjects(
-        options.config || {},
-        keyword,
-        limit
-      )
+      searchAcrossProjects: (service, requestOrKeyword, limit, options = {}) => {
+        if (requestOrKeyword && typeof requestOrKeyword === 'object' && !Array.isArray(requestOrKeyword)) {
+          const request = requestOrKeyword;
+          const query = request.query || {};
+          const requestLimit = Number.parseInt(query.limit, 10) || 35;
+          return service.searchSessionsAcrossProjects(
+            request.config || options.config || {},
+            query.keyword || query.q || query.query || '',
+            requestLimit,
+            {
+              ...request,
+              ...options,
+              config: request.config || options.config || {},
+              projectName: query.projectName || query.project || null,
+              limit: requestLimit,
+              contextLength: Number(query.context) || 35
+            }
+          );
+        }
+        return service.searchSessionsAcrossProjects(options.config || {}, requestOrKeyword, limit, options);
+      }
     },
     onSuccess: operation => {
       if (['delete', 'fork', 'saveSessionOrder'].includes(operation)) {

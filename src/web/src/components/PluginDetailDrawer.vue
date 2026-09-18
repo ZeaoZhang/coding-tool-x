@@ -27,7 +27,7 @@
       </template>
 
       <div class="asset-detail-body">
-        <n-tabs type="line" animated class="asset-detail-tabs">
+        <n-tabs v-model:value="activeTab" type="line" animated class="asset-detail-tabs">
           <n-tab-pane name="overview" tab="概览">
             <div class="asset-detail-container">
               <div class="asset-detail-info-section">
@@ -118,6 +118,10 @@ const props = defineProps({
   platform: {
     type: String,
     default: 'claude'
+  },
+  projectPath: {
+    type: String,
+    default: ''
   }
 })
 
@@ -131,6 +135,8 @@ const visible = computed({
 const readmeContent = ref('')
 const loadingReadme = ref(false)
 const readmeRequestId = ref(0)
+const activeTab = ref('overview')
+const readmeLoadedKey = ref('')
 
 const isRemoteRepoLink = computed(() => /^(https?:)?\/\//.test(props.plugin?.repoUrl || props.plugin?.gitUrl || ''))
 const pluginPath = computed(() => props.plugin?.installPath || props.plugin?.fullPath || props.plugin?.path || props.plugin?.directory || '')
@@ -142,14 +148,24 @@ const bodyContentStyle = {
   overflow: 'hidden'
 }
 
-watch(() => [props.visible, props.plugin, props.platform], async ([newVisible, plugin, platform]) => {
-  const requestId = ++readmeRequestId.value
-  if (!newVisible || !plugin) {
-    loadingReadme.value = false
-    readmeContent.value = ''
-    return
-  }
+function readmeKey(plugin, platform) {
+  if (!plugin) return ''
+  return [
+    platform,
+    plugin.pluginId || plugin.id || plugin.name || '',
+    plugin.repoId || '',
+    plugin.directory || ''
+  ].join(':')
+}
 
+async function loadReadme() {
+  const plugin = props.plugin
+  const platform = props.platform
+  if (!props.visible || !plugin) return
+  const key = readmeKey(plugin, platform)
+  if (readmeLoadedKey.value === key) return
+
+  const requestId = ++readmeRequestId.value
   loadingReadme.value = true
   try {
     const repoInfo = {
@@ -166,18 +182,38 @@ watch(() => [props.visible, props.plugin, props.platform], async ([newVisible, p
       repoLocalPath: plugin.repoLocalPath,
       installPath: plugin.installPath
     }
-    const response = await getPluginReadme(plugin.name, repoInfo, platform)
+    const response = await getPluginReadme(plugin.name, repoInfo, platform, {
+      scope: props.projectPath ? 'project' : 'user',
+      ...(props.projectPath ? { cwd: props.projectPath } : {})
+    })
     if (requestId !== readmeRequestId.value) return
     readmeContent.value = response.readme || ''
+    readmeLoadedKey.value = key
   } catch (error) {
     if (requestId !== readmeRequestId.value) return
     console.error('Failed to fetch README:', error)
     readmeContent.value = ''
+    readmeLoadedKey.value = key
   } finally {
     if (requestId === readmeRequestId.value) {
       loadingReadme.value = false
     }
   }
+}
+
+watch(() => [props.visible, props.plugin, props.platform], ([newVisible]) => {
+  readmeRequestId.value += 1
+  activeTab.value = 'overview'
+  readmeLoadedKey.value = ''
+  loadingReadme.value = false
+  readmeContent.value = ''
+  if (!newVisible) return
+  // The overview is intentionally cheap; README is fetched only after the
+  // user selects its tab.
+})
+
+watch(activeTab, (tab) => {
+  if (tab === 'readme') loadReadme()
 })
 
 const renderedReadme = computed(() => {

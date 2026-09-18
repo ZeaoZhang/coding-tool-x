@@ -548,8 +548,15 @@ async function getRecentSessions(limit = 5) {
   }));
 }
 
-async function searchSessions(keyword, contextLength = 35, projectName = null) {
-  return getSessionHistoryIndex().searchSessions('omp', keyword, { contextLength, projectName });
+async function searchSessions(keyword, contextLength = 35, options = {}) {
+  const normalizedOptions = options && typeof options === 'object' && !Array.isArray(options)
+    ? options
+    : { projectName: typeof options === 'string' ? options : null };
+  return getSessionHistoryIndex().searchSessions('omp', keyword, {
+    ...normalizedOptions,
+    contextLength,
+    projectName: normalizedOptions.projectName || null
+  });
 }
 
 async function deleteSession(sessionId) {
