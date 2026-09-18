@@ -281,10 +281,12 @@ class SkillService {
       registry = getPlatformContext().registry,
       controlService = null,
       artifactStore = null,
-      formatAdapter = null
+      formatAdapter = null,
+      runtime = null
     } = {}
   ) {
     this.registry = registry;
+    this.runtime = runtime || getPlatformContext().runtime;
     this.platform = resolveManagedPlatform(platform).platform;
     if (this.platform === 'omp') {
       const migration = migratePiStorage(PATHS);
@@ -346,6 +348,74 @@ class SkillService {
 
     // 确保目录存在
     this.ensureDirs();
+  }
+
+  _getDshApiDriver() {
+    if (this.platform !== 'dsh') return null;
+    return this.runtime?.getDriver?.('dsh', 'api') || null;
+  }
+
+  _normalizeDshSkill(skill = {}) {
+    const sourceScope = String(skill.source || '').startsWith('project-') ? 'project' : 'user';
+    const sourcePath = skill.path || '';
+    const controlKey = `dsh:${sourceScope}:${skill.name || sourcePath}`;
+    return {
+      key: controlKey,
+      controlKey,
+      name: skill.name || path.basename(skill.resourceBase || sourcePath),
+      description: skill.description || '',
+      directory: skill.name || path.basename(skill.resourceBase || sourcePath),
+      installed: true,
+      enabled: true,
+      cached: true,
+      isLocal: true,
+      source: 'native',
+      sourceProvider: 'dsh',
+      sourceScope,
+      scope: sourceScope,
+      sourcePath,
+      path: sourcePath,
+      fullPath: sourcePath,
+      installPath: skill.resourceBase || path.dirname(sourcePath),
+      trust: 'approved',
+      managed: false,
+      readonly: true,
+      protected: false,
+      projection: { mode: 'unsupported', state: 'unsupported' },
+      artifactState: 'ready',
+      invocation: skill.invocation || null,
+      ...(skill.whenToUse ? { whenToUse: skill.whenToUse } : {}),
+      ...(skill.metadata ? { metadata: skill.metadata } : {}),
+      ...(skill.content !== undefined ? { content: skill.content } : {})
+    };
+  }
+
+  async _scanDshSkills(options = {}) {
+    const driver = this._getDshApiDriver();
+    if (!driver?.listSkills) {
+      return { skills: [], refresh: { state: 'unsupported', taskId: null, fetchedAt: null, error: null } };
+    }
+    const result = await driver.listSkills({
+      query: {
+        ...(options.cwd ? { cwd: options.cwd } : {}),
+        ...(options.profile ? { profile: options.profile } : {}),
+        ...(options.scope ? { scope: options.scope } : {})
+      }
+    });
+    if (result?.status !== 'ok') {
+      throw new Error(result?.error || 'DSH Skills are unavailable');
+    }
+    const scope = options.scope || 'user';
+    const skills = (Array.isArray(result.data?.skills) ? result.data.skills : [])
+      .filter(skill => {
+        const isProject = String(skill.source || '').startsWith('project-');
+        return scope === 'project' ? isProject : !isProject;
+      })
+      .map(skill => this._normalizeDshSkill(skill));
+    return {
+      skills,
+      refresh: { state: 'unsupported', taskId: null, fetchedAt: null, error: null }
+    };
   }
 
   refreshOmpPaths() {
@@ -943,6 +1013,7 @@ class SkillService {
   }
 
   async scanSkills(options = {}) {
+    if (this.platform === 'dsh') return this._scanDshSkills(options);
     this._ensureLegacyControlMigration();
     const scope = options.scope || 'user';
     const scopeOptions = scope === 'project'
@@ -3447,6 +3518,22 @@ ${content}
    * 获取本地 Skill 详情。远端内容只能来自已经发布的 artifact。
    */
   async getSkillDetail(directory, repoHint = null, fullDirectoryHint = '', options = {}) {
+    if (this.platform === 'dsh') {
+      const driver = this._getDshApiDriver();
+      if (!driver?.getSkill) throw new Error('DSH Skills are unavailable');
+      const result = await driver.getSkill({
+        params: { skillName: directory },
+        query: {
+          ...(options.cwd ? { cwd: options.cwd } : {}),
+          ...(options.profile ? { profile: options.profile } : {}),
+          ...(options.scope ? { scope: options.scope } : {})
+        }
+      });
+      if (result?.status !== 'ok' || !result.data?.skill) {
+        throw new Error(result?.error || `DSH skill not found: ${directory}`);
+      }
+      return this._normalizeDshSkill(result.data.skill);
+    }
     const safeDirectory = this.normalizeSkillDirectory(directory);
     const scope = options.scope || 'user';
 

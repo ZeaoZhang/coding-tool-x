@@ -74,6 +74,14 @@ function createProjectsDriver({
       }
       return invoke('listProjects', 'getProjects', [configFor(normalizedOptions)]);
     },
+    listProjectsPage(options = {}) {
+      const normalizedOptions = options || {};
+      const target = loadService();
+      if (typeof target?.getProjectsPage === 'function') {
+        return invoke('listProjectsPage', 'getProjectsPage', [configFor(normalizedOptions), normalizedOptions]);
+      }
+      return this.listProjects(normalizedOptions);
+    },
     getProjectOrder(options = {}) {
       return invoke('getProjectOrder', 'getProjectOrder', [configFor(options)]);
     },

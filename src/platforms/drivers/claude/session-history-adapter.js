@@ -150,6 +150,77 @@ async function inventory({ projectsDir } = {}) {
   return descriptors;
 }
 
+/** Read a bounded prefix for project/session list summaries. */
+function readSessionSummaryHead(filePath, maxBytes = 64 * 1024) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const buffer = Buffer.alloc(maxBytes);
+    const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
+    return buffer.subarray(0, bytesRead).toString('utf8')
+      .split(/\r?\n/)
+      .filter(line => line.trim())
+      .map(line => {
+        try { return JSON.parse(line); } catch (_) { return null; }
+      })
+      .filter(Boolean);
+  } catch (_) {
+    return [];
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch (_) {}
+    }
+  }
+}
+
+async function summarize(descriptor) {
+  const lines = readSessionSummaryHead(descriptor.filePath);
+  const { fullPath, projectName: displayName } = parseRealProjectPath(
+    descriptor.projectHint,
+    { projectsDir: descriptor.projectsDir }
+  );
+  let firstMessage = null;
+  let gitBranch = null;
+  let provider = null;
+  let model = null;
+  let startedAt = null;
+  for (const json of lines) {
+    const payload = json.message && typeof json.message === 'object' && !Array.isArray(json.message)
+      ? json.message
+      : {};
+    const timestamp = json.timestamp || payload.timestamp || null;
+    const timestampMs = timestamp ? new Date(timestamp).getTime() : null;
+    if (timestampMs && startedAt === null) startedAt = timestampMs;
+    const metadata = json.type === 'metadata' || json.type === 'summary';
+    if (metadata) {
+      gitBranch = json.gitBranch || payload.gitBranch || gitBranch;
+      provider = json.provider || payload.provider || provider;
+      model = json.model || payload.model || model;
+    }
+    const role = json.role || payload.role
+      || (json.type === 'user' || json.type === 'human' ? 'user' : null);
+    const rawContent = json.content !== undefined ? json.content : payload.content;
+    if (!firstMessage && role === 'user') firstMessage = getClaudeUserText(rawContent) || null;
+    if (json.model || payload.model) model = json.model || payload.model;
+    if (json.provider || payload.provider) provider = json.provider || payload.provider;
+  }
+  return {
+    session: {
+      sessionId: descriptor.sessionId,
+      projectName: descriptor.projectHint || 'unknown',
+      projectDisplayName: displayName || descriptor.projectHint || 'unknown',
+      projectFullPath: fullPath || null,
+      firstMessage,
+      gitBranch,
+      provider,
+      model,
+      startedAt,
+      updatedAt: descriptor.mtimeMs,
+      extraJson: JSON.stringify({ cwd: fullPath || null })
+    }
+  };
+}
+
 /**
  * Parse a Claude session file into normalized session + messages.
  * @param {{filePath: string, size: number, mtimeMs: number, sessionId: string, projectHint: string}} descriptor
@@ -310,4 +381,4 @@ async function parse(descriptor) {
   };
 }
 
-module.exports = { configure, inventory, parse, getClaudeUserText };
+module.exports = { configure, inventory, summarize, parse, getClaudeUserText };

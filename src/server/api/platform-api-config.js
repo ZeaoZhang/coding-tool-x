@@ -33,20 +33,41 @@ function requestContext(request, manifest, route, config) {
 
 function projectPayload(data, context) {
   if (Array.isArray(data)) {
-    return { projects: data, currentProject: null, meta: {} };
+    return {
+      projects: data,
+      currentProject: null,
+      pagination: { page: 1, limit: data.length || 20, total: data.length, hasMore: false },
+      meta: {}
+    };
   }
   const payload = cloneObject(data);
   if (!Array.isArray(payload.projects)) payload.projects = [];
   if (!Object.prototype.hasOwnProperty.call(payload, 'currentProject')) payload.currentProject = null;
   if (!payload.meta || typeof payload.meta !== 'object' || Array.isArray(payload.meta)) payload.meta = {};
+  if (!payload.pagination || typeof payload.pagination !== 'object') {
+    payload.pagination = { page: 1, limit: payload.projects.length || 20, total: payload.projects.length, hasMore: false };
+  }
   return payload;
 }
 
 function sessionPayload(data) {
-  if (Array.isArray(data)) return { sessions: data, meta: {} };
+  if (Array.isArray(data)) {
+    return {
+      sessions: data,
+      totalSize: data.reduce((sum, session) => sum + (Number(session?.size) || 0), 0),
+      pagination: { page: 1, limit: data.length || 20, total: data.length, hasMore: false },
+      meta: {}
+    };
+  }
   const payload = cloneObject(data);
   if (!Array.isArray(payload.sessions)) payload.sessions = [];
   if (!payload.meta || typeof payload.meta !== 'object' || Array.isArray(payload.meta)) payload.meta = {};
+  if (!payload.pagination || typeof payload.pagination !== 'object') {
+    payload.pagination = { page: 1, limit: payload.sessions.length || 20, total: payload.sessions.length, hasMore: false };
+  }
+  if (!Object.prototype.hasOwnProperty.call(payload, 'totalSize')) {
+    payload.totalSize = payload.sessions.reduce((sum, session) => sum + (Number(session?.size) || 0), 0);
+  }
   return payload;
 }
 

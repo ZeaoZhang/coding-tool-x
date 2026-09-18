@@ -50,6 +50,18 @@ function publicResourceTypes(resourceTypes) {
   );
 }
 
+function publicResourceActions(resourceActions) {
+  if (!resourceActions || typeof resourceActions !== 'object' || Array.isArray(resourceActions)) {
+    return null;
+  }
+  return Object.fromEntries(Object.entries(resourceActions).map(([resourceType, actions]) => [
+    resourceType,
+    actions && typeof actions === 'object' && !Array.isArray(actions)
+      ? Object.fromEntries(Object.entries(actions).filter(([, value]) => typeof value === 'boolean'))
+      : {}
+  ]));
+}
+
 function hasCustomPathResolution(pathOptions = {}, overlay = {}, platformKey = '') {
   if (pathOptions.homeDir || pathOptions.env || pathOptions.commandRunner) return true;
   const entry = overlay?.platforms?.[String(platformKey || '').trim().toLowerCase()];
@@ -180,6 +192,8 @@ function createPlatformRegistry({
     };
     const resourceTypes = publicResourceTypes(platform.resourceTypes);
     if (resourceTypes) result.resourceTypes = resourceTypes;
+    const resourceActions = publicResourceActions(platform.resourceActions);
+    if (resourceActions) result.resourceActions = resourceActions;
     if (typeof platform.promptLabel === 'string' && platform.promptLabel.trim()) {
       result.promptLabel = platform.promptLabel;
     }

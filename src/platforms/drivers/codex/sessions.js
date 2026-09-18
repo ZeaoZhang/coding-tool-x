@@ -11,9 +11,10 @@ function createDriver(context = {}) {
     servicePath: './codex/sessions-implementation',
     localServicePath: '../platforms/drivers/codex/sessions-implementation',
     adapterLocalPath: '../platforms/drivers/codex/session-history-adapter',
-    adapterMethods: { inventory: 'inventory', parse: 'parse' },
+    adapterMethods: { inventory: 'inventory', summarize: 'summarize', parse: 'parse' },
     methods: {
       listSessions: 'getSessionsByProject',
+      listSessionsPage: 'getSessionsPage',
       recent: 'getRecentSessions',
       search: 'searchSessions',
       getSessionById: 'getSessionById',

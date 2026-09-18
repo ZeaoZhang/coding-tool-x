@@ -75,6 +75,7 @@ describe('ConfigRegistryService item persistence', () => {
     expect(created.platforms).toEqual({
       claude: true,
       codex: false,
+      dsh: false,
       gemini: false,
       opencode: false,
       omp: false
@@ -84,6 +85,7 @@ describe('ConfigRegistryService item persistence', () => {
     expect(updated.platforms).toEqual({
       claude: false,
       codex: false,
+      dsh: false,
       gemini: false,
       opencode: true,
       omp: false

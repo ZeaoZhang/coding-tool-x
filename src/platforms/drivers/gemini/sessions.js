@@ -11,9 +11,10 @@ function createDriver(context = {}) {
     servicePath: './gemini/sessions-implementation',
     localServicePath: '../platforms/drivers/gemini/sessions-implementation',
     adapterLocalPath: '../platforms/drivers/gemini/session-history-adapter',
-    adapterMethods: { inventory: 'inventory', parse: 'parse' },
+    adapterMethods: { inventory: 'inventory', summarize: 'summarize', parse: 'parse' },
     methods: {
       listSessions: 'getProjectSessions',
+      listSessionsPage: 'getProjectSessionsPage',
       recent: 'getRecentSessions',
       getSessionById: 'getSessionById',
       getAllSessions: 'getAllSessions',

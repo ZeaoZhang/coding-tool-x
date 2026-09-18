@@ -19,7 +19,8 @@ const PUBLIC_FIELDS = Object.freeze([
   'apiPrefix',
   'modelCatalogKey',
   'promptLabel',
-  'resourceTypes'
+  'resourceTypes',
+  'resourceActions'
 ]);
 
 function publicCapabilities(capabilities) {
@@ -41,6 +42,18 @@ function publicResourceTypes(resourceTypes) {
   );
 }
 
+function publicResourceActions(resourceActions) {
+  if (!resourceActions || typeof resourceActions !== 'object' || Array.isArray(resourceActions)) {
+    return null;
+  }
+  return Object.fromEntries(Object.entries(resourceActions).map(([resourceType, actions]) => [
+    resourceType,
+    actions && typeof actions === 'object' && !Array.isArray(actions)
+      ? Object.fromEntries(Object.entries(actions).filter(([, value]) => typeof value === 'boolean'))
+      : {}
+  ]));
+}
+
 function toPublicDefinition(definition) {
   if (!definition || typeof definition !== 'object') return null;
   const result = {};
@@ -48,6 +61,11 @@ function toPublicDefinition(definition) {
     if (field === 'resourceTypes') {
       const resourceTypes = publicResourceTypes(definition.resourceTypes);
       if (resourceTypes) result.resourceTypes = resourceTypes;
+      continue;
+    }
+    if (field === 'resourceActions') {
+      const resourceActions = publicResourceActions(definition.resourceActions);
+      if (resourceActions) result.resourceActions = resourceActions;
       continue;
     }
     if (field === 'apiPrefix') {

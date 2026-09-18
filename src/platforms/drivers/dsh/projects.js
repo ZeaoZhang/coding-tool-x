@@ -14,6 +14,7 @@ function createDriver(context = {}) {
     platform: 'dsh',
     capability: 'projects',
     listProjects: sessions.listProjects,
+    listProjectsPage: sessions.listProjectsPage,
     saveProjectOrder: unsupported('saveProjectOrder'),
     deleteProject: unsupported('deleteProject')
   };

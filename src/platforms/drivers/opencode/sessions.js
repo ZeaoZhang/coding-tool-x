@@ -27,6 +27,10 @@ function createDriver(context = {}) {
         if (typeof method !== 'function') return undefined;
         return method.apply(service, args);
       },
+      listSessionsPage: (service, projectName, options = {}) => {
+        if (typeof service.getSessionsPage !== 'function') return undefined;
+        return service.getSessionsPage(projectName, options);
+      },
       messages: (service, sessionId, options) => {
         if (typeof service.getSessionMessages === 'function') {
           return service.getSessionMessages(sessionId, options);

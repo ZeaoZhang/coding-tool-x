@@ -15,15 +15,15 @@
         </div>
       </div>
       <div class="asset-action-row" v-if="supportsCurrentPlatform">
-        <n-button text :focusable="false" @click="showCreateModal = true" class="action-btn">
+        <n-button v-if="canCreate" text :focusable="false" @click="showCreateModal = true" class="action-btn">
           <template #icon><n-icon><AddOutline /></n-icon></template>
           创建
         </n-button>
-        <n-button text :focusable="false" @click="showRepoManager = true" class="action-btn">
+        <n-button v-if="canRepositories" text :focusable="false" @click="showRepoManager = true" class="action-btn">
           <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
         </n-button>
-        <n-button text :focusable="false" @click="handleImport" :loading="importing" :disabled="currentPlatform !== 'claude'" class="action-btn">
+        <n-button v-if="canImport" text :focusable="false" @click="handleImport" :loading="importing" :disabled="currentPlatform !== 'claude'" class="action-btn">
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
@@ -31,7 +31,7 @@
           <template #icon><n-icon><SettingsOutline /></n-icon></template>
           设置
         </n-button>
-        <n-button text :focusable="false" @click="handleRefresh" :loading="refreshing || loading" class="action-btn">
+        <n-button v-if="canRefresh" text :focusable="false" @click="handleRefresh" :loading="refreshing || loading" class="action-btn">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
           刷新远端
         </n-button>
@@ -41,15 +41,15 @@
     <!-- 抽屉模式头部 -->
     <div class="asset-drawer-toolbar" v-if="inDrawer">
       <div class="asset-action-row" v-if="supportsCurrentPlatform">
-        <n-button text :focusable="false" @click="showCreateModal = true" class="action-btn">
+        <n-button v-if="canCreate" text :focusable="false" @click="showCreateModal = true" class="action-btn">
           <template #icon><n-icon><AddOutline /></n-icon></template>
           创建
         </n-button>
-        <n-button text :focusable="false" @click="showRepoManager = true" class="action-btn">
+        <n-button v-if="canRepositories" text :focusable="false" @click="showRepoManager = true" class="action-btn">
           <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
         </n-button>
-        <n-button text :focusable="false" @click="handleImport" :loading="importing" :disabled="currentPlatform !== 'claude'" class="action-btn">
+        <n-button v-if="canImport" text :focusable="false" @click="handleImport" :loading="importing" :disabled="currentPlatform !== 'claude'" class="action-btn">
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
@@ -57,7 +57,7 @@
           <template #icon><n-icon><SettingsOutline /></n-icon></template>
           设置
         </n-button>
-        <n-button text :focusable="false" @click="handleRefresh" :loading="refreshing || loading" class="action-btn">
+        <n-button v-if="canRefresh" text :focusable="false" @click="handleRefresh" :loading="refreshing || loading" class="action-btn">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
           刷新远端
         </n-button>
@@ -95,7 +95,7 @@
           <n-empty :description="emptyText">
             <template #icon><n-icon size="48" color="var(--text-quaternary)"><ExtensionPuzzleOutline /></n-icon></template>
             <template #extra>
-              <n-button size="small" @click="showRepoManager = true" v-if="supportsCurrentPlatform && skills.length === 0">配置仓库源</n-button>
+              <n-button size="small" @click="showRepoManager = true" v-if="supportsCurrentPlatform && canRepositories && skills.length === 0">配置仓库源</n-button>
             </template>
           </n-empty>
         </div>
@@ -115,7 +115,7 @@
     </div>
 
     <!-- 底部提示 -->
-    <div class="asset-footer">
+    <div v-if="canRefresh" class="asset-footer">
       <n-icon size="14" class="asset-info-icon"><InformationCircleOutline /></n-icon>
       <span>开关变更后需重启 {{ currentPlatformLabel }} 生效；远端刷新只在手动点击后执行</span>
     </div>
@@ -198,6 +198,14 @@ const refreshContextEpoch = ref(0)
 const { byCapability } = useEnabledCliPlatforms()
 const managedSkillPlatforms = computed(() => byCapability('skills').map(platform => platform.key))
 const supportsCurrentPlatform = computed(() => managedSkillPlatforms.value.includes(currentPlatform.value))
+const currentPlatformConfig = computed(() => (
+  platformStore.get(currentPlatform.value) || getPlatformConfig(currentPlatform.value)
+))
+const skillActions = computed(() => currentPlatformConfig.value?.resourceActions?.skills || {})
+const canCreate = computed(() => skillActions.value.create !== false)
+const canRepositories = computed(() => skillActions.value.repositories !== false)
+const canImport = computed(() => skillActions.value.import !== false)
+const canRefresh = computed(() => skillActions.value.refresh !== false)
 
 const currentPlatform = computed(() => {
   return String(props.platform || getRoutePlatform(route) || 'claude').trim().toLowerCase()
@@ -255,6 +263,7 @@ const emptyText = computed(() => {
   if (filterStatus.value === 'disabled') return '暂无已关闭的技能'
   if (filterStatus.value === 'pending') return '暂无待审批的技能'
   if (!supportsCurrentPlatform.value) return `${currentPlatformLabel.value} 暂未提供 Skills 能力`
+  if (!canCreate.value && !canRepositories.value && !canRefresh.value) return `${currentPlatformLabel.value} 当前没有可管理的技能`
   return '暂无可用技能，请配置仓库源'
 })
 
@@ -294,7 +303,7 @@ async function scanLocalSkills({ notifyError = true } = {}) {
 }
 
 async function handleImport() {
-  if (!supportsCurrentPlatform.value || currentPlatform.value !== 'claude') {
+  if (!supportsCurrentPlatform.value || !canImport.value || currentPlatform.value !== 'claude') {
     return
   }
   importing.value = true
@@ -394,7 +403,7 @@ async function handleApprove(skill) {
 }
 
 async function handleRefresh() {
-  if (!supportsCurrentPlatform.value || refreshing.value) return
+  if (!supportsCurrentPlatform.value || !canRefresh.value || refreshing.value) return
   const epoch = refreshContextEpoch.value
   const contextKey = JSON.stringify({
     platform: currentPlatform.value,

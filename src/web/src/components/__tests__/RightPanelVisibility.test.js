@@ -47,6 +47,9 @@ describe('RightPanel visibility', () => {
     route.path = '/cli/omp'
     route.params = { platform: 'omp' }
     route.meta = { requiresCli: true }
+    enabledPlatforms.value = [
+      { key: 'omp', label: 'OMP', capabilities: { channels: true, proxy: true, sessions: true, nativeLogs: true }, resourceTypes: { skills: true } }
+    ]
   })
 
   it('renders the channel management section for the active CLI route', async () => {
@@ -63,5 +66,26 @@ describe('RightPanel visibility', () => {
 
     expect(wrapper.find('.channels-section:not(.channels-unsupported)').exists()).toBe(true)
     expect(wrapper.find('[data-test="omp-channel-panel"]').exists()).toBe(true)
+  })
+
+  it('reuses the generic channel panel for DSH', async () => {
+    enabledPlatforms.value = [
+      { key: 'dsh', label: 'DSH', capabilities: { channels: true, proxy: true, sessions: true } }
+    ]
+    route.path = '/cli/dsh'
+    route.params = { platform: 'dsh' }
+
+    const wrapper = mount(RightPanel, {
+      global: {
+        stubs: {
+          ProxyLogs: true,
+          BaseChannelPanel: { template: '<div data-test="generic-channel-panel" />' }
+        }
+      }
+    })
+    await flushPromises()
+    await nextTick()
+
+    expect(wrapper.find('[data-test="generic-channel-panel"]').exists()).toBe(true)
   })
 })

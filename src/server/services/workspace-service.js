@@ -774,6 +774,34 @@ async function getAllAvailableProjects() {
   const allProjects = [];
   const seenKeys = new Set();
 
+  async function getAllProjectPages(service, {
+    pageMethod = 'getProjectsPage',
+    fallbackMethod = 'getProjects',
+    baseArgs = [],
+    fallbackArgs = baseArgs,
+    options = {}
+  } = {}) {
+    if (typeof service?.[pageMethod] !== 'function') {
+      if (typeof service?.[fallbackMethod] !== 'function') return [];
+      const fallback = await service[fallbackMethod](...fallbackArgs, options);
+      return Array.isArray(fallback) ? fallback : [];
+    }
+
+    const projects = [];
+    let page = 1;
+    while (true) {
+      const payload = await service[pageMethod](
+        ...baseArgs,
+        { ...options, page, limit: 100, force: page === 1 ? options.force === true : false }
+      );
+      const rows = Array.isArray(payload) ? payload : payload?.projects;
+      if (Array.isArray(rows)) projects.push(...rows);
+      if (Array.isArray(payload) || !payload?.pagination?.hasMore) break;
+      page += 1;
+    }
+    return projects;
+  }
+
   function addProject(channel, project) {
     if (!project || !project.name) return;
 
@@ -802,8 +830,13 @@ async function getAllAvailableProjects() {
 
   try {
     const config = loadConfig();
-    const claudeProjects = await sessionsService.getProjectsWithStats(config, { force: true });
-    const list = Array.isArray(claudeProjects) ? claudeProjects : [];
+    const list = await getAllProjectPages(sessionsService, {
+      pageMethod: 'getProjectsPage',
+      fallbackMethod: 'getProjectsWithStats',
+      baseArgs: [config],
+      fallbackArgs: [config],
+      options: { force: true }
+    });
     list.forEach(project => addProject('claude', project));
   } catch (error) {
     console.error('获取 claude 项目失败:', error.message);
@@ -811,8 +844,7 @@ async function getAllAvailableProjects() {
 
   try {
     if (isCodexInstalled()) {
-      const codexProjects = await codexSessionsService.getProjects();
-      const list = Array.isArray(codexProjects) ? codexProjects : [];
+      const list = await getAllProjectPages(codexSessionsService, { options: { force: true } });
       list.forEach(project => addProject('codex', project));
     }
   } catch (error) {
@@ -821,8 +853,7 @@ async function getAllAvailableProjects() {
 
   try {
     if (isGeminiInstalled()) {
-      const geminiProjects = await geminiSessionsService.getProjects();
-      const list = Array.isArray(geminiProjects) ? geminiProjects : [];
+      const list = await getAllProjectPages(geminiSessionsService, { options: { force: true } });
       list.forEach(project => addProject('gemini', project));
     }
   } catch (error) {
@@ -831,8 +862,7 @@ async function getAllAvailableProjects() {
 
   try {
     if (isOpenCodeInstalled()) {
-      const opencodeProjects = opencodeSessionsService.getProjects();
-      const list = Array.isArray(opencodeProjects) ? opencodeProjects : [];
+      const list = await getAllProjectPages(opencodeSessionsService, { options: { force: true } });
       list.forEach(project => addProject('opencode', project));
     }
   } catch (error) {
@@ -840,8 +870,7 @@ async function getAllAvailableProjects() {
   }
 
   try {
-    const ompProjects = await ompSessionsService.getProjects();
-    const list = Array.isArray(ompProjects) ? ompProjects : [];
+    const list = await getAllProjectPages(ompSessionsService, { options: { force: true } });
     if (list.length > 0 || ompSessionsService.isOmpInstalled()) {
       list.forEach(project => addProject('omp', project));
     }

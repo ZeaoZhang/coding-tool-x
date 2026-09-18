@@ -21,7 +21,9 @@ const DRIVER_IDS = new Set([
   'dsh-api',
   'dsh-projects',
   'dsh-sessions',
-  'dsh-native-config'
+  'dsh-native-config',
+  'dsh-channels',
+  'dsh-proxy'
 ]);
 
 const PATH_RESOLVER_IDS = new Set([
@@ -131,6 +133,13 @@ const schema = {
       }
     },
     resourceTypes: { type: 'object', additionalProperties: { type: 'boolean' } },
+    resourceActions: {
+      type: 'object',
+      additionalProperties: {
+        type: 'object',
+        additionalProperties: { type: 'boolean' }
+      }
+    },
     skillActivation: {
       type: 'object',
       additionalProperties: false,

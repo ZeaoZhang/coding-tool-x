@@ -13,8 +13,12 @@ const { getDriverRegistry } = require('../../../src/platforms/driver-registry');
 const { createDriver: createConfigDriver } = require('../../../src/platforms/drivers/dsh/native-config');
 const { createDriver: createSessionDriver, projectNameFor } = require('../../../src/platforms/drivers/dsh/sessions');
 const { createDriver: createApiDriver } = require('../../../src/platforms/drivers/dsh/api-operations');
+const { createDriver: createChannelDriver } = require('../../../src/platforms/drivers/dsh/channels');
+const { createDriver: createProxyDriver } = require('../../../src/platforms/drivers/dsh/proxy');
 const { listSkills } = require('../../../src/platforms/drivers/dsh/resources');
 const { createPlatformRouter } = require('../../../src/server/api/platforms');
+const { SkillService } = require('../../../src/server/services/skill-service');
+const { PluginsService } = require('../../../src/server/services/plugins-service');
 
 function makeTempHome() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ctx-dsh-'));
@@ -58,7 +62,7 @@ describe('DSH platform integration', () => {
       key: 'dsh',
       defaultEnabled: false,
       cliSelectable: false,
-      resourceTypes: { skills: false, commands: false, agents: false, plugins: false }
+      resourceTypes: { skills: true, commands: false, agents: false, plugins: true }
     }));
     expect(registry.getCapability('dsh', 'projects')).toBe('dsh-projects');
     expect(registry.getCapability('dsh', 'sessions')).toBe('dsh-sessions');
@@ -354,6 +358,130 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
     expect(runtime.getDriver('dsh', 'sessions')).toEqual(expect.objectContaining({ platform: 'dsh', capability: 'sessions' }));
     expect(runtime.getDriver('dsh', 'nativeConfig')).toEqual(expect.objectContaining({ platform: 'dsh', capability: 'nativeConfig' }));
     expect(runtime.getDriver('dsh', 'api')).toEqual(expect.objectContaining({ platform: 'dsh', capability: 'api' }));
+    expect(runtime.getDriver('dsh', 'channels')).toEqual(expect.objectContaining({ platform: 'dsh', capability: 'channels' }));
+    expect(runtime.getDriver('dsh', 'proxy')).toEqual(expect.objectContaining({ platform: 'dsh', capability: 'proxy' }));
+  });
+
+  test('routes the shared Skills and Plugins services through the DSH Driver', async () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const projectDir = path.join(tempHome, 'workspace');
+    fs.mkdirSync(path.join(projectDir, '.dsh', 'skills', 'project-skill'), { recursive: true });
+    fs.mkdirSync(path.join(paths.dir, 'skills', 'user-skill'), { recursive: true });
+    fs.writeFileSync(path.join(projectDir, '.dsh', 'skills', 'project-skill', 'SKILL.md'), '---\nname: project-skill\ndescription: Project\n---\n\nProject body\n');
+    fs.writeFileSync(path.join(paths.dir, 'skills', 'user-skill', 'SKILL.md'), '---\nname: user-skill\ndescription: User\n---\n\nUser body\n');
+    fs.mkdirSync(path.join(paths.profiles, 'default'), { recursive: true });
+    writeJson(path.join(paths.profiles, 'default', 'package.json'), {
+      name: 'dsh-profile-default',
+      dependencies: { 'demo-plugin': '1.0.0' },
+      dsh: { profile: { bundles: ['demo-plugin'] } }
+    });
+
+    const api = createApiDriver({ paths, platform: 'dsh' });
+    const runtime = { getDriver: () => api };
+    const registry = {
+      resolve: () => ({ projectResources: {} }),
+      resolvePathContext: () => ({
+        customized: true,
+        native: paths,
+        state: {
+          localSkills: path.join(tempHome, 'state', 'skills'),
+          skillRepos: path.join(tempHome, 'state', 'skill-repos.json'),
+          skillCaches: path.join(tempHome, 'state', 'skill-cache.json')
+        }
+      })
+    };
+
+    const skills = await new SkillService('dsh', {
+      registry,
+      runtime,
+      artifactStore: {}
+    }).scanSkills({ scope: 'user', cwd: projectDir });
+    expect(skills.skills).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'user-skill', sourceProvider: 'dsh', readonly: true, managed: false })
+    ]));
+    expect(skills.skills).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'project-skill' })
+    ]));
+
+    const plugins = new PluginsService('dsh', { registry, runtime });
+    expect(plugins.listPlugins().plugins).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'demo-plugin', profile: 'default', readonly: true, pluginType: 'dsh-profile' })
+    ]));
+    expect(plugins.getCapabilities()).toEqual(expect.objectContaining({
+      supportsPlugins: true,
+      repositories: false,
+      install: false,
+      uninstall: false
+    }));
+    expect(plugins.getRepos()).toEqual([]);
+    expect((await plugins.installPlugin('demo-plugin')).success).toBe(false);
+  });
+
+  test('manages DSH channels and switches native config through the managed proxy', async () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const state = {
+      channels: path.join(tempHome, 'channels.json'),
+      activeChannel: path.join(tempHome, 'active-channel.json'),
+      proxyRuntime: path.join(tempHome, 'dsh-proxy.json')
+    };
+    const channelDriver = createChannelDriver({ paths });
+    const createRequest = body => channelDriver.create({
+      body,
+      route: { capability: 'channels', operation: 'create' }
+    });
+    const first = createRequest({
+      name: 'Primary',
+      providerKey: 'primary',
+      baseUrl: 'https://api.example.com/v1',
+      model: 'deepseek-chat',
+      apiKey: 'sk-primary'
+    });
+    expect(first.status).toBe('ok');
+    expect(first.data.channel).toEqual(expect.objectContaining({ providerKey: 'primary', apiKey: '[REDACTED]', apiKeyConfigured: true }));
+
+    const edited = channelDriver.update({
+      params: { channelId: first.data.channel.id },
+      body: { model: 'deepseek-reasoner', apiKey: '[REDACTED]' },
+      route: { capability: 'channels', operation: 'update' }
+    });
+    expect(edited.status).toBe('ok');
+    expect(edited.data.channel.model).toBe('deepseek-reasoner');
+    expect(edited.data.channel.apiKey).toBe('[REDACTED]');
+
+    const proxyDriver = createProxyDriver({
+      paths,
+      pathContext: { native: paths, customized: true, state }
+    });
+    const started = await proxyDriver.start({ port: 0 });
+    expect(started.status).toBe('ok');
+    expect(started.data).toEqual(expect.objectContaining({ success: true, provider: 'ctx-dsh-proxy' }));
+    expect(fs.readFileSync(paths.settings, 'utf8')).toContain('ctx-dsh-proxy');
+
+    const second = createRequest({
+      name: 'Backup',
+      providerKey: 'backup',
+      baseUrl: 'https://backup.example.com/v1',
+      model: 'deepseek-chat',
+      apiKey: 'sk-backup'
+    });
+    expect(second.status).toBe('ok');
+    const disabled = channelDriver.update({
+      params: { channelId: second.data.channel.id },
+      body: { enabled: false, apiKey: '[REDACTED]' },
+      route: { capability: 'channels', operation: 'update' }
+    });
+    expect(disabled.status).toBe('ok');
+    expect(disabled.data.channel.enabled).toBe(false);
+
+    const stopped = await proxyDriver.stop();
+    expect(stopped.status).toBe('ok');
+    expect(fs.readFileSync(paths.settings, 'utf8')).toContain('provider: primary');
+    expect(channelDriver.remove({
+      params: { channelId: second.data.channel.id },
+      route: { capability: 'channels', operation: 'remove' }
+    }).status).toBe('ok');
   });
 
   test('mounts DSH descriptor routes through the shared platform API factory', async () => {
@@ -385,7 +513,11 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
 
       const projects = await fetch(`http://127.0.0.1:${port}/api/platforms/dsh/projects`);
       expect(projects.status).toBe(200);
-      expect(await projects.json()).toEqual({ projects: [], currentProject: null, meta: {} });
+      expect(await projects.json()).toEqual(expect.objectContaining({
+        projects: [],
+        currentProject: null,
+        meta: {}
+      }));
 
       const skills = await fetch(`http://127.0.0.1:${port}/api/platforms/dsh/skills?includeContent=1`);
       expect(skills.status).toBe(200);

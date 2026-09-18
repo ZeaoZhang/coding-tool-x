@@ -12,7 +12,7 @@
         <div class="title-section">
           <div class="title-with-count">
             <n-h2>{{ projectDisplayName }}</n-h2>
-            <n-text depth="3" class="session-count">({{ store.sessions.length }} 个对话)</n-text>
+            <n-text depth="3" class="session-count">({{ store.sessionsPagination.total }} 个对话)</n-text>
             <n-tag size="small" :bordered="false" type="info" class="total-size-tag">
               {{ formatSize(store.totalSize) }}
             </n-tag>
@@ -110,21 +110,12 @@
         {{ store.error }}
       </n-alert>
 
-      <!-- Sessions List with Draggable -->
-    <draggable
-      v-else-if="filteredSessions.length > 0"
-      v-model="orderedSessions"
-      item-key="sessionId"
-      class="sessions-list"
-      handle=".drag-handle"
-      :disabled="selectionMode || batchDeleting"
-      v-bind="dragOptions"
-      ghost-class="ghost"
-      chosen-class="chosen"
-      animation="200"
-      @end="handleDragEnd"
-    >
-      <template #item="{ element: session }">
+      <!-- Sessions List -->
+      <div
+        v-else-if="orderedSessions.length > 0"
+        class="sessions-list"
+      >
+        <div v-for="session in orderedSessions" :key="session.sessionId">
         <div
           class="session-item"
           :class="{
@@ -135,14 +126,7 @@
           @mouseleave="hoveredSession = null"
           @click="handleSessionClick(session)"
         >
-          <!-- Drag Handle -->
-          <div v-if="!selectionMode" class="drag-handle">
-            <n-icon size="16" color="#999">
-              <ReorderThreeOutline />
-            </n-icon>
-          </div>
-
-          <div v-else class="selection-checkbox" @click.stop>
+          <div v-if="selectionMode" class="selection-checkbox" @click.stop>
             <n-checkbox
               :checked="isSessionSelected(session.sessionId)"
               @update:checked="toggleSessionSelection(session.sessionId, $event)"
@@ -253,13 +237,23 @@
             </div>
           </div>
         </div>
-      </template>
-    </draggable>
+        </div>
+      </div>
+
+      <n-pagination
+        v-if="store.sessionsPagination.total > store.sessionsPagination.limit"
+        v-model:page="sessionPage"
+        :page-count="Math.ceil(store.sessionsPagination.total / store.sessionsPagination.limit)"
+        :page-size="store.sessionsPagination.limit"
+        show-quick-jumper
+        @update:page="handleSessionPageChange"
+        class="list-pagination"
+      />
 
       <!-- Empty State -->
       <n-empty
-        v-else
-        description="没有找到会话"
+        v-if="!store.loading && !store.error && !store.sessionsPending && orderedSessions.length === 0"
+        :description="searchQuery ? '当前页没有匹配的会话' : '没有找到会话'"
         style="margin-top: 60px;"
       >
         <template #icon>
@@ -372,14 +366,13 @@ import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   NButton, NIcon, NH2, NText, NInput, NSpin, NAlert, NEmpty,
-  NTag, NSpace, NModal, NTooltip, NCheckbox, NSelect
+  NTag, NSpace, NModal, NTooltip, NCheckbox, NSelect, NPagination
 } from 'naive-ui'
 import {
   ArrowBackOutline, SearchOutline, DocumentTextOutline,
   ChatbubbleEllipsesOutline, GitBranchOutline, CreateOutline, TrashOutline,
-  ReorderThreeOutline, TerminalOutline, StarOutline, Star,
+  TerminalOutline, StarOutline, Star,
 } from '@vicons/ionicons5'
-import draggable from 'vuedraggable'
 import { useSessionsStore } from '../stores/sessions'
 import { useFavorites } from '../composables/useFavorites'
 import message, { dialog } from '../utils/message'
@@ -412,6 +405,7 @@ const editingSession = ref(null)
 const editingAlias = ref('')
 const hoveredSession = ref(null)
 const orderedSessions = ref([])
+const sessionPage = ref(1)
 const searchResults = ref(null)
 const showSearchResults = ref(false)
 const showProjectConfig = ref(false)
@@ -433,15 +427,6 @@ const showChatHistory = ref(false)
 const selectedSessionId = ref('')
 const selectedSessionAlias = ref('')
 const chatHistoryRef = ref(null)
-
-const dragOptions = {
-  // Keep sessions reorder-only inside the session list.
-  group: { name: `${currentChannel.value}-sessions`, pull: false, put: false },
-  forceFallback: true,
-  fallbackOnBody: false,
-  fallbackTolerance: 4,
-  scroll: true
-}
 
 function isAbsoluteProjectPath(value) {
   return typeof value === 'string' && (
@@ -534,7 +519,14 @@ async function ensureProjectNameResolved() {
 
 async function loadSessions(options = {}) {
   const projectName = await ensureProjectNameResolved()
-  await store.fetchSessions(projectName, options)
+  const page = options.page ?? sessionPage.value
+  const limit = options.limit ?? store.sessionsPagination.limit
+  await store.fetchSessions(projectName, { page, limit, ...options })
+}
+
+async function handleSessionPageChange(page) {
+  sessionPage.value = page
+  await loadSessions({ page })
 }
 
 // Sync with store
@@ -546,20 +538,6 @@ watch(() => store.sessionsWithAlias, (newSessions) => {
     exitSelectionMode()
   }
 }, { immediate: true })
-
-const filteredSessions = computed(() => {
-  if (!searchQuery.value) return orderedSessions.value
-
-  const query = searchQuery.value.toLowerCase()
-  return orderedSessions.value.filter(session => {
-    return (
-      session.sessionId.toLowerCase().includes(query) ||
-      (session.alias && session.alias.toLowerCase().includes(query)) ||
-      (session.firstMessage && session.firstMessage.toLowerCase().includes(query)) ||
-      (session.gitBranch && session.gitBranch.toLowerCase().includes(query))
-    )
-  })
-})
 
 function goBack() {
   router.push({
@@ -582,11 +560,6 @@ async function handleSearch() {
   } finally {
     searching.value = false
   }
-}
-
-async function handleDragEnd() {
-  const order = orderedSessions.value.map(s => s.sessionId)
-  await store.saveSessionOrder(order)
 }
 
 function enterSelectionMode() {
@@ -895,7 +868,13 @@ async function refreshSessionsAfterActivation() {
   try {
     const scrollTop = contentEl.value?.scrollTop || 0
     const projectName = await ensureProjectNameResolved()
-    await store.fetchSessions(projectName, { force: true, silent: true, fresh: true })
+    await store.fetchSessions(projectName, {
+      page: sessionPage.value,
+      limit: store.sessionsPagination.limit,
+      force: true,
+      silent: true,
+      fresh: true
+    })
     await nextTick()
     if (contentEl.value) {
       contentEl.value.scrollTop = scrollTop
@@ -920,6 +899,7 @@ watch([currentChannel, () => props.projectName], ([newChannel]) => {
   showProjectConfig.value = false
   exitSelectionMode()
   store.setChannel(newChannel)
+  sessionPage.value = 1
   loadSessions()
 }, { immediate: true })
 
@@ -1059,25 +1039,6 @@ onUnmounted(() => {
   background: rgba(24, 160, 88, 0.04);
 }
 
-.drag-handle {
-  cursor: move;
-  width: 24px;
-  height: 24px;
-  padding: 4px;
-  opacity: 0.4;
-  transition: all 0.2s;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.session-item:hover .drag-handle {
-  opacity: 1;
-  background-color: rgba(24, 160, 88, 0.1);
-  border-radius: 4px;
-}
-
 .selection-checkbox {
   width: 24px;
   min-width: 24px;
@@ -1172,13 +1133,10 @@ onUnmounted(() => {
   margin-top: auto;
 }
 
-/* Draggable states */
-.ghost {
-  opacity: 0.4;
-}
-
-.chosen {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+.list-pagination {
+  display: flex;
+  justify-content: center;
+  margin: 20px 0 4px;
 }
 
 /* Search Results */

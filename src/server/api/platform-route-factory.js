@@ -63,9 +63,16 @@ function makeUnsupported(context) {
   };
 }
 function legacyArguments(route, request) {
-  if (route.capability === 'projects' && route.operation === 'listProjects') return [{ force: request.query?.fresh === '1' }];
+  const listOptions = () => {
+    const options = { force: request.query?.fresh === '1' };
+    if (request.query?.page != null) options.page = request.query.page;
+    if (request.query?.limit != null) options.limit = request.query.limit;
+    if (request.query?.q || request.query?.search) options.q = request.query.q || request.query.search;
+    return options;
+  };
+  if (route.capability === 'projects' && route.operation === 'listProjects') return [listOptions()];
   if (route.capability === 'sessions' && route.operation === 'listSessions') {
-    return [request.params.projectName, { force: request.query?.fresh === '1' }];
+    return [request.params.projectName, listOptions()];
   }
   if (route.capability === 'channels') {
     if (route.method === 'POST') return [request.body || {}];

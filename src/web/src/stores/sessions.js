@@ -22,35 +22,43 @@ const SESSION_REFRESH_DELAYS_MS = [2500, 5000, 10000, 15000]
 const SNAPSHOT_REFRESH_MAX_WAIT_MS = 185000
 const projectRefreshStartedAt = new Map()
 const sessionRefreshStartedAt = new Map()
+const DEFAULT_PAGE_SIZE = 20
 
 
 function getSessionCacheKey(channel, projectName) {
   return `${channel}:${projectName}`
 }
 
-function getCachedProjects(channel) {
-  const entry = projectsCache.get(channel)
+function listCacheSuffix({ page = 1, limit = DEFAULT_PAGE_SIZE, query = '' } = {}) {
+  return `:page=${page}:limit=${limit}:query=${query || ''}`
+}
+
+function getCachedProjects(channel, options = {}) {
+  const key = `${channel}${listCacheSuffix(options)}`
+  const entry = projectsCache.get(key)
   if (!entry) return null
   if ((Date.now() - entry.timestamp) > PROJECTS_CACHE_TTL) {
-    projectsCache.delete(channel)
+    projectsCache.delete(key)
     return null
   }
   return entry.payload
 }
 
-function setCachedProjects(channel, payload) {
-  projectsCache.set(channel, {
+function setCachedProjects(channel, payload, options = {}) {
+  projectsCache.set(`${channel}${listCacheSuffix(options)}`, {
     timestamp: Date.now(),
     payload
   })
 }
 
 function invalidateProjectsCache(channel) {
-  projectsCache.delete(channel)
+  Array.from(projectsCache.keys())
+    .filter(key => key.startsWith(`${channel}:`))
+    .forEach(key => projectsCache.delete(key))
 }
 
-function getCachedSessions(channel, projectName) {
-  const key = getSessionCacheKey(channel, projectName)
+function getCachedSessions(channel, projectName, options = {}) {
+  const key = `${getSessionCacheKey(channel, projectName)}${listCacheSuffix(options)}`
   const entry = sessionsCache.get(key)
   if (!entry) return null
   if ((Date.now() - entry.timestamp) > SESSIONS_CACHE_TTL) {
@@ -60,8 +68,8 @@ function getCachedSessions(channel, projectName) {
   return entry.payload
 }
 
-function setCachedSessions(channel, projectName, payload) {
-  sessionsCache.set(getSessionCacheKey(channel, projectName), {
+function setCachedSessions(channel, projectName, payload, options = {}) {
+  sessionsCache.set(`${getSessionCacheKey(channel, projectName)}${listCacheSuffix(options)}`, {
     timestamp: Date.now(),
     payload
   })
@@ -69,7 +77,9 @@ function setCachedSessions(channel, projectName, payload) {
 
 function invalidateSessionsCache(channel, projectName) {
   if (projectName) {
-    sessionsCache.delete(getSessionCacheKey(channel, projectName))
+    Array.from(sessionsCache.keys())
+      .filter(key => key.startsWith(`${getSessionCacheKey(channel, projectName)}:`))
+      .forEach(key => sessionsCache.delete(key))
     return
   }
   // remove all sessions for channel
@@ -114,6 +124,8 @@ export const useSessionsStore = defineStore('sessions', () => {
   const currentProjectInfo = ref(null)
   const projectsMeta = ref(null)
   const sessionsMeta = ref(null)
+  const projectsPagination = ref({ page: 1, limit: DEFAULT_PAGE_SIZE, total: 0, hasMore: false })
+  const sessionsPagination = ref({ page: 1, limit: DEFAULT_PAGE_SIZE, total: 0, hasMore: false })
   const sessions = ref([])
   const aliases = ref({})
   const totalSize = ref(0)
@@ -135,25 +147,23 @@ export const useSessionsStore = defineStore('sessions', () => {
   const sessionsUsingFallback = computed(() => Boolean(sessionsMeta.value?.fallback || sessionsMeta.value?.stale))
   const projectsPending = computed(() => Boolean(
     projectsMeta.value?.refreshing
-    && projectsMeta.value?.fallback
     && projects.value.length === 0
   ))
   const sessionsPending = computed(() => Boolean(
     sessionsMeta.value?.refreshing
-    && sessionsMeta.value?.fallback
     && sessions.value.length === 0
   ))
 
   function syncSessionsCache() {
     if (!currentProject.value) return
-    totalSize.value = sessions.value.reduce((sum, session) => sum + (Number(session.size) || 0), 0)
     setCachedSessions(currentChannel.value, currentProject.value, {
       sessions: sessions.value,
       aliases: aliases.value,
       totalSize: totalSize.value,
       projectInfo: currentProjectInfo.value,
-      meta: sessionsMeta.value
-    })
+      meta: sessionsMeta.value,
+      pagination: sessionsPagination.value
+    }, sessionsPagination.value)
   }
 
   // Actions
@@ -169,11 +179,13 @@ export const useSessionsStore = defineStore('sessions', () => {
     projects.value = []
     currentProject.value = null
     projectsMeta.value = null
+    projectsPagination.value = { page: 1, limit: DEFAULT_PAGE_SIZE, total: 0, hasMore: false }
     sessions.value = []
     aliases.value = {}
     totalSize.value = 0
     currentProjectInfo.value = null
     sessionsMeta.value = null
+    sessionsPagination.value = { page: 1, limit: DEFAULT_PAGE_SIZE, total: 0, hasMore: false }
     error.value = null
 
     const cachedProjects = getCachedProjects(channel)
@@ -181,6 +193,7 @@ export const useSessionsStore = defineStore('sessions', () => {
       projects.value = cachedProjects.projects || []
       currentProject.value = cachedProjects.currentProject || projects.value[0]?.name || null
       projectsMeta.value = cachedProjects.meta || null
+      projectsPagination.value = cachedProjects.pagination || projectsPagination.value
     }
   }
 
@@ -236,15 +249,16 @@ export const useSessionsStore = defineStore('sessions', () => {
     })
   }
 
-  async function fetchProjects({ force = false, silent = false, pollAttempt = 0, fresh = false } = {}) {
+  async function fetchProjects({ page = 1, limit = DEFAULT_PAGE_SIZE, query = '', force = false, silent = false, pollAttempt = 0, fresh = false } = {}) {
     if (!silent) loading.value = true
     error.value = null
     try {
 
       const channel = currentChannel.value
+      const listOptions = { page, limit, query }
 
       if (!force && !fresh) {
-        const cached = getCachedProjects(channel)
+        const cached = getCachedProjects(channel, listOptions)
         // A cached stale result that was still refreshing must be rechecked
         // when the user returns to this channel, otherwise its poll cycle
         // would be lost when setChannel() clears the old timer.
@@ -252,29 +266,41 @@ export const useSessionsStore = defineStore('sessions', () => {
           projects.value = cached.projects || []
           currentProject.value = cached.currentProject || projects.value[0]?.name || null
           projectsMeta.value = cached.meta || null
+          projectsPagination.value = cached.pagination || { page, limit, total: projects.value.length, hasMore: false }
           if (!silent) loading.value = false
           return
         }
       }
 
       const shareRequest = !force && !fresh
-      let request = shareRequest ? projectsInflight.get(channel) : null
+      const requestKey = `${channel}${listCacheSuffix(listOptions)}`
+      let request = shareRequest ? projectsInflight.get(requestKey) : null
       if (!request) {
-        request = getProjects(channel, { fresh: force || fresh })
-        if (shareRequest) projectsInflight.set(channel, request)
+        const requestOptions = { fresh: force || fresh }
+        if (page !== 1) requestOptions.page = page
+        if (limit !== DEFAULT_PAGE_SIZE) requestOptions.limit = limit
+        if (query) requestOptions.q = query
+        request = getProjects(channel, requestOptions)
+        if (shareRequest) projectsInflight.set(requestKey, request)
       }
       let data
       try {
         data = await request
       } finally {
-        if (shareRequest && projectsInflight.get(channel) === request) {
-          projectsInflight.delete(channel)
+        if (shareRequest && projectsInflight.get(requestKey) === request) {
+          projectsInflight.delete(requestKey)
         }
       }
       if (currentChannel.value !== channel) return
       const nextProjects = Array.isArray(data.projects) ? data.projects : []
-      const shouldApplyProjects = nextProjects.length > 0 || projects.value.length === 0 || data.meta?.fallback !== true
+      const shouldApplyProjects = nextProjects.length > 0 || projects.value.length === 0 || data.meta?.refreshing !== true
       projectsMeta.value = data.meta || null
+      projectsPagination.value = data.pagination || {
+        page,
+        limit,
+        total: nextProjects.length,
+        hasMore: false
+      }
       if (data.meta?.error) {
         error.value = data.meta.error
       }
@@ -287,8 +313,9 @@ export const useSessionsStore = defineStore('sessions', () => {
           setCachedProjects(channel, {
             projects: nextProjects,
             currentProject: currentProject.value,
-            meta: data.meta || null
-          })
+            meta: data.meta || null,
+            pagination: projectsPagination.value
+          }, listOptions)
         }
       }
 
@@ -304,12 +331,13 @@ export const useSessionsStore = defineStore('sessions', () => {
     }
   }
 
-  async function fetchSessions(projectName, { force = false, silent = false, pollAttempt = 0, fresh = false } = {}) {
+  async function fetchSessions(projectName, { page = 1, limit = DEFAULT_PAGE_SIZE, query = '', force = false, silent = false, pollAttempt = 0, fresh = false } = {}) {
     if (!silent) loading.value = true
     error.value = null
     try {
       const channel = currentChannel.value
-      if (currentProject.value !== projectName && !getCachedSessions(channel, projectName)) {
+      const listOptions = { page, limit, query }
+      if (currentProject.value !== projectName && !getCachedSessions(channel, projectName, listOptions)) {
         sessions.value = []
         aliases.value = {}
         totalSize.value = 0
@@ -318,7 +346,7 @@ export const useSessionsStore = defineStore('sessions', () => {
       }
 
       if (!force) {
-        const cached = getCachedSessions(channel, projectName)
+        const cached = getCachedSessions(channel, projectName, listOptions)
         if (cached) {
           sessions.value = cached.sessions || []
           aliases.value = cached.aliases || {}
@@ -326,17 +354,28 @@ export const useSessionsStore = defineStore('sessions', () => {
           currentProject.value = projectName
           currentProjectInfo.value = cached.projectInfo || null
           sessionsMeta.value = cached.meta || null
+          sessionsPagination.value = cached.pagination || { page, limit, total: sessions.value.length, hasMore: false }
           if (!silent) loading.value = false
           return
         }
       }
 
       currentProject.value = projectName
-      const data = await getSessions(projectName, channel, { fresh })
+      const requestOptions = { fresh }
+      if (page !== 1) requestOptions.page = page
+      if (limit !== DEFAULT_PAGE_SIZE) requestOptions.limit = limit
+      if (query) requestOptions.q = query
+      const data = await getSessions(projectName, channel, requestOptions)
       if (currentChannel.value !== channel || currentProject.value !== projectName) return
       const nextSessions = Array.isArray(data.sessions) ? data.sessions : []
-      const shouldApplySessions = nextSessions.length > 0 || sessions.value.length === 0 || data.meta?.fallback !== true
+      const shouldApplySessions = nextSessions.length > 0 || sessions.value.length === 0 || data.meta?.refreshing !== true
       sessionsMeta.value = data.meta || null
+      sessionsPagination.value = data.pagination || {
+        page,
+        limit,
+        total: nextSessions.length,
+        hasMore: false
+      }
       if (data.meta?.error) {
         error.value = data.meta.error
       }
@@ -354,8 +393,9 @@ export const useSessionsStore = defineStore('sessions', () => {
             aliases: data.aliases || {},
             totalSize: data.totalSize || 0,
             projectInfo: data.projectInfo || null,
-            meta: data.meta || null
-          })
+            meta: data.meta || null,
+            pagination: sessionsPagination.value
+          }, listOptions)
         }
       }
 
@@ -456,7 +496,12 @@ export const useSessionsStore = defineStore('sessions', () => {
   async function forkSession(sessionId, options = {}) {
     try {
       const data = await forkSessionApi(currentProject.value, sessionId, currentChannel.value, options)
-      await fetchSessions(currentProject.value, { force: true, fresh: true })
+      await fetchSessions(currentProject.value, {
+        page: sessionsPagination.value.page,
+        limit: sessionsPagination.value.limit,
+        force: true,
+        fresh: true
+      })
       return data.newSessionId
     } catch (err) {
       error.value = err.message
@@ -467,6 +512,8 @@ export const useSessionsStore = defineStore('sessions', () => {
   async function retryProjects() {
     clearProjectRefreshCycle(currentChannel.value)
     return fetchProjects({
+      page: projectsPagination.value.page,
+      limit: projectsPagination.value.limit,
       force: true,
       fresh: Boolean(projectsMeta.value?.error)
     })
@@ -476,6 +523,8 @@ export const useSessionsStore = defineStore('sessions', () => {
     if (!projectName) return
     clearSessionRefreshCycle(currentChannel.value, projectName)
     return fetchSessions(projectName, {
+      page: sessionsPagination.value.page,
+      limit: sessionsPagination.value.limit,
       force: true,
       fresh: Boolean(sessionsMeta.value?.error)
     })
@@ -494,8 +543,9 @@ export const useSessionsStore = defineStore('sessions', () => {
       setCachedProjects(currentChannel.value, {
         projects: projects.value,
         currentProject: currentProject.value,
-        meta: projectsMeta.value
-      })
+        meta: projectsMeta.value,
+        pagination: projectsPagination.value
+      }, projectsPagination.value)
     } catch (err) {
       error.value = err.message
       throw err
@@ -532,8 +582,9 @@ export const useSessionsStore = defineStore('sessions', () => {
         aliases: aliases.value,
         totalSize: totalSize.value,
         projectInfo: currentProjectInfo.value,
-        meta: sessionsMeta.value
-      })
+        meta: sessionsMeta.value,
+        pagination: sessionsPagination.value
+      }, sessionsPagination.value)
     } catch (err) {
       error.value = err.message
       throw err
@@ -546,6 +597,8 @@ export const useSessionsStore = defineStore('sessions', () => {
     currentProjectInfo,
     projectsMeta,
     sessionsMeta,
+    projectsPagination,
+    sessionsPagination,
     sessions,
     aliases,
     totalSize,

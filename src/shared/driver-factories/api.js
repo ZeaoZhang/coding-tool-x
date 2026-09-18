@@ -120,10 +120,10 @@ function createApiOperationsDriver({ platform, runtime, manifest, config, sessio
     if (!payload.meta && typeof sessionHistoryIndex?.getSourceIndexMeta === 'function') {
       payload.meta = sessionHistoryIndex.getSourceIndexMeta(platform);
     }
-    if (isProjectList && !Object.prototype.hasOwnProperty.call(payload, 'currentProject')) {
-      payload.currentProject = platform === 'claude' ? config?.currentProject || null : null;
-    }
-    return payload;
+      if (isProjectList && !Object.prototype.hasOwnProperty.call(payload, 'currentProject')) {
+        payload.currentProject = platform === 'claude' ? config?.currentProject || null : null;
+      }
+      return payload;
   };
 
   for (const operation of operations) {
@@ -146,7 +146,7 @@ function createApiOperationsDriver({ platform, runtime, manifest, config, sessio
               : operation === 'messages'
                 ? index.getMessagePage?.(platform, sessionId, {
                   page: Number(requestContext.query?.page) || 1,
-                  limit: Number(requestContext.query?.limit) || 50,
+                  limit: Number(requestContext.query?.limit) || 20,
                   order: requestContext.query?.order,
                   consistency: 'stale-ok'
                 })
@@ -159,10 +159,26 @@ function createApiOperationsDriver({ platform, runtime, manifest, config, sessio
           route
         });
         const operationName = targetOperation(capability, operation);
+        const pageMethod = capability === 'projects' && operation === 'listProjects'
+          ? 'listProjectsPage'
+          : capability === 'sessions' && operation === 'listSessions'
+            ? 'listSessionsPage'
+            : null;
+        const invocationArgs = argsFor(capability, operation, requestContext);
+        // Prefer the platform driver's page method so aliases, fork metadata,
+        // and platform-specific project normalization remain intact. The
+        // shared index is only the compatibility fallback for older drivers.
+        if (sessionHistoryIndex && pageMethod && (!target || typeof target[pageMethod] !== 'function')) {
+          const value = capability === 'projects'
+            ? await sessionHistoryIndex.listProjectsPage(platform, invocationArgs[0])
+            : await sessionHistoryIndex.listSessionsPage(platform, invocationArgs[0], invocationArgs[1]);
+          return resultFor(requestContext, 'ok', await decorateReadModel(capability, operation, value));
+        }
         if (!target || typeof target[operationName] !== 'function') {
           return resultFor(requestContext, 'unsupported');
         }
-        const value = await target[operationName](...argsFor(capability, operation, requestContext));
+        const method = pageMethod && typeof target[pageMethod] === 'function' ? pageMethod : operationName;
+        const value = await target[method](...invocationArgs);
         if (value && typeof value === 'object' && typeof value.status === 'string') {
           if (value.status !== 'ok') return resultFor(requestContext, value.status, undefined, value.error, value.cause);
           return resultFor(requestContext, 'ok', await decorateReadModel(capability, operation, value.data));

@@ -298,6 +298,54 @@ async function inventory() {
   return descriptors;
 }
 
+async function summarize(descriptor) {
+  const header = readDescriptorMetadata(descriptor.filePath, descriptor.size);
+  let firstMessage = null;
+  let model = null;
+  try {
+    const fd = fs.openSync(descriptor.filePath, 'r');
+    try {
+      const buffer = Buffer.alloc(64 * 1024);
+      const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
+      const lines = buffer.subarray(0, bytesRead).toString('utf8')
+        .split(/\r?\n/).filter(line => line.trim());
+      const records = [];
+      for (const line of lines) {
+        try { records.push(JSON.parse(line)); } catch (_) {}
+      }
+      const state = records.length === 1 && records[0]?.messages
+        ? records[0]
+        : null;
+      const messages = state?.messages || records;
+      const firstUser = messages
+        .map(record => normalizeMessageRecord(record))
+        .find(message => message?.role === 'user' && message.content);
+      firstMessage = firstUser?.content || null;
+      model = messages.find(record => record?.model)?.model || null;
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch (_) {}
+  const projectPath = header.projectPath || descriptor.projectRoot || null;
+  const projectName = header.projectHash || descriptor.projectName
+    || (projectPath ? getFilePathHash(projectPath) : 'unknown');
+  return {
+    session: {
+      sessionId: header.sessionId || descriptor.sessionId,
+      projectName,
+      projectDisplayName: projectPath ? path.basename(projectPath) : `Project ${String(projectName).slice(0, 8)}`,
+      projectFullPath: projectPath,
+      firstMessage,
+      gitBranch: null,
+      provider: null,
+      model,
+      startedAt: null,
+      updatedAt: descriptor.mtimeMs,
+      extraJson: JSON.stringify({ projectPath, storageName: path.basename(path.dirname(path.dirname(descriptor.filePath))) })
+    }
+  };
+}
+
 /**
  * Parse a Gemini session file.
  */
@@ -341,4 +389,4 @@ async function parse(descriptor) {
   return { session, messages };
 }
 
-module.exports = { configure, inventory, parse, extractContentText, normalizeMessageRecord, parseSessionContent };
+module.exports = { configure, inventory, summarize, parse, extractContentText, normalizeMessageRecord, parseSessionContent };

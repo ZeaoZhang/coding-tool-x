@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { getCodexDir } = require('./config');
-const { parseSession } = require('./parser');
+const { parseSession, parseSessionSummary } = require('./parser');
 
 function configure({ pathContext } = {}) {
   require('./config').configure?.({ pathContext });
@@ -90,6 +90,12 @@ async function inventory({ projectsDir } = {}) {
   }));
 }
 
+async function summarize(descriptor) {
+  const parsed = parseSessionSummary(descriptor.filePath, descriptor);
+  if (!parsed?.session) return { sessionId: descriptor.sessionId, projectName: descriptor.projectHint || 'unknown' };
+  return parsed;
+}
+
 /**
  * Parse a Codex session file.
  */
@@ -169,4 +175,4 @@ async function parse(descriptor) {
   return { session, messages: normalizedMessages };
 }
 
-module.exports = { configure, inventory, parse, extractCodexProjectName };
+module.exports = { configure, inventory, summarize, parse, extractCodexProjectName };

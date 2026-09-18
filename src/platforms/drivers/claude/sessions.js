@@ -11,7 +11,7 @@ function createDriver(context = {}) {
     servicePath: './claude/sessions-implementation',
     localServicePath: '../platforms/drivers/claude/sessions-implementation',
     adapterLocalPath: '../platforms/drivers/claude/session-history-adapter',
-    adapterMethods: { inventory: 'inventory', parse: 'parse' },
+    adapterMethods: { inventory: 'inventory', summarize: 'summarize', parse: 'parse' },
     methods: {
       launch: 'launch',
       saveSessionOrder: 'saveSessionOrder',
@@ -43,6 +43,14 @@ function createDriver(context = {}) {
           projectName,
           request
         );
+      },
+      listSessionsPage: (service, projectNameOrRequest, options = {}) => {
+        const descriptorRequest = projectNameOrRequest && typeof projectNameOrRequest === 'object';
+        const request = descriptorRequest ? projectNameOrRequest : options;
+        const projectName = descriptorRequest
+          ? request.params?.projectName
+          : projectNameOrRequest;
+        return service.getSessionsPage(request.config || {}, projectName, request);
       },
       recent: (service, limitOrRequest, options = {}) => {
         const descriptorRequest = limitOrRequest && typeof limitOrRequest === 'object';

@@ -345,7 +345,33 @@ function getProjectRows() {
   `);
 }
 
-function getSessionRowsByProjectId(projectId) {
+function getProjectRowsPage(options = {}) {
+  const page = Math.max(1, Number.parseInt(options.page, 10) || 1);
+  const limit = Math.max(1, Math.min(100, Number.parseInt(options.limit, 10) || 20));
+  const query = String(options.q || options.search || '').trim();
+  const like = `%${query}%`;
+  const where = query ? 'WHERE p.id LIKE ? OR p.name LIKE ? OR p.worktree LIKE ?' : '';
+  const params = query ? [like, like, like] : [];
+  const total = Number(_query(`SELECT COUNT(*) AS total FROM project p ${where}`, ...params)[0]?.total) || 0;
+  const rows = _query(`
+    SELECT
+      p.*,
+      (SELECT s.directory FROM session s
+       WHERE s.project_id = p.id AND s.time_archived IS NULL
+       ORDER BY s.time_updated DESC LIMIT 1) AS session_directory,
+      (SELECT COUNT(*) FROM session s WHERE s.project_id = p.id AND s.time_archived IS NULL) AS session_count
+    FROM project p
+    ${where}
+    ORDER BY p.time_updated DESC, p.id ASC
+    LIMIT ? OFFSET ?
+  `, ...params, limit, (page - 1) * limit);
+  return { rows, page, limit, total };
+}
+
+function getSessionRowsByProjectId(projectId, options = {}) {
+  const pagination = options.limit != null
+    ? `LIMIT ${Math.max(1, Math.min(100, Number(options.limit) || 20))} OFFSET ${Math.max(0, Number(options.offset) || 0)}`
+    : '';
   return _query(`
     SELECT
       s.id,
@@ -384,7 +410,8 @@ function getSessionRowsByProjectId(projectId) {
     FROM session s
     WHERE s.project_id = ?
       AND s.time_archived IS NULL
-    ORDER BY s.time_updated DESC
+    ORDER BY s.time_updated DESC, s.id ASC
+    ${pagination}
   `, projectId);
 }
 
@@ -484,8 +511,7 @@ function normalizeSession(session, projectId) {
 // Public API
 // ---------------------------------------------------------------------------
 
-function getProjects(_options = {}) {
-  const projects = getProjectRows().map((project) => {
+function normalizeProjectRow(project) {
     const fallbackPath = project.worktree && project.worktree !== '/'
       ? project.worktree
       : project.session_directory || project.worktree || '/';
@@ -504,10 +530,23 @@ function getProjects(_options = {}) {
       lastUsed: toIsoTime(project.time_updated),
       source: 'opencode'
     };
-  });
+}
+
+function getProjects(_options = {}) {
+  const projects = getProjectRows().map(normalizeProjectRow);
 
   const order = getProjectOrder();
   return sortByOrder(projects, order, (a, b) => (b.lastUsed || '').localeCompare(a.lastUsed || ''));
+}
+
+function getProjectsPage(options = {}) {
+  const { rows, page, limit, total } = getProjectRowsPage(options);
+  const projects = rows.map(normalizeProjectRow);
+  return {
+    projects,
+    currentProject: null,
+    pagination: { page, limit, total, hasMore: page * limit < total }
+  };
 }
 
 function getSessionsByProjectId(projectId, _options = {}) {
@@ -521,6 +560,35 @@ function getSessionsByProjectId(projectId, _options = {}) {
   return sortByOrder(fallbackSorted, order, (a, b) =>
     new Date(b.mtime).getTime() - new Date(a.mtime).getTime()
   );
+}
+
+function getSessionsPage(projectId, options = {}) {
+  const page = Math.max(1, Number.parseInt(options.page, 10) || 1);
+  const limit = Math.max(1, Math.min(100, Number.parseInt(options.limit, 10) || 20));
+  const aggregate = _query(`
+    SELECT COUNT(*) AS total,
+      COALESCE(SUM(
+        COALESCE((SELECT SUM(LENGTH(CAST(m.data AS BLOB))) FROM message m WHERE m.session_id = s.id), 0)
+        + COALESCE((SELECT SUM(LENGTH(CAST(p.data AS BLOB))) FROM part p WHERE p.session_id = s.id), 0)
+        + COALESCE(LENGTH(CAST(s.title AS BLOB)), 0)
+        + COALESCE(LENGTH(CAST(s.slug AS BLOB)), 0)
+        + COALESCE(LENGTH(CAST(s.directory AS BLOB)), 0)
+      ), 0) AS total_size
+    FROM session s
+    WHERE s.project_id = ? AND s.time_archived IS NULL
+  `, projectId)[0] || {};
+  const sessions = getSessionRowsByProjectId(projectId, {
+    limit,
+    offset: (page - 1) * limit
+  }).map(session => normalizeSession(session, projectId));
+  const total = Number(aggregate.total) || 0;
+  const totalSize = Number(aggregate.total_size) || 0;
+  return {
+    sessions,
+    totalSize,
+    projectInfo: { sessionCount: total, totalSize },
+    pagination: { page, limit, total, hasMore: page * limit < total }
+  };
 }
 
 function searchSessions(keyword) {
@@ -638,7 +706,7 @@ function getSessionMessages(sessionId, options = {}) {
   const session = getSessionById(sessionId);
   if (!session) return null;
   const page = Math.max(1, Number.parseInt(options.page, 10) || 1);
-  const limit = Math.max(1, Math.min(200, Number.parseInt(options.limit, 10) || 50));
+  const limit = Math.max(1, Math.min(200, Number.parseInt(options.limit, 10) || 20));
   const order = String(options.order || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
   const ordered = order === 'asc' ? [...session.messages] : [...session.messages].reverse();
   const offset = (page - 1) * limit;
@@ -907,7 +975,9 @@ module.exports = {
   getOpenCodeDbPath,
   isOpenCodeInstalled,
   getProjects,
+  getProjectsPage,
   getSessionsByProjectId,
+  getSessionsPage,
   getSessionById,
   getSessionStatus,
   getSessionMessages,

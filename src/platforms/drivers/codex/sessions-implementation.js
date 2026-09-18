@@ -250,7 +250,7 @@ function normalizeSession(codexSession) {
  */
 async function getProjects(options = {}) {
   if (!fs.existsSync(getSessionsDir())) return [];
-  const projects = await getSessionHistoryIndex({ ...options, projectsDir: getSessionsDir() }).listProjects('codex', options);
+  const projects = await getSessionHistoryIndex({ ...options, projectsDir: getSessionsDir() }).getAllProjects('codex', options);
   const savedOrder = getProjectOrder();
   if (savedOrder.length === 0) return projects;
 
@@ -258,6 +258,11 @@ async function getProjects(options = {}) {
   const ordered = savedOrder.flatMap(name => byName.has(name) ? [byName.get(name)] : []);
   savedOrder.forEach(name => byName.delete(name));
   return [...ordered, ...byName.values()];
+}
+
+async function getProjectsPage(options = {}) {
+  return getSessionHistoryIndex({ ...options, projectsDir: getSessionsDir() })
+    .listProjectsPage('codex', options);
 }
 
 /**
@@ -282,6 +287,21 @@ async function getSessionsByProject(projectName, options = {}) {
   const ordered = savedOrder.flatMap(id => byId.has(id) ? [byId.get(id)] : []);
   savedOrder.forEach(id => byId.delete(id));
   return [...byId.values(), ...ordered];
+}
+
+async function getSessionsPage(projectName, options = {}) {
+  const payload = await getSessionHistoryIndex().listSessionsPage('codex', projectName, options);
+  const forkRelations = require('../claude/sessions-implementation').getForkRelations();
+  const aliases = require('../../../server/services/alias').loadAliases();
+  return {
+    ...payload,
+    sessions: payload.sessions.map(session => ({
+      ...session,
+      mtime: new Date(session.mtime).toISOString(),
+      forkedFrom: forkRelations[session.sessionId] || null,
+      alias: aliases[session.sessionId] || null
+    }))
+  };
 }
 
 /**
@@ -825,7 +845,9 @@ module.exports = {
   scanSessionFiles,
   getAllSessions,
   getProjects,
+  getProjectsPage,
   getSessionsByProject,
+  getSessionsPage,
   getSessionById,
   searchSessions,
   normalizeSession,

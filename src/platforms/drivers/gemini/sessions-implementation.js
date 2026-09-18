@@ -649,7 +649,7 @@ function getProjectPath(projectHash, options = {}) {
  * @returns {Array} 项目对象数组
  */
 async function getProjects(options = {}) {
-  const projects = await getSessionHistoryIndex().listProjects('gemini', options);
+  const projects = await getSessionHistoryIndex().getAllProjects('gemini', options);
   const paths = buildPathMapping();
   return projects.map(project => {
     const fullPath = project.fullPath || paths.get(project.name) || null;
@@ -662,6 +662,25 @@ async function getProjects(options = {}) {
       lastUpdated: new Date(project.lastUsed).toISOString()
     };
   });
+}
+
+async function getProjectsPage(options = {}) {
+  const payload = await getSessionHistoryIndex().listProjectsPage('gemini', options);
+  const paths = buildPathMapping();
+  return {
+    ...payload,
+    projects: payload.projects.map(project => {
+      const fullPath = project.fullPath || paths.get(project.name) || null;
+      return {
+        ...project,
+        displayName: fullPath ? path.basename(fullPath) : project.displayName,
+        path: fullPath,
+        fullPath,
+        storageName: fullPath ? path.basename(fullPath) : project.name,
+        lastUpdated: project.lastUsed ? new Date(project.lastUsed).toISOString() : null
+      };
+    })
+  };
 }
 
 /**
@@ -688,6 +707,30 @@ async function getProjectSessions(projectHash, options = {}) {
     storageName: session.extra?.storageName || session.projectName,
     projectRoot: session.projectFullPath || null
   }));
+}
+
+async function getProjectSessionsPage(projectHash, options = {}) {
+  const payload = await getSessionHistoryIndex().listSessionsPage('gemini', projectHash, options);
+  return {
+    ...payload,
+    sessions: payload.sessions.map(session => ({
+      sessionId: session.sessionId,
+      mtime: new Date(session.mtime).toISOString(),
+      size: session.size,
+      filePath: session.filePath,
+      gitBranch: null,
+      firstMessage: session.firstMessage,
+      forkedFrom: session.extra?.forkedFrom || null,
+      source: 'gemini',
+      tokens: session.tokens?.total ?? session.tokens ?? 0,
+      cost: session.extra?.cost || 0,
+      model: session.model || 'gemini-2.5-pro',
+      projectHash: session.projectName,
+      projectName: session.projectName,
+      storageName: session.extra?.storageName || session.projectName,
+      projectRoot: session.projectFullPath || null
+    }))
+  };
 }
 
 /**
@@ -936,7 +979,9 @@ module.exports = {
   configure,
   getAllSessions,
   getProjects,
+  getProjectsPage,
   getProjectSessions,
+  getProjectSessionsPage,
   getSession,
   getSessionById,
   deleteSession,
