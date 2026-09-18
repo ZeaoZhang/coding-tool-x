@@ -5,7 +5,10 @@
  */
 
 const express = require('express');
+const path = require('path');
 const { PluginsService } = require('../services/plugins-service');
+const { SkillRefreshTaskService } = require('../services/skill-refresh-task-service');
+const { PATHS } = require('../../config/paths');
 const { maskToken } = require('../services/oauth-utils');
 const { sendApiError } = require('./validation-errors');
 const { resolveManagedPlatform } = require('../services/platform-resolution');
@@ -13,6 +16,13 @@ const { validateKnownProjectCwd } = require('../services/project-path-validation
 
 const router = express.Router();
 const pluginServices = new Map();
+let routerOptions = {};
+let defaultRefreshTasks;
+
+router.createRouter = (options = {}) => {
+  routerOptions = options;
+  return router;
+};
 
 function resolvePlatform(rawPlatform) {
   return resolveManagedPlatform(rawPlatform);
@@ -33,6 +43,26 @@ function getPluginsService(req) {
     service: pluginServices.get(platform),
     warning: resolution.warning
   };
+}
+
+function getPluginServiceForPlatform(platform) {
+  if (!pluginServices.has(platform)) {
+    pluginServices.set(platform, new PluginsService(platform));
+  }
+  return pluginServices.get(platform);
+}
+
+function getRefreshTasks() {
+  if (routerOptions.refreshTasks) return routerOptions.refreshTasks;
+  if (!defaultRefreshTasks) {
+    const persistencePath = PATHS.pluginRefreshTasks
+      || path.join(PATHS.storage || process.cwd(), 'runtime', 'plugin-refresh-tasks.json');
+    defaultRefreshTasks = new SkillRefreshTaskService({
+      persistencePath,
+      worker: context => getPluginServiceForPlatform(context.platform).refreshRemotePlugins(context)
+    });
+  }
+  return defaultRefreshTasks;
 }
 
 async function getRequestOptions(req, service) {
@@ -147,11 +177,15 @@ router.get('/', async (req, res) => {
     const { platform, service, warning } = getPluginsService(req);
     const options = await getRequestOptions(req, service);
     const result = invokeWithOptions(service.listPlugins.bind(service), [], options);
+    const plugins = typeof service.sanitizePluginList === 'function'
+      ? service.sanitizePluginList(result.plugins)
+      : result.plugins;
 
     res.json({
       success: true,
       platform,
       ...result,
+      plugins,
       ...(warning ? { warnings: [warning] } : {})
     });
   } catch (err) {
@@ -168,12 +202,11 @@ router.get('/market', async (req, res) => {
   try {
     const { platform, service, warning } = getPluginsService(req);
     const options = await getRequestOptions(req, service);
-    const forceRefresh = req.query.refresh === '1';
-    if (forceRefresh) {
-      console.log(`[Plugins API] Refreshing market plugins for ${platform}...`);
-    }
-    const plugins = await invokeWithOptions(service.getMarketPlugins.bind(service), [forceRefresh], options);
-    console.log(`[Plugins API] ${platform}: ${plugins.length} market plugins loaded (refresh=${forceRefresh})`);
+    const marketPlugins = await invokeWithOptions(service.getMarketPlugins.bind(service), [false], options);
+    const plugins = typeof service.sanitizePluginList === 'function'
+      ? service.sanitizePluginList(marketPlugins)
+      : marketPlugins;
+    console.log(`[Plugins API] ${platform}: ${plugins.length} cached market plugins loaded`);
 
     res.json({
       success: true,
@@ -184,6 +217,53 @@ router.get('/market', async (req, res) => {
   } catch (err) {
     console.error('[Plugins API] Get market plugins error:', err);
     sendApiError(res, err);
+  }
+});
+
+/**
+ * 启动插件远端全量缓存任务
+ * POST /api/plugins/refresh
+ */
+router.post('/refresh', async (req, res) => {
+  try {
+    const { platform, service } = getPluginsService(req);
+    const options = await getRequestOptions(req, service);
+    const refreshTasks = getRefreshTasks();
+    if (!refreshTasks) throw new Error('Plugin refresh task service is unavailable');
+    const task = refreshTasks.enqueue({
+      platform,
+      scope: options.scope || 'user',
+      projectPath: options.scope === 'project' ? options.cwd : null,
+      reason: 'manual'
+    });
+    res.status(202).json({ success: true, platform, task });
+  } catch (err) {
+    console.error('[Plugins API] Refresh plugins error:', err);
+    sendApiError(res, err);
+  }
+});
+
+router.get('/refresh/:taskId', async (req, res) => {
+  try {
+    const { platform, service } = getPluginsService(req);
+    const options = await getRequestOptions({ query: req.query }, service);
+    const refreshTasks = getRefreshTasks();
+    const task = refreshTasks?.get(req.params.taskId);
+    if (!task) return res.status(404).json({ success: false, message: 'Refresh task not found' });
+    const taskScope = task.scope || 'user';
+    const taskProjectPath = taskScope === 'project' ? (task.projectPath || null) : null;
+    const requestedProjectPath = options.scope === 'project' ? (options.cwd || null) : null;
+    if (
+      task.platform !== platform
+      || taskScope !== (options.scope || 'user')
+      || taskProjectPath !== requestedProjectPath
+    ) {
+      return res.status(404).json({ success: false, message: 'Refresh task not found' });
+    }
+    return res.json({ success: true, task });
+  } catch (err) {
+    console.error('[Plugins API] Get refresh task error:', err);
+    return sendApiError(res, err);
   }
 });
 
@@ -435,20 +515,26 @@ router.put('/repos/auth', (req, res) => {
 });
 
 /**
- * 同步仓库到 Claude Code marketplace
+ * Legacy alias for the explicit plugin refresh task.
  * POST /api/plugins/repos/sync
  */
 router.post('/repos/sync', async (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
     const options = await getRequestOptions(req, service);
-    const result = await service.syncRepos(options);
+    const refreshTasks = getRefreshTasks();
+    const task = refreshTasks.enqueue({
+      platform,
+      scope: options.scope || 'user',
+      projectPath: options.scope === 'project' ? options.cwd : null,
+      reason: 'manual'
+    });
 
-    res.json({
+    res.status(202).json({
       success: true,
       platform,
-      ...result,
-      message: 'Repositories synced successfully'
+      task,
+      message: 'Plugin refresh task started'
     });
   } catch (err) {
     console.error('[Plugins API] Sync repos error:', err);
@@ -487,6 +573,7 @@ router.get('/:name/readme', async (req, res) => {
   try {
     const { platform, service } = getPluginsService(req);
     const { name } = req.params;
+    const options = await getRequestOptions(req, service);
     const {
       repoId,
       repoProvider,
@@ -499,7 +586,9 @@ router.get('/:name/readme', async (req, res) => {
       repoUrl,
       repoProjectPath,
       repoLocalPath,
-      installPath
+      installPath,
+      scope: queryScope,
+      cwd: queryCwd
     } = req.query;
 
     const pluginInfo = {
@@ -518,7 +607,13 @@ router.get('/:name/readme', async (req, res) => {
       installPath
     };
 
-    const readme = await service.getPluginReadme(pluginInfo);
+    const readmeOptions = {
+      ...(options.scope || queryScope ? { scope: options.scope || queryScope } : {}),
+      ...(options.cwd || queryCwd ? { cwd: options.cwd || queryCwd } : {})
+    };
+    const readme = Object.keys(readmeOptions).length > 0
+      ? await service.getPluginReadme(pluginInfo, readmeOptions)
+      : await service.getPluginReadme(pluginInfo);
 
     res.json({
       success: true,

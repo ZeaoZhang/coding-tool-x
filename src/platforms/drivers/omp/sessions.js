@@ -17,7 +17,6 @@ function createDriver(context = {}) {
       listSessions: 'getSessionsByProject',
       listSessionsPage: 'getSessionsPage',
       recent: 'getRecentSessions',
-      search: 'searchSessions',
       getSessionById: 'getSessionById',
       messages: 'getSessionMessages',
       delete: 'deleteSession',
@@ -25,6 +24,37 @@ function createDriver(context = {}) {
       saveSessionOrder: 'saveSessionOrder',
       buildLaunchCommand: 'buildLaunchCommand',
       status: 'getSessionStatus'
+    },
+    customMethods: {
+      search: (service, requestOrProjectName, keyword, contextLength, options = {}) => {
+        if (requestOrProjectName && typeof requestOrProjectName === 'object' && !Array.isArray(requestOrProjectName)) {
+          const request = requestOrProjectName;
+          const query = request.query || {};
+          return service.searchSessions(query.keyword || query.q || '', Number(query.context) || 15, {
+            ...request,
+            ...options,
+            projectName: request.params?.projectName || null,
+            limit: Number.parseInt(query.limit, 10) || 100
+          });
+        }
+        return service.searchSessions(keyword, contextLength, {
+          ...options,
+          projectName: requestOrProjectName
+        });
+      },
+      searchAcrossProjects: (service, requestOrKeyword, limit, options = {}) => {
+        if (requestOrKeyword && typeof requestOrKeyword === 'object' && !Array.isArray(requestOrKeyword)) {
+          const request = requestOrKeyword;
+          const query = request.query || {};
+          return service.searchSessions(query.keyword || query.q || '', Number(query.context) || 35, {
+            ...request,
+            ...options,
+            projectName: query.projectName || query.project || null,
+            limit: Number.parseInt(query.limit, 10) || 35
+          });
+        }
+        return service.searchSessions(requestOrKeyword, Number(options.contextLength) || 35, { ...options, limit });
+      }
     },
     onSuccess: operation => {
       if (['delete', 'fork', 'saveSessionOrder'].includes(operation)) {

@@ -10,6 +10,7 @@ import {
   forkSession as forkSessionApi,
   saveSessionOrder as saveSessionOrderApi
 } from '../api/sessions'
+import { filterDisplayableProjects, filterDisplayableSessions } from '../utils/session-visibility'
 
 const PROJECTS_CACHE_TTL = 20 * 1000
 const SESSIONS_CACHE_TTL = 20 * 1000
@@ -133,6 +134,8 @@ export const useSessionsStore = defineStore('sessions', () => {
   const error = ref(null)
   const currentChannel = ref('claude') // 当前渠道
   const projectsInflight = new Map()
+  const projectRequestIds = new Map()
+  let nextProjectRequestId = 0
 
   // Computed
   const sessionsWithAlias = computed(() => {
@@ -168,13 +171,13 @@ export const useSessionsStore = defineStore('sessions', () => {
 
   // Actions
   function setChannel(channel) {
-    if (currentChannel.value === channel) return
+    if (!channel || currentChannel.value === channel) return
     const previousChannel = currentChannel.value
-    clearProjectRefreshTimer(previousChannel)
-    projectRefreshStartedAt.delete(previousChannel)
+    pauseProjectRefresh(previousChannel)
     Array.from(sessionRefreshTimers.keys())
       .filter(key => key.startsWith(`${previousChannel}:`))
       .forEach(key => clearRefreshCycle(sessionRefreshTimers, sessionRefreshStartedAt, key))
+    invalidateProjectRequests(channel)
     currentChannel.value = channel
     projects.value = []
     currentProject.value = null
@@ -190,19 +193,33 @@ export const useSessionsStore = defineStore('sessions', () => {
 
     const cachedProjects = getCachedProjects(channel)
     if (cachedProjects) {
-      projects.value = cachedProjects.projects || []
-      currentProject.value = cachedProjects.currentProject || projects.value[0]?.name || null
+      projects.value = filterDisplayableProjects(cachedProjects.projects)
+      currentProject.value = projects.value.some(project => project.name === cachedProjects.currentProject)
+        ? cachedProjects.currentProject
+        : (projects.value[0]?.name || null)
       projectsMeta.value = cachedProjects.meta || null
       projectsPagination.value = cachedProjects.pagination || projectsPagination.value
     }
   }
 
-  function clearProjectRefreshTimer(channel) {
-    clearRefreshTimer(projectRefreshTimers, channel)
-  }
-
   function clearProjectRefreshCycle(channel) {
     clearRefreshCycle(projectRefreshTimers, projectRefreshStartedAt, channel)
+  }
+
+  function invalidateProjectRequests(channel) {
+    if (!channel) return
+    const prefix = `${channel}:`
+    Array.from(projectsInflight.keys())
+      .filter(key => key.startsWith(prefix))
+      .forEach(key => projectsInflight.delete(key))
+    Array.from(projectRequestIds.keys())
+      .filter(key => key.startsWith(prefix))
+      .forEach(key => projectRequestIds.delete(key))
+  }
+
+  function pauseProjectRefresh(channel = currentChannel.value) {
+    clearProjectRefreshCycle(channel)
+    invalidateProjectRequests(channel)
   }
 
   function scheduleProjectRefresh(channel, attempt = 0) {
@@ -253,9 +270,10 @@ export const useSessionsStore = defineStore('sessions', () => {
     if (!silent) loading.value = true
     error.value = null
     try {
-
       const channel = currentChannel.value
       const listOptions = { page, limit, query }
+      const shareRequest = !force && !fresh
+      const requestKey = `${channel}${listCacheSuffix(listOptions)}`
 
       if (!force && !fresh) {
         const cached = getCachedProjects(channel, listOptions)
@@ -263,8 +281,12 @@ export const useSessionsStore = defineStore('sessions', () => {
         // when the user returns to this channel, otherwise its poll cycle
         // would be lost when setChannel() clears the old timer.
         if (cached && !cached.meta?.refreshing) {
-          projects.value = cached.projects || []
-          currentProject.value = cached.currentProject || projects.value[0]?.name || null
+          projectRequestIds.set(requestKey, ++nextProjectRequestId)
+          projectsInflight.delete(requestKey)
+          projects.value = filterDisplayableProjects(cached.projects)
+          currentProject.value = projects.value.some(project => project.name === cached.currentProject)
+            ? cached.currentProject
+            : (projects.value[0]?.name || null)
           projectsMeta.value = cached.meta || null
           projectsPagination.value = cached.pagination || { page, limit, total: projects.value.length, hasMore: false }
           if (!silent) loading.value = false
@@ -272,42 +294,60 @@ export const useSessionsStore = defineStore('sessions', () => {
         }
       }
 
-      const shareRequest = !force && !fresh
-      const requestKey = `${channel}${listCacheSuffix(listOptions)}`
-      let request = shareRequest ? projectsInflight.get(requestKey) : null
-      if (!request) {
+      let request = projectsInflight.get(requestKey)
+      let requestId = request ? projectRequestIds.get(requestKey) : null
+      if (!shareRequest || !request || !requestId) {
+        requestId = ++nextProjectRequestId
+        projectRequestIds.set(requestKey, requestId)
         const requestOptions = { fresh: force || fresh }
         if (page !== 1) requestOptions.page = page
         if (limit !== DEFAULT_PAGE_SIZE) requestOptions.limit = limit
         if (query) requestOptions.q = query
         request = getProjects(channel, requestOptions)
-        if (shareRequest) projectsInflight.set(requestKey, request)
+        projectsInflight.set(requestKey, request)
       }
       let data
       try {
         data = await request
       } finally {
-        if (shareRequest && projectsInflight.get(requestKey) === request) {
+        if (projectsInflight.get(requestKey) === request) {
           projectsInflight.delete(requestKey)
         }
       }
-      if (currentChannel.value !== channel) return
-      const nextProjects = Array.isArray(data.projects) ? data.projects : []
-      const shouldApplyProjects = nextProjects.length > 0 || projects.value.length === 0 || data.meta?.refreshing !== true
+      if (
+        currentChannel.value !== channel
+        || projectRequestIds.get(requestKey) !== requestId
+      ) return
+      const nextProjects = filterDisplayableProjects(data.projects)
+      const keepExistingProjects = nextProjects.length === 0
+        && projects.value.length > 0
+        && page === 1
+        && !query
+        && (
+          data.meta?.refreshing === true
+          || data.meta?.stale === true
+          || data.meta?.fallback === true
+          || Boolean(data.meta?.error)
+        )
+      const shouldApplyProjects = nextProjects.length > 0
+        || projects.value.length === 0
+        || !keepExistingProjects
       projectsMeta.value = data.meta || null
-      projectsPagination.value = data.pagination || {
-        page,
-        limit,
-        total: nextProjects.length,
-        hasMore: false
-      }
       if (data.meta?.error) {
         error.value = data.meta.error
       }
 
       if (shouldApplyProjects) {
+        projectsPagination.value = data.pagination || {
+          page,
+          limit,
+          total: nextProjects.length,
+          hasMore: false
+        }
         projects.value = nextProjects
-        currentProject.value = data.currentProject || (nextProjects[0]?.name || null)
+        currentProject.value = nextProjects.some(project => project.name === data.currentProject)
+          ? data.currentProject
+          : (nextProjects[0]?.name || null)
         if (data.meta?.fallback !== true) {
           invalidateSessionsCache(channel)
           setCachedProjects(channel, {
@@ -348,7 +388,7 @@ export const useSessionsStore = defineStore('sessions', () => {
       if (!force) {
         const cached = getCachedSessions(channel, projectName, listOptions)
         if (cached) {
-          sessions.value = cached.sessions || []
+          sessions.value = filterDisplayableSessions(cached.sessions, projectName)
           aliases.value = cached.aliases || {}
           totalSize.value = cached.totalSize || 0
           currentProject.value = projectName
@@ -367,7 +407,7 @@ export const useSessionsStore = defineStore('sessions', () => {
       if (query) requestOptions.q = query
       const data = await getSessions(projectName, channel, requestOptions)
       if (currentChannel.value !== channel || currentProject.value !== projectName) return
-      const nextSessions = Array.isArray(data.sessions) ? data.sessions : []
+      const nextSessions = filterDisplayableSessions(data.sessions, projectName)
       const shouldApplySessions = nextSessions.length > 0 || sessions.value.length === 0 || data.meta?.refreshing !== true
       sessionsMeta.value = data.meta || null
       sessionsPagination.value = data.pagination || {
@@ -512,8 +552,6 @@ export const useSessionsStore = defineStore('sessions', () => {
   async function retryProjects() {
     clearProjectRefreshCycle(currentChannel.value)
     return fetchProjects({
-      page: projectsPagination.value.page,
-      limit: projectsPagination.value.limit,
       force: true,
       fresh: Boolean(projectsMeta.value?.error)
     })
@@ -617,6 +655,7 @@ export const useSessionsStore = defineStore('sessions', () => {
     fetchSessions,
     retryProjects,
     retrySessions,
+    pauseProjectRefresh,
     setAlias,
     deleteAlias,
     deleteSession,

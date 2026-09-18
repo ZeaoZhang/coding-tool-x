@@ -26,17 +26,19 @@
     "skills": true,
     "commands": false,
     "agents": false,
-    "plugins": true
+    "plugins": true,
+    "mcp": true,
+    "prompts": true
   },
   "resourceActions": {
     "skills": {
       "create": false,
-      "repositories": false,
+      "repositories": true,
       "import": false,
-      "refresh": false
+      "refresh": true
     },
     "plugins": {
-      "repositories": false,
+      "repositories": true,
       "market": false,
       "install": false,
       "uninstall": false,
@@ -236,6 +238,38 @@
         "response": "default"
       },
       {
+        "method": "GET",
+        "path": "/channels/:channelId/models",
+        "capability": "channels",
+        "operation": "models",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/channels/:channelId/speed-test",
+        "capability": "channels",
+        "operation": "speedTest",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/channels/speed-test-all",
+        "capability": "channels",
+        "operation": "speedTestAll",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/channels/probe-models",
+        "capability": "channels",
+        "operation": "probeModels",
+        "request": "default",
+        "response": "default"
+      },
+      {
         "method": "POST",
         "path": "/channels/order",
         "capability": "channels",
@@ -264,6 +298,30 @@
         "path": "/proxy/stop",
         "capability": "proxy",
         "operation": "stop",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/statistics/summary",
+        "capability": "statistics",
+        "operation": "summary",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/statistics/today",
+        "capability": "statistics",
+        "operation": "today",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/statistics/daily/:date",
+        "capability": "statistics",
+        "operation": "daily",
         "request": "default",
         "response": "default"
       },
@@ -475,6 +533,10 @@
     "nativeConfig": "dsh-native-config",
     "api": "dsh-api",
     "channels": "dsh-channels",
-    "proxy": "dsh-proxy"
+    "proxy": "dsh-proxy",
+    "statistics": "dsh-statistics",
+    "nativeLogs": "dsh-native-logs",
+    "mcp": "dsh-api",
+    "prompts": "dsh-api"
   }
 }

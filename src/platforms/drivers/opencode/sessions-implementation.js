@@ -591,13 +591,19 @@ function getSessionsPage(projectId, options = {}) {
   };
 }
 
-function searchSessions(keyword) {
+function searchSessions(keyword, options = {}) {
   if (!keyword || !keyword.trim()) return [];
   const lowerKeyword = keyword.toLowerCase();
+  const projectName = typeof options.projectName === 'string' && options.projectName.trim()
+    ? options.projectName.trim()
+    : null;
+  const contextLength = Math.max(1, Math.min(200, Number(options.contextLength) || 35));
+  const limit = Math.max(1, Math.min(200, Number(options.limit) || 100));
 
   const allSessions = [];
   const projects = getProjectRows();
   for (const project of projects) {
+    if (projectName && project.id !== projectName) continue;
     const sessions = getSessionRowsByProjectId(project.id);
     for (const session of sessions) {
       const messages = getMessageRowsBySessionId(session.id);
@@ -631,7 +637,7 @@ function searchSessions(keyword) {
           matchedMessages.push({
             messageIndex: i,
             role: data ? (data.role || 'unknown') : 'unknown',
-            context: buildContext(text, keyword),
+            context: buildContext(text, keyword, contextLength),
             timestamp: toIsoTime(message.time_created)
           });
         }
@@ -645,13 +651,17 @@ function searchSessions(keyword) {
           firstMessage: session.title || null,
           matches: matchedMessages,
           matchCount: matchedMessages.length,
+          updatedAt: normalizeTimestampMs(session.time_updated) || 0,
+          projectFullPath: project.worktree || null,
           source: 'opencode'
         });
       }
     }
   }
 
-  return allSessions.sort((a, b) => b.matchCount - a.matchCount);
+  return allSessions
+    .sort((a, b) => b.updatedAt - a.updatedAt || a.sessionId.localeCompare(b.sessionId))
+    .slice(0, limit);
 }
 
 function getRecentSessions(limit = 5) {

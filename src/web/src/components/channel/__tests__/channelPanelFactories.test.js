@@ -124,6 +124,28 @@ describe('channel panel model catalogs', () => {
     expect(fetchOmpChannels).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps DSH credentials and model fields in basic information', () => {
+    const config = channelPanelFactories.dsh()
+    const sections = config.formSections
+    const fields = sections.flatMap(section => section.fields)
+    const basicFields = sections.find(section => section.title === '基本信息').fields
+    const basicKeys = basicFields.map(field => field.key)
+
+    expect(sections.map(section => section.title)).toEqual([
+      '基本信息',
+      '模型重定向',
+      '调度配置'
+    ])
+    expect(fields.some(field => field.label === '认证方式')).toBe(false)
+    expect(config.getInitialForm().authMode).toBeUndefined()
+    expect(basicKeys).not.toContain('websiteUrl')
+    expect(basicKeys).toEqual(expect.arrayContaining(['apiKey', 'model', 'models', 'speedTestModel']))
+    expect(fields.find(field => field.key === 'apiKey')).toEqual(expect.objectContaining({
+      required: true,
+      type: 'password'
+    }))
+  })
+
   it('restores model settings from legacy extra data for every CLI', async () => {
     const cases = [
       ['claude', fetchClaudeChannels],

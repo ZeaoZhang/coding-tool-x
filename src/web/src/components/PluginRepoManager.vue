@@ -11,7 +11,7 @@
     <template #header-extra>
       <n-button type="primary" size="small" :loading="syncing" :focusable="false" @click="handleSync">
         <template #icon><n-icon><SyncOutline /></n-icon></template>
-        {{ isNativeMarketplace ? '刷新' : '同步' }}
+        刷新
       </n-button>
     </template>
     <div class="repo-manager">
@@ -222,7 +222,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { NModal, NButton, NInput, NSwitch, NTag, NIcon, NAlert, NSpin } from 'naive-ui'
 import { AddOutline, SyncOutline } from '@vicons/ionicons5'
-import { getPluginRepos, addPluginRepo, removePluginRepo, togglePluginRepo, syncPluginRepos, updatePluginRepoAuth } from '../api/plugins'
+import { getPluginRepos, addPluginRepo, removePluginRepo, togglePluginRepo, refreshPlugins, getPluginRefreshTask, updatePluginRepoAuth } from '../api/plugins'
 import message from '../utils/message'
 import { parseRepoInput, normalizeDirectory } from '../utils/skill-repo-input'
 
@@ -387,16 +387,24 @@ async function loadRepos() {
 async function handleSync() {
   syncing.value = true
   try {
-    const result = await syncPluginRepos(props.platform, requestOptions.value)
-    if (result.success) {
-      if (Array.isArray(result.repos)) {
-        repos.value = result.repos
-      }
-      message.success('仓库同步成功')
+    const result = await refreshPlugins(props.platform, requestOptions.value)
+    let task = result.task
+    while (task && ['queued', 'running'].includes(task.status)) {
+      await new Promise(resolve => setTimeout(resolve, 250))
+      task = (await getPluginRefreshTask(task.id, {
+        platform: props.platform,
+        ...requestOptions.value
+      })).task
+    }
+    if (task?.status === 'failed') {
+      message.error(task.error || '刷新失败，已保留旧缓存')
+    } else {
+      await loadRepos()
+      message.success('仓库缓存刷新成功')
       emit('updated')
     }
   } catch (err) {
-    message.error('同步失败: ' + err.message)
+    message.error('刷新失败: ' + err.message)
   } finally {
     syncing.value = false
   }

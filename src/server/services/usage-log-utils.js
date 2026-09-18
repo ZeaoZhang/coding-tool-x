@@ -10,6 +10,7 @@ function toNumber(value) {
 
 function normalizeToolSource(source = '') {
   const normalized = String(source || '').trim().toLowerCase();
+  if (normalized === 'dsh') return 'dsh';
   if (normalized === 'claude' || normalized === 'claude-code') return 'claude';
   if (normalized === 'codex') return 'codex';
   if (normalized === 'gemini') return 'gemini';

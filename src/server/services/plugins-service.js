@@ -9,6 +9,7 @@ const os = require('os');
 const http = require('http');
 const https = require('https');
 const path = require('path');
+const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
@@ -48,7 +49,6 @@ const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
 const REPO_SOURCE_META_FILE = '.cc-tool-plugin-source.json';
 const SUPPORTED_REPO_PROVIDERS = ['github', 'gitlab', 'local'];
 const PLUGIN_LIST_TTL_MS = 1000;
-const MARKET_CACHE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_GITHUB_HOST = 'https://github.com';
 const DEFAULT_GITLAB_HOST = 'https://gitlab.com';
 const DEFAULT_REPOS_BY_PLATFORM = {
@@ -74,12 +74,12 @@ const PLATFORM_CAPABILITIES = {
   },
   codex: {
     platform: 'codex',
-    supportsPlugins: true,
-    repositories: true,
-    market: true,
-    install: true,
-    uninstall: true,
-    toggle: true,
+    supportsPlugins: false,
+    repositories: false,
+    market: false,
+    install: false,
+    uninstall: false,
+    toggle: false,
     config: false,
     import: false,
     syncRepos: false
@@ -129,7 +129,7 @@ const PLATFORM_CAPABILITIES = {
   dsh: {
     platform: 'dsh',
     supportsPlugins: true,
-    repositories: false,
+    repositories: true,
     market: false,
     install: false,
     uninstall: false,
@@ -507,6 +507,10 @@ class PluginsService {
     this.opencodePluginsDir = path.join(this.opencodeConfigDir, 'plugins');
     this.opencodeLegacyPluginsDir = path.join(this.opencodeConfigDir, 'plugin');
     this.marketCachePath = getPlatformStatePath('pluginMarketCache', this.platform);
+    this.pluginContentCacheRoot = path.join(
+      path.dirname(this.marketCachePath),
+      `${this.platform}-repo-content`
+    );
     this._marketCache = null;
     this._marketCacheByKey = new Map();
     this._pluginListCache = new Map();
@@ -515,6 +519,9 @@ class PluginsService {
     this._marketFetchedAt = 0;
     this._marketRepoFingerprint = null;
     this._marketLastUsedStale = false;
+    this._marketReadmeCache = new Map();
+    this._marketReadmeCacheLoaded = false;
+    this._lastFetchedRepoTrees = new Map();
     this.ompNativeAdapter = this.platform === 'omp'
       ? new OmpNativePluginAdapter({ pathContext: this.pathContext })
       : null;
@@ -727,6 +734,8 @@ class PluginsService {
     this._marketCacheByKey.clear();
     this._marketFetchedAt = 0;
     this._marketRepoFingerprint = null;
+    this._marketReadmeCache.clear();
+    this._marketReadmeCacheLoaded = false;
     this._invalidatePluginList();
     if (removeFile) {
       try {
@@ -744,13 +753,14 @@ class PluginsService {
       if (!fs.existsSync(this.marketCachePath)) return null;
       const data = JSON.parse(fs.readFileSync(this.marketCachePath, 'utf-8'));
       if (Array.isArray(data)) {
-        return { plugins: data, fetchedAt: 0, reposFingerprint: null };
+        return { plugins: data, fetchedAt: 0, reposFingerprint: null, readmes: {} };
       }
       if (Array.isArray(data?.plugins)) {
         return {
           plugins: data.plugins,
           fetchedAt: Number(data.fetchedAt || data.time || 0) || 0,
-          reposFingerprint: typeof data.reposFingerprint === 'string' ? data.reposFingerprint : null
+          reposFingerprint: typeof data.reposFingerprint === 'string' ? data.reposFingerprint : null,
+          readmes: data.readmes && typeof data.readmes === 'object' ? data.readmes : {}
         };
       }
     } catch (err) {
@@ -761,22 +771,55 @@ class PluginsService {
 
   loadMarketCacheFromFile() {
     const cached = this.loadMarketCacheEnvelope();
-    return cached?.fetchedAt && Date.now() - cached.fetchedAt < MARKET_CACHE_TTL_MS
-      ? cached.plugins
-      : null;
+    return Array.isArray(cached?.plugins) ? cached.plugins : null;
   }
 
-  saveMarketCacheToFile(plugins, fetchedAt = Date.now(), reposFingerprint = null) {
+  _pluginReadmeCacheKey(plugin = {}) {
+    return [
+      plugin.name || '',
+      plugin.repoId || '',
+      plugin.repoProvider || '',
+      plugin.repoHost || '',
+      plugin.repoOwner || '',
+      plugin.repoName || '',
+      plugin.repoBranch || '',
+      plugin.repoProjectPath || '',
+      plugin.repoLocalPath || '',
+      plugin.directory || '',
+      plugin.source || ''
+    ].join('::');
+  }
+
+  _loadMarketReadmeCache() {
+    if (this._marketReadmeCacheLoaded) return this._marketReadmeCache;
+    const envelope = this.loadMarketCacheEnvelope();
+    this._marketReadmeCache = new Map(Object.entries(envelope?.readmes || {}));
+    this._marketReadmeCacheLoaded = true;
+    return this._marketReadmeCache;
+  }
+
+  saveMarketCacheToFile(plugins, fetchedAt = Date.now(), reposFingerprint = null, readmes = null) {
     try {
       this._ensureDir(path.dirname(this.marketCachePath));
-      fs.writeFileSync(this.marketCachePath, JSON.stringify({
+      const payload = {
         fetchedAt,
         time: fetchedAt,
         reposFingerprint,
-        plugins
-      }), 'utf-8');
+        plugins,
+        readmes: readmes || Object.fromEntries(this._loadMarketReadmeCache())
+      };
+      const tempPath = `${this.marketCachePath}.tmp-${process.pid}-${Date.now()}`;
+      try {
+        fs.writeFileSync(tempPath, JSON.stringify(payload), 'utf-8');
+        fs.renameSync(tempPath, this.marketCachePath);
+      } catch (error) {
+        try {
+          if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+        } catch (_) {}
+        throw error;
+      }
     } catch (err) {
-      // ignore cache write errors
+      // ignore cache write errors, but do not leave a partial cache behind
     }
   }
 
@@ -805,19 +848,155 @@ class PluginsService {
     ].join('::');
       if (seen.has(key)) continue;
       seen.add(key);
-      deduped.push({
+      deduped.push(this.sanitizePluginListItem({
         ...plugin,
         isInstalled: installedNames.has(plugin.name)
-      });
+      }));
     }
 
     deduped.sort((a, b) => (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase()));
     return deduped;
   }
 
+  sanitizePluginListItem(plugin = {}) {
+    const sanitized = { ...plugin };
+    for (const key of Object.keys(sanitized)) {
+      const normalizedKey = key.toLowerCase();
+      if (
+        normalizedKey === 'content'
+        || normalizedKey === 'fullcontent'
+        || normalizedKey === 'manifest'
+        || normalizedKey === 'rawmanifest'
+        || normalizedKey === 'files'
+        || normalizedKey === 'filecontents'
+        || (normalizedKey.includes('readme') && normalizedKey !== 'readmeurl')
+      ) {
+        delete sanitized[key];
+      }
+    }
+    return sanitized;
+  }
+
+  sanitizePluginList(plugins = []) {
+    return (Array.isArray(plugins) ? plugins : []).map(plugin => this.sanitizePluginListItem(plugin));
+  }
+
   _ensureDir(dirPath) {
     if (!fs.existsSync(dirPath)) {
       fs.mkdirSync(dirPath, { recursive: true });
+    }
+  }
+
+  _pluginContentScopeKey(options = {}) {
+    if (options.scope !== 'project') return 'user';
+    const cwd = options.cwd ? path.resolve(options.cwd) : '';
+    if (!cwd) return 'project-unknown';
+    return `project-${crypto.createHash('sha256').update(cwd).digest('hex').slice(0, 24)}`;
+  }
+
+  _pluginContentRepoKey(repo = {}) {
+    const identity = JSON.stringify({
+      provider: repo.provider || '',
+      host: repo.host || '',
+      owner: repo.owner || '',
+      name: repo.name || '',
+      projectPath: repo.projectPath || '',
+      localPath: repo.localPath || '',
+      branch: repo.branch || 'main'
+    });
+    return crypto.createHash('sha256').update(identity).digest('hex').slice(0, 32);
+  }
+
+  _pluginContentCacheDir(repo, options = {}) {
+    return path.join(
+      this.pluginContentCacheRoot,
+      this._pluginContentScopeKey(options),
+      this._pluginContentRepoKey(repo)
+    );
+  }
+
+  _readCachedRepoFile(repo, filePath, options = {}) {
+    try {
+      const normalizedPath = normalizePluginRepoDirectory(filePath, 'Plugin repository file path');
+      if (!normalizedPath) return null;
+      const cacheDir = this._pluginContentCacheDir(repo, options);
+      const metaPath = path.join(cacheDir, 'index.json');
+      if (!fs.existsSync(metaPath)) return null;
+      const metadata = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+      if (!metadata.ready || !metadata.files?.includes(normalizedPath)) return null;
+      const cachedPath = resolveInsideRoot(
+        cacheDir,
+        normalizedPath,
+        'Cached plugin repository file path',
+        { allowHiddenSegments: true }
+      );
+      if (!fs.existsSync(cachedPath)) return null;
+      return fs.readFileSync(cachedPath, 'utf8');
+    } catch {
+      return null;
+    }
+  }
+
+  async _cacheRemoteRepoContent(repo, tree, options = {}) {
+    if (repo.provider === 'local') return { fetchedFiles: 0 };
+    const files = (Array.isArray(tree) ? tree : [])
+      .filter(item => item?.type === 'blob' && item.path)
+      .map(item => ({ ...item, path: normalizePluginRepoDirectory(item.path, 'Plugin repository file path') }))
+      .filter(item => item.path);
+    const uniqueFiles = Array.from(new Map(files.map(file => [file.path, file])).values());
+    const cacheDir = this._pluginContentCacheDir(repo, options);
+    const tempDir = `${cacheDir}.tmp-${process.pid}-${Date.now()}`;
+    let backupDir = null;
+
+    this._ensureDir(path.dirname(cacheDir));
+    this._ensureDir(tempDir);
+    try {
+      let nextFileIndex = 0;
+      const fetchWorker = async () => {
+        while (nextFileIndex < uniqueFiles.length) {
+          const file = uniqueFiles[nextFileIndex++];
+          const content = await this.fetchRepoFileContent(repo, file.path, file);
+          const targetPath = resolveInsideRoot(
+            tempDir,
+            file.path,
+            'Cached plugin repository file path',
+            { allowHiddenSegments: true }
+          );
+          this._ensureDir(path.dirname(targetPath));
+          fs.writeFileSync(targetPath, content, 'utf8');
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(4, Math.max(uniqueFiles.length, 1)) }, fetchWorker));
+
+      fs.writeFileSync(
+        path.join(tempDir, 'index.json'),
+        JSON.stringify({
+          ready: true,
+          repoId: repo.id || '',
+          branch: repo.branch || 'main',
+          fetchedAt: Date.now(),
+          files: uniqueFiles.map(file => file.path)
+        }),
+        'utf8'
+      );
+
+      if (fs.existsSync(cacheDir)) {
+        backupDir = `${cacheDir}.backup-${process.pid}-${Date.now()}`;
+        fs.renameSync(cacheDir, backupDir);
+      }
+      fs.renameSync(tempDir, cacheDir);
+      if (backupDir) fs.rmSync(backupDir, { recursive: true, force: true });
+      return { fetchedFiles: uniqueFiles.length };
+    } catch (error) {
+      try {
+        if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch (_) {}
+      if (backupDir && !fs.existsSync(cacheDir) && fs.existsSync(backupDir)) {
+        try {
+          fs.renameSync(backupDir, cacheDir);
+        } catch (_) {}
+      }
+      throw error;
     }
   }
 
@@ -1408,12 +1587,11 @@ class PluginsService {
     if (this._isDsh()) {
       return this._listDshPlugins(options);
     }
-    if (!this._pluginsSupported()) {
-      return { plugins: [] };
-    }
-
     if (this._isCodex()) {
       return { plugins: this._listCodexCachedPlugins() };
+    }
+    if (!this._pluginsSupported()) {
+      return { plugins: [] };
     }
 
     if (this._isOpenCode()) {
@@ -1653,19 +1831,24 @@ class PluginsService {
    * @returns {Promise<Object>} Installation result
    */
   async installPlugin(source, repoInfo = null, options = {}) {
+    const installFromRepo = (repo, installOptions = {}) => (
+      Object.keys(installOptions || {}).length > 0
+        ? this._installFromRepoDirectory(repo, installOptions)
+        : this._installFromRepoDirectory(repo)
+    );
     if (this._isCodex()) {
       if (hasRepoInstallInfo(repoInfo)) {
-        return this._installFromRepoDirectory(repoInfo);
+        return installFromRepo(repoInfo, options);
       }
 
       const parsedSource = this.parseRepoTreeSource(source);
       if (parsedSource) {
-        return this._installFromRepoDirectory(parsedSource);
+        return installFromRepo(parsedSource, options);
       }
 
       const parsedRepo = this._repoFromGitUrl(source, 'main');
       if (parsedRepo) {
-        return this._installFromRepoDirectory({ ...parsedRepo, directory: '' });
+        return installFromRepo({ ...parsedRepo, directory: '' }, options);
       }
 
       return {
@@ -1704,17 +1887,17 @@ class PluginsService {
 
     if (this._isOpenCode()) {
       if (hasRepoInstallInfo(repoInfo)) {
-        return this._installFromRepoDirectory(repoInfo, { installRoot: this._getOpenCodePluginsDir() });
+        return installFromRepo(repoInfo, { ...options, installRoot: this._getOpenCodePluginsDir() });
       }
 
       const parsedSource = this.parseRepoTreeSource(source);
       if (parsedSource) {
-        return this._installFromRepoDirectory(parsedSource, { installRoot: this._getOpenCodePluginsDir() });
+        return installFromRepo(parsedSource, { ...options, installRoot: this._getOpenCodePluginsDir() });
       }
 
       const parsedRepo = this._repoFromGitUrl(source, 'main');
       if (parsedRepo) {
-        return this._installFromRepoDirectory({ ...parsedRepo, directory: '' }, { installRoot: this._getOpenCodePluginsDir() });
+        return installFromRepo({ ...parsedRepo, directory: '' }, { ...options, installRoot: this._getOpenCodePluginsDir() });
       }
 
       // OpenCode 原生支持 npm 包名，通过 opencode.json 的 plugin 数组管理
@@ -1737,17 +1920,17 @@ class PluginsService {
     }
 
     if (hasRepoInstallInfo(repoInfo)) {
-      return await this._installFromRepoDirectory(repoInfo);
+      return await installFromRepo(repoInfo, options);
     }
 
     const parsedSource = this.parseRepoTreeSource(source);
     if (parsedSource) {
-      return await this._installFromRepoDirectory(parsedSource);
+      return await installFromRepo(parsedSource, options);
     }
 
     const parsedRepo = this._repoFromGitUrl(source, 'main');
     if (parsedRepo) {
-      return await this._installFromRepoDirectory({ ...parsedRepo, directory: '' });
+      return await installFromRepo({ ...parsedRepo, directory: '' }, options);
     }
 
     // Fallback to original git clone method
@@ -1765,12 +1948,25 @@ class PluginsService {
     const manifestCandidates = this._getManifestCandidates(directory);
 
     try {
+      if (normalizedRepo.provider !== 'local') {
+        const cacheIndexPath = path.join(this._pluginContentCacheDir(normalizedRepo, options), 'index.json');
+        if (!fs.existsSync(cacheIndexPath)) {
+          throw new Error('Plugin repository content is not cached; click refresh before installing');
+        }
+      }
+
       let manifest;
       let manifestPath = '';
       for (const candidate of manifestCandidates) {
         try {
           manifestPath = joinRepoPath(directory, candidate);
-          manifest = await this.fetchRepoJson(normalizedRepo, manifestPath);
+          if (normalizedRepo.provider === 'local') {
+            manifest = await this.fetchRepoJson(normalizedRepo, manifestPath);
+          } else {
+            const cachedManifest = this._readCachedRepoFile(normalizedRepo, manifestPath, options);
+            if (cachedManifest === null) throw new Error(`File not found in cached repository: ${manifestPath}`);
+            manifest = JSON.parse(stripJsonComments(cachedManifest));
+          }
           break;
         } catch {
           manifestPath = '';
@@ -1807,52 +2003,14 @@ class PluginsService {
         }
         this.copyDirRecursive(sourceDir, pluginDir);
       } else {
-        const tempDir = path.join(os.tmpdir(), `plugin-${Date.now()}`);
-        const zipPath = path.join(tempDir, 'repo.zip');
-        fs.mkdirSync(tempDir, { recursive: true });
-
-        try {
-          let zipUrl = '';
-          let zipHeaders = {};
-
-          if (normalizedRepo.provider === 'gitlab') {
-            const projectId = encodeURIComponent(normalizedRepo.projectPath);
-            zipUrl = `${normalizedRepo.host}/api/v4/projects/${projectId}/repository/archive.zip?sha=${encodeURIComponent(normalizedRepo.branch)}`;
-            const token = this.getGitLabToken(normalizedRepo);
-            if (token) {
-              zipHeaders['PRIVATE-TOKEN'] = token;
-            }
-          } else {
-            zipUrl = `https://api.github.com/repos/${normalizedRepo.owner}/${normalizedRepo.name}/zipball/${encodeURIComponent(normalizedRepo.branch)}`;
-            const token = this.getGitHubToken(normalizedRepo);
-            zipHeaders.Accept = 'application/vnd.github+json';
-            if (token) {
-              zipHeaders.Authorization = `token ${token}`;
-            }
-          }
-
-          await this.downloadFile(zipUrl, zipPath, zipHeaders);
-          const zip = new AdmZip(zipPath);
-          zip.extractAllTo(tempDir, true);
-
-          const extractedDir = fs.readdirSync(tempDir).find(item =>
-            fs.statSync(path.join(tempDir, item)).isDirectory()
-          );
-          if (!extractedDir) {
-            throw new Error('Empty archive');
-          }
-
-          const extractedRoot = path.join(tempDir, extractedDir);
-          const sourceDir = directory
-            ? resolveInsideRoot(extractedRoot, directory, 'Plugin directory', { allowHiddenSegments: true })
-            : extractedRoot;
-          if (!fs.existsSync(sourceDir)) {
-            throw new Error(`Plugin directory not found: ${directory}`);
-          }
-          this.copyDirRecursive(sourceDir, pluginDir);
-        } finally {
-          fs.rmSync(tempDir, { recursive: true, force: true });
+        const cachedRepoDir = this._pluginContentCacheDir(normalizedRepo, options);
+        const sourceDir = directory
+          ? resolveInsideRoot(cachedRepoDir, directory, 'Plugin directory', { allowHiddenSegments: true })
+          : cachedRepoDir;
+        if (!fs.existsSync(sourceDir)) {
+          throw new Error(`Plugin directory not found in cached repository: ${directory}`);
         }
+        this.copyDirRecursive(sourceDir, pluginDir, { excludeNames: directory ? [] : ['index.json'] });
       }
 
       // Write plugin.json if not exists
@@ -3121,7 +3279,13 @@ class PluginsService {
    * @param {Object} plugin - Plugin object with name, repoUrl, source, or repoInfo
    * @returns {Promise<string>} README content or empty string
    */
-  async getPluginReadme(plugin) {
+  async getPluginReadme(plugin, {
+    allowRemote = false,
+    cacheRemote = false,
+    forceRemote = false,
+    scope = 'user',
+    cwd = null
+  } = {}) {
     try {
       const normalizedDirectory = normalizeRepoPath(plugin.directory || '');
       const readmeCandidates = [];
@@ -3149,6 +3313,10 @@ class PluginsService {
           }
         }
       }
+
+      const readmeCache = this._loadMarketReadmeCache();
+      const cachedReadme = readmeCache.get(this._pluginReadmeCacheKey(plugin));
+      if (!forceRemote && typeof cachedReadme === 'string') return cachedReadme;
 
       let repo = null;
       if (plugin.repoProvider || plugin.repoLocalPath || plugin.repoProjectPath || plugin.repoOwner) {
@@ -3191,8 +3359,22 @@ class PluginsService {
       if (!repo) return '';
 
       for (const candidate of readmeCandidates) {
+        const cachedReadme = this._readCachedRepoFile(repo, candidate, { scope, cwd });
+        if (cachedReadme !== null) {
+          if (cacheRemote) readmeCache.set(this._pluginReadmeCacheKey(plugin), cachedReadme);
+          return cachedReadme;
+        }
+      }
+
+      if (!allowRemote) return '';
+
+      for (const candidate of readmeCandidates) {
         try {
-          return await this.fetchRepoFileContent(repo, candidate);
+          const readme = await this.fetchRepoFileContent(repo, candidate);
+          if (cacheRemote && typeof readme === 'string') {
+            readmeCache.set(this._pluginReadmeCacheKey(plugin), readme);
+          }
+          return readme;
         } catch {
           // try next candidate
         }
@@ -3516,35 +3698,30 @@ class PluginsService {
     const key = this._marketKey(options);
     const repos = this._isOmp() ? [] : this.getRepos(options).filter(repo => repo.enabled);
     const reposFingerprint = this._marketReposFingerprint(repos);
-    const now = Date.now();
     const cached = this._marketCacheByKey.get(key);
-    const memoryPlugins = Array.isArray(cached?.plugins)
-      ? cached.plugins
-      : (Array.isArray(this._marketCache) ? this._marketCache : null);
-    if (!forceRefresh && cached && now - cached.fetchedAt < MARKET_CACHE_TTL_MS
-      && cached.reposFingerprint === reposFingerprint) {
+    if (!forceRefresh && cached && Array.isArray(cached.plugins)) {
       return this._clone(cached.plugins);
     }
 
     const disk = this.loadMarketCacheEnvelope();
     if (!forceRefresh && Array.isArray(disk?.plugins)) {
       const diskPlugins = this.prepareMarketPlugins(disk.plugins);
-      const diskIsFresh = disk.fetchedAt
-        && now - disk.fetchedAt < MARKET_CACHE_TTL_MS
-        && (!disk.reposFingerprint || disk.reposFingerprint === reposFingerprint);
-      const diskIsMoreComplete = memoryPlugins && diskPlugins.length > memoryPlugins.length;
-      if (diskIsFresh || diskIsMoreComplete) {
-        this._marketCacheByKey.set(key, {
-          plugins: diskPlugins,
-          fetchedAt: disk.fetchedAt,
-          reposFingerprint: disk.reposFingerprint || reposFingerprint
-        });
-        this._marketCache = diskPlugins;
-        this._marketFetchedAt = disk.fetchedAt;
-        this._marketRepoFingerprint = disk.reposFingerprint || reposFingerprint;
-        return this._clone(diskPlugins);
-      }
+      this._marketCacheByKey.set(key, {
+        plugins: diskPlugins,
+        fetchedAt: disk.fetchedAt,
+        reposFingerprint: disk.reposFingerprint || reposFingerprint
+      });
+      this._marketCache = diskPlugins;
+      this._marketFetchedAt = disk.fetchedAt;
+      this._marketRepoFingerprint = disk.reposFingerprint || reposFingerprint;
+      this._marketReadmeCache = new Map(Object.entries(disk.readmes || {}));
+      this._marketReadmeCacheLoaded = true;
+      return this._clone(diskPlugins);
     }
+
+    // A normal read is deliberately local-only. Missing or stale cache must
+    // never fall through to repository/network discovery.
+    if (!forceRefresh) return [];
 
     if (this._marketRefreshPromise) return this._marketRefreshPromise;
     const promise = this._getMarketPluginsUncached(forceRefresh, options, { reposFingerprint })
@@ -3570,6 +3747,106 @@ class PluginsService {
   }
 
   /**
+   * Explicitly refresh every remote resource currently exposed by the plugin
+   * UI, then persist the market index and README content for offline reads.
+   */
+  async refreshRemotePlugins({ platform = this.platform, scope = 'user', projectPath = null } = {}) {
+    if (platform !== this.platform) throw new Error(`PluginsService platform mismatch: ${platform}`);
+    if (!this.getCapabilities().market) {
+      return { status: 'succeeded', fetchedPlugins: 0, fetchedReadmes: 0, failedReadmes: [] };
+    }
+
+    const refreshOptions = {
+      scope,
+      ...(projectPath ? { cwd: projectPath } : {})
+    };
+    const previousEnvelope = this.loadMarketCacheEnvelope();
+    const plugins = await this.getMarketPlugins(true, refreshOptions);
+    const readmes = this._loadMarketReadmeCache();
+    const failedReadmes = [];
+    const failedRepositories = [];
+    let fetchedFiles = 0;
+
+    const repos = this._isOmp() ? [] : this.getRepos(refreshOptions).filter(repo => repo.enabled);
+    for (const repo of repos.filter(item => item.provider !== 'local')) {
+      let fetched = this._lastFetchedRepoTrees.get(repo.id);
+      try {
+        if (!fetched) {
+          throw new Error('Repository tree was not fetched during market refresh');
+        }
+        const result = await this._cacheRemoteRepoContent(repo, fetched.tree, refreshOptions);
+        fetchedFiles += result.fetchedFiles;
+      } catch (error) {
+        failedRepositories.push({ repoId: repo.id, error: error.message });
+      }
+    }
+
+    let fetchedReadmes = 0;
+
+    for (const plugin of plugins) {
+      try {
+        const readme = await this.getPluginReadme(plugin, {
+          allowRemote: true,
+          cacheRemote: true,
+          forceRemote: true
+        });
+        if (readme) fetchedReadmes += 1;
+      } catch (error) {
+        failedReadmes.push({
+          pluginId: plugin.pluginId || plugin.id || plugin.name,
+          error: error.message
+        });
+      }
+    }
+
+    const failed = failedRepositories.length > 0 || failedReadmes.length > 0;
+    const status = failed ? 'failed' : 'succeeded';
+    if (failed) {
+      // The market envelope is the read boundary for normal reads. Restore the
+      // previous snapshot when any part of a full refresh failed so the UI
+      // never observes a half-updated market index.
+      if (previousEnvelope?.plugins) {
+        const previousPlugins = this.prepareMarketPlugins(previousEnvelope.plugins);
+        this._marketCache = previousPlugins;
+        this._marketCacheByKey.clear();
+        this._marketCacheByKey.set(this._marketKey(refreshOptions), {
+          plugins: previousPlugins,
+          fetchedAt: previousEnvelope.fetchedAt || 0,
+          reposFingerprint: previousEnvelope.reposFingerprint || null
+        });
+        this._marketFetchedAt = previousEnvelope.fetchedAt || 0;
+        this._marketRepoFingerprint = previousEnvelope.reposFingerprint || null;
+        this._marketReadmeCache = new Map(Object.entries(previousEnvelope.readmes || {}));
+        this._marketReadmeCacheLoaded = true;
+        this.saveMarketCacheToFile(
+          previousEnvelope.plugins,
+          previousEnvelope.fetchedAt,
+          previousEnvelope.reposFingerprint,
+          previousEnvelope.readmes || {}
+        );
+      } else {
+        this.clearMarketCache();
+      }
+    }
+
+    this.saveMarketCacheToFile(
+      failed ? (previousEnvelope?.plugins || []) : plugins,
+      failed ? (previousEnvelope?.fetchedAt || 0) : Date.now(),
+      failed ? (previousEnvelope?.reposFingerprint || null) : this._marketReposFingerprint(repos),
+      failed ? (previousEnvelope?.readmes || {}) : Object.fromEntries(readmes)
+    );
+
+    return {
+      status,
+      fetchedPlugins: failed ? 0 : plugins.length,
+      fetchedFiles,
+      fetchedReadmes,
+      failedReadmes,
+      failedRepositories
+    };
+  }
+
+  /**
    * Get market plugins from configured repositories
    * @returns {Promise<Array>} List of available market plugins
    */
@@ -3578,6 +3855,7 @@ class PluginsService {
       return [];
     }
     this._marketLastUsedStale = false;
+    if (forceRefresh) this._lastFetchedRepoTrees.clear();
     if (this._isOmp()) {
       if (forceRefresh) {
         this.ompNativeAdapter.updateMarketplaces('', options);
@@ -3591,7 +3869,7 @@ class PluginsService {
 
     const fileCache = this.loadMarketCacheEnvelope()?.plugins || null;
 
-    const repos = this.getRepos().filter(r => r.enabled);
+    const repos = this.getRepos(options).filter(r => r.enabled);
     const marketPlugins = [];
     let repoFailureCount = 0;
 
@@ -3603,6 +3881,7 @@ class PluginsService {
       const pluginsBefore = marketPlugins.length;
       try {
         const tree = await this.fetchRepoTree(repo);
+        this._lastFetchedRepoTrees.set(repo.id, { repo, tree });
         const files = tree.filter(item => item.type === 'blob');
         const fileMap = new Map(files.map(file => [normalizeRepoPath(file.path), file]));
         const readJson = async (filePath) => {

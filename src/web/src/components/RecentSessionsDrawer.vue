@@ -47,6 +47,7 @@ import {
 } from '../api/sessions'
 import message, { dialog } from '../utils/message'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
+import { filterDisplayableSessions } from '../utils/session-visibility'
 
 const { drawerWidth } = useResponsiveDrawer(720)
 
@@ -97,7 +98,7 @@ async function loadSessions() {
   loading.value = true
   try {
     const data = await getRecentSessions(10, props.channel)
-    sessions.value = data.sessions
+    sessions.value = filterDisplayableSessions(data.sessions)
   } catch (err) {
     console.error('Failed to load recent sessions:', err)
     message.error('加载失败: ' + err.message)

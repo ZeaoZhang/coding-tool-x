@@ -5,6 +5,17 @@
 import { client } from './client'
 import { requestKey, requestSingleflight } from './request-singleflight'
 
+const sessionCache = new Map()
+
+function skillSessionKey(platform, options = {}) {
+  return requestKey('skills', platform, options.scope || 'user', options.cwd || '')
+}
+
+export function invalidateSkillSessionCache(platform = '') {
+  for (const key of sessionCache.keys()) {
+    if (!platform || key.includes(`:${platform}:`)) sessionCache.delete(key)
+  }
+}
 
 function scopeParams(options = {}) {
   return {
@@ -17,21 +28,28 @@ function scopeParams(options = {}) {
  * 获取本地 Skill 列表。此函数永不触发远程刷新。
  */
 export async function getSkills(platform = 'claude', options = {}) {
-  const key = requestKey('skills', platform, options.scope || 'user', options.cwd || '');
-  return requestSingleflight(key, signal => client.get('/skills', {
+  const key = skillSessionKey(platform, options);
+  if (sessionCache.has(key)) return sessionCache.get(key)
+  const request = requestSingleflight(key, signal => client.get('/skills', {
     params: {
       platform,
       scope: options.scope || 'user',
       ...scopeParams(options)
     },
     signal
-  }).then(response => response.data), 'skills', `skills:${platform}`);
+  }).then(response => response.data).catch(error => {
+    sessionCache.delete(key)
+    throw error
+  }), 'skills', `skills:${platform}`)
+  sessionCache.set(key, request)
+  return request
 }
 
 /**
  * 手动启动 Skill 远程刷新任务。
  */
 export async function refreshSkills(platform = 'claude', options = {}) {
+  invalidateSkillSessionCache(platform)
   const response = await client.post('/skills/refresh', {
     platform,
     scope: options.scope || 'user',

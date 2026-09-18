@@ -221,12 +221,12 @@ describe('GET / and GET /market', () => {
     }
   });
 
-  test('passes refresh flag to market lookup', async () => {
+  test('ignores refresh query flags and keeps GET market reads local-only', async () => {
     const res = await request(buildApp()).get('/market?platform=claude&refresh=1');
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(services.claude.getMarketPlugins).toHaveBeenCalledWith(true);
+    expect(services.claude.getMarketPlugins).toHaveBeenCalledWith(false);
   });
 
   test('GET /capabilities returns platform capability contract', async () => {
@@ -454,16 +454,60 @@ describe('repository routes', () => {
     expect(services.claude.removeRepo).toHaveBeenCalledWith('demo', 'plugins', 'repo-1');
   });
 
-  test('POST /repos/sync proxies sync results', async () => {
+  test('POST /repos/sync starts the same explicit refresh task', async () => {
+    const refreshTasks = {
+      enqueue: vi.fn(() => ({ id: 'repo-sync-task', status: 'queued' }))
+    };
+    const router = require('../../../src/server/api/plugins');
+    router.createRouter({ refreshTasks });
     const res = await request(buildApp()).post('/repos/sync', { platform: 'opencode' });
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(202);
     expect(res.body.success).toBe(true);
-    expect(services.opencode.syncRepos).toHaveBeenCalled();
+    expect(res.body.task.id).toBe('repo-sync-task');
+    expect(refreshTasks.enqueue).toHaveBeenCalledWith({
+      platform: 'opencode',
+      scope: 'user',
+      projectPath: null,
+      reason: 'manual'
+    });
   });
 });
 
 describe('plugin sync and readme routes', () => {
+  test('POST /refresh enqueues an asynchronous full cache refresh', async () => {
+    const task = { id: 'plugin-task-1', status: 'queued', platform: 'claude', scope: 'user' };
+    const refreshTasks = {
+      enqueue: vi.fn(() => task),
+      get: vi.fn(() => task)
+    };
+    const router = require('../../../src/server/api/plugins');
+    router.createRouter({ refreshTasks });
+
+    const res = await request(buildApp()).post('/refresh', { platform: 'claude' });
+
+    expect(res.status).toBe(202);
+    expect(res.body.task).toEqual(task);
+    expect(refreshTasks.enqueue).toHaveBeenCalledWith({
+      platform: 'claude',
+      scope: 'user',
+      projectPath: null,
+      reason: 'manual'
+    });
+  });
+
+  test('GET /refresh/:taskId returns the local task state', async () => {
+    const task = { id: 'plugin-task-1', status: 'succeeded', platform: 'claude', scope: 'user', projectPath: null };
+    const refreshTasks = { enqueue: vi.fn(), get: vi.fn(() => task) };
+    const router = require('../../../src/server/api/plugins');
+    router.createRouter({ refreshTasks });
+
+    const res = await request(buildApp()).get('/refresh/plugin-task-1?platform=claude');
+
+    expect(res.status).toBe(200);
+    expect(res.body.task).toEqual(task);
+  });
+
   test('POST /sync returns sync result', async () => {
     const res = await request(buildApp()).post('/sync', {});
 

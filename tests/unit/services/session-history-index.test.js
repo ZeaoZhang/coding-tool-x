@@ -1067,6 +1067,95 @@ describe('session-history-index', () => {
     expect(results[0].sessionId).toBe('s1');
   });
 
+  it('filters by project and orders matching sessions by most recent update', async () => {
+    const fixture = setupIndex({ ftsEnabledOverride: false });
+    const matchingMessages = count => Array.from({ length: count }, (_, index) => ({
+      messageId: `needle-${index}`,
+      role: 'user',
+      type: 'user',
+      subtype: null,
+      content: `needle match ${index}`,
+      timestamp: 1000 + index,
+      model: 'claude',
+      provider: 'anthropic',
+      userMessageNumber: index + 1,
+      extraJson: null
+    }));
+
+    fixture.writeFixtureFile({
+      name: 'older.jsonl',
+      content: 'older fixture\n',
+      session: makeSessionFixture('older', 'project-a', { updatedAt: 1000 }),
+      messages: matchingMessages(3)
+    });
+    fixture.writeFixtureFile({
+      name: 'newer.jsonl',
+      content: 'newer fixture\n',
+      session: makeSessionFixture('newer', 'project-a', { updatedAt: 2000 }),
+      messages: matchingMessages(1)
+    });
+    fixture.writeFixtureFile({
+      name: 'other-project.jsonl',
+      content: 'other project fixture\n',
+      session: makeSessionFixture('other', 'project-b', { updatedAt: 3000 }),
+      messages: matchingMessages(1)
+    });
+
+    const results = await index.searchSessions('claude', 'needle', { limit: 10 });
+    expect(results.map(result => result.sessionId)).toEqual(['other', 'newer', 'older']);
+
+    const projectResults = await index.searchSessions('claude', 'needle', {
+      projectName: 'project-a',
+      limit: 10
+    });
+    expect(projectResults.map(result => result.sessionId)).toEqual(['newer', 'older']);
+  });
+
+  it('does not parse unrelated projects for a project-scoped search', async () => {
+    const fixture = setupIndex({ ftsEnabledOverride: false });
+    for (let i = 0; i < 3; i++) {
+      fixture.writeFixtureFile({
+        name: `target-${i}.jsonl`,
+        content: `target fixture ${i}\n`,
+        session: makeSessionFixture(`target-${i}`, 'target-project', { updatedAt: 2000 + i }),
+        messages: [{ ...makeMessageFixtures(1)[0], content: `needle target ${i}` }]
+      });
+    }
+    for (let i = 0; i < 12; i++) {
+      fixture.writeFixtureFile({
+        name: `unrelated-${i}.jsonl`,
+        content: `unrelated fixture ${i}\n`,
+        session: makeSessionFixture(`unrelated-${i}`, 'unrelated-project', { updatedAt: 1000 + i }),
+        messages: [{ ...makeMessageFixtures(1)[0], content: `needle unrelated ${i}` }]
+      });
+    }
+
+    const results = await index.searchSessions('claude', 'needle', {
+      projectName: 'target-project'
+    });
+
+    expect(results).toHaveLength(3);
+    expect([...fixture.parseCounts.keys()]
+      .filter(filePath => filePath.includes('unrelated-'))
+      .map(filePath => fixture.parseCounts.get(filePath) || 0))
+      .toEqual([]);
+  });
+
+  it('limits search results by recent session, not raw message rows', async () => {
+    const fixture = setupIndex({ ftsEnabledOverride: false });
+    for (let i = 0; i < 5; i++) {
+      fixture.writeFixtureFile({
+        name: `limited-${i}.jsonl`,
+        content: `limited fixture ${i}\n`,
+        session: makeSessionFixture(`limited-${i}`, 'limited-project', { updatedAt: 1000 + i }),
+        messages: [{ ...makeMessageFixtures(1)[0], content: `needle ${i}` }]
+      });
+    }
+
+    const results = await index.searchSessions('claude', 'needle', { limit: 2 });
+    expect(results.map(result => result.sessionId)).toEqual(['limited-4', 'limited-3']);
+  });
+
   it('returns no matches for an empty keyword without entering the matcher loop', async () => {
     const fixture = setupIndex();
     const result = await index.searchSessions('claude', '   ');

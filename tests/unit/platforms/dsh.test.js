@@ -15,6 +15,7 @@ const { createDriver: createSessionDriver, projectNameFor } = require('../../../
 const { createDriver: createApiDriver } = require('../../../src/platforms/drivers/dsh/api-operations');
 const { createDriver: createChannelDriver } = require('../../../src/platforms/drivers/dsh/channels');
 const { createDriver: createProxyDriver } = require('../../../src/platforms/drivers/dsh/proxy');
+const { createDriver: createNativeLogDriver } = require('../../../src/platforms/drivers/dsh/native-logs');
 const { listSkills } = require('../../../src/platforms/drivers/dsh/resources');
 const { createPlatformRouter } = require('../../../src/server/api/platforms');
 const { SkillService } = require('../../../src/server/services/skill-service');
@@ -62,15 +63,65 @@ describe('DSH platform integration', () => {
       key: 'dsh',
       defaultEnabled: false,
       cliSelectable: false,
-      resourceTypes: { skills: true, commands: false, agents: false, plugins: true }
+      resourceTypes: expect.objectContaining({ skills: true, commands: false, agents: false, plugins: true })
     }));
     expect(registry.getCapability('dsh', 'projects')).toBe('dsh-projects');
     expect(registry.getCapability('dsh', 'sessions')).toBe('dsh-sessions');
     expect(registry.getCapability('dsh', 'api')).toBe('dsh-api');
+    expect(registry.getCapability('dsh', 'statistics')).toBe('dsh-statistics');
+    expect(registry.getCapability('dsh', 'nativeLogs')).toBe('dsh-native-logs');
 
     tempHome = makeTempHome();
     const dshHome = path.join(tempHome, 'dsh-home');
     expect(registry.resolvePaths('dsh', { homeDir: tempHome, env: { DSH_HOME: dshHome } }).home).toBe(dshHome);
+  });
+
+  test('streams DSH usage events from appended compressed session records', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const sessionId = 'session-usage';
+    const sessionFile = path.join(paths.sessions, 'project', sessionId, 'session.v3.jsonl.zstd');
+    const header = { type: 'session', version: 3, id: sessionId, cwd: tempHome };
+    const firstEvent = {
+      type: 'assistant/message',
+      seq: 1,
+      time: Date.now(),
+      data: {
+        message: {
+          id: 'assistant-1',
+          source: { kind: 'model', provider: 'deepseek', model: 'deepseek-chat' },
+          usage: { prompt_tokens: 12, completion_tokens: 5, total_tokens: 17 }
+        }
+      }
+    };
+    writeZstdLog(sessionFile, header, [firstEvent]);
+
+    const cursor = createNativeLogDriver({ paths }).createNativeLogCursor();
+    cursor.initialize();
+    expect(cursor.readNewEvents()).toEqual([]);
+
+    const secondEvent = {
+      ...firstEvent,
+      seq: 2,
+      time: Date.now(),
+      data: {
+        ...firstEvent.data,
+        message: {
+          ...firstEvent.data.message,
+          id: 'assistant-2',
+          usage: { prompt_tokens: 20, completion_tokens: 8, total_tokens: 28 }
+        }
+      }
+    };
+    fs.appendFileSync(sessionFile, zlib.zstdCompressSync(Buffer.from(`${JSON.stringify(secondEvent)}\n`)));
+
+    expect(cursor.readNewEvents()).toEqual([expect.objectContaining({
+      id: expect.stringContaining('assistant-2'),
+      source: 'dsh',
+      model: 'deepseek-chat',
+      provider: 'deepseek',
+      tokens: expect.objectContaining({ input: 20, output: 8, total: 28 })
+    })]);
   });
 
   test('reads current DSH zstd session generations and maps message projections read-only', () => {
@@ -360,6 +411,8 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
     expect(runtime.getDriver('dsh', 'api')).toEqual(expect.objectContaining({ platform: 'dsh', capability: 'api' }));
     expect(runtime.getDriver('dsh', 'channels')).toEqual(expect.objectContaining({ platform: 'dsh', capability: 'channels' }));
     expect(runtime.getDriver('dsh', 'proxy')).toEqual(expect.objectContaining({ platform: 'dsh', capability: 'proxy' }));
+    expect(runtime.getDriver('dsh', 'statistics')).toEqual(expect.objectContaining({ platform: 'dsh', capability: 'statistics' }));
+    expect(runtime.getDriver('dsh', 'nativeLogs')).toEqual(expect.objectContaining({ platform: 'dsh', capability: 'nativeLogs' }));
   });
 
   test('routes the shared Skills and Plugins services through the DSH Driver', async () => {
@@ -410,7 +463,7 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
     ]));
     expect(plugins.getCapabilities()).toEqual(expect.objectContaining({
       supportsPlugins: true,
-      repositories: false,
+      repositories: true,
       install: false,
       uninstall: false
     }));
@@ -524,6 +577,37 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
       expect((await skills.json()).skills).toEqual(expect.arrayContaining([
         expect.objectContaining({ name: 'route-check', content: expect.stringContaining('Read only') })
       ]));
+
+      const statsSession = path.join(tempHome, 'sessions', 'project', 'session-stats', 'session.v3.jsonl.zstd');
+      writeZstdLog(statsSession, {
+        type: 'session', version: 3, id: 'session-stats', cwd: tempHome
+      }, [{
+        type: 'assistant/message',
+        seq: 1,
+        time: Date.now(),
+        data: {
+          message: {
+            id: 'assistant-stats',
+            source: { provider: 'deepseek', model: 'deepseek-chat' },
+            usage: { prompt_tokens: 4, completion_tokens: 3, total_tokens: 7 }
+          }
+        }
+      }]);
+
+      const todayDate = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const today = await fetch(`http://127.0.0.1:${port}/api/platforms/dsh/statistics/today`);
+      expect(today.status).toBe(200);
+      expect(await today.json()).toEqual(expect.objectContaining({
+        date: expect.any(String),
+        summary: expect.objectContaining({ requests: 1, tokens: 7 })
+      }));
+
+      const daily = await fetch(`http://127.0.0.1:${port}/api/platforms/dsh/statistics/daily/${todayDate}`);
+      expect(daily.status).toBe(200);
+      expect(await daily.json()).toEqual(expect.objectContaining({
+        date: todayDate,
+        summary: expect.objectContaining({ requests: 1, tokens: 7 })
+      }));
     } finally {
       await new Promise(resolve => server.close(resolve));
     }

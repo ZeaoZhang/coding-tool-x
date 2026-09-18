@@ -10,7 +10,8 @@ const DRIVER_PATH = require.resolve('../../../src/platforms/drivers/claude/sessi
 
 const sessionHistoryIndex = {
   getRecentSessions: vi.fn(),
-  listSessions: vi.fn()
+  listSessions: vi.fn(),
+  searchSessions: vi.fn()
 };
 
 function loadClaudeSessions() {
@@ -31,6 +32,7 @@ describe('Claude session history', () => {
     delete require.cache[ALIAS_PATH];
     sessionHistoryIndex.getRecentSessions.mockReset();
     sessionHistoryIndex.listSessions.mockReset();
+    sessionHistoryIndex.searchSessions.mockReset();
   });
 
   it('returns recent sessions with aliases', async () => {
@@ -55,6 +57,29 @@ describe('Claude session history', () => {
       projectName: 'demo',
       alias: null
     })]);
+  });
+
+  it('keeps indexed project and recency fields in search results', async () => {
+    const claudeSessions = loadClaudeSessions();
+    sessionHistoryIndex.searchSessions.mockResolvedValue([{
+      sessionId: 'session-search',
+      projectName: 'demo',
+      projectDisplayName: 'Demo',
+      projectFullPath: '/tmp/demo',
+      updatedAt: '2026-09-06T00:00:00.000Z',
+      matches: [],
+      matchCount: 1
+    }]);
+    claudeSessions.configure({ sessionHistoryIndex });
+
+    const result = await claudeSessions.searchSessions({}, 'demo', 'needle', 35);
+
+    expect(result[0]).toMatchObject({
+      sessionId: 'session-search',
+      projectName: 'demo',
+      projectFullPath: '/tmp/demo',
+      updatedAt: '2026-09-06T00:00:00.000Z'
+    });
   });
 
   it('accepts the descriptor request context for recent-session routes', async () => {
@@ -124,6 +149,35 @@ describe('Claude session history', () => {
       'demo',
       expect.objectContaining({ config: { source: 'test' } })
     );
+  });
+
+  it('passes descriptor search scope and limit to the indexed search', async () => {
+    const claudeSessions = loadClaudeSessions();
+    sessionHistoryIndex.searchSessions.mockResolvedValue([{
+      sessionId: 'session-4',
+      projectName: 'demo',
+      matches: [],
+      matchCount: 1,
+      updatedAt: 2000
+    }]);
+    const { createDriver } = require(DRIVER_PATH);
+    const driver = createDriver({
+      requireImpl: () => claudeSessions,
+      sessionHistoryIndex
+    });
+    claudeSessions.configure({ sessionHistoryIndex });
+
+    const result = await driver.searchAcrossProjects({
+      config: { source: 'test' },
+      query: { keyword: 'needle', limit: '2', projectName: 'demo' }
+    });
+
+    expect(result).toEqual(expect.objectContaining({ status: 'ok' }));
+    expect(sessionHistoryIndex.searchSessions).toHaveBeenCalledWith('claude', 'needle', expect.objectContaining({
+      projectName: 'demo',
+      limit: 2,
+      config: { source: 'test' }
+    }));
   });
 
   it('adapts stable mutation arguments to the Claude storage service', async () => {

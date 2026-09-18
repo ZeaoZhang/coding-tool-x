@@ -7,6 +7,18 @@
 import { client } from './client'
 import { requestKey, requestSingleflight } from './request-singleflight'
 
+const sessionCache = new Map()
+
+function sessionKey(resource, platform, options = {}) {
+  return requestKey(resource, platform, options.scope || '', options.cwd || '')
+}
+
+function clearSessionCache(platform = '') {
+  for (const key of sessionCache.keys()) {
+    if (!platform || key.includes(`:${platform}:`)) sessionCache.delete(key)
+  }
+}
+
 /**
  * 获取插件列表
  */
@@ -19,11 +31,17 @@ function withPluginContext(payload = {}, options = {}) {
 }
 
 export async function getPlugins(platform = 'claude', options = {}) {
-  const key = requestKey('plugins', platform, options.scope || '', options.cwd || '')
-  return requestSingleflight(key, signal => client.get('/plugins', {
+  const key = sessionKey('plugins', platform, options)
+  if (sessionCache.has(key)) return sessionCache.get(key)
+  const request = requestSingleflight(key, signal => client.get('/plugins', {
     params: withPluginContext({ platform }, options),
     signal
-  }).then(response => response.data), 'plugins', `plugins:${platform}`)
+  }).then(response => response.data).catch(error => {
+    sessionCache.delete(key)
+    throw error
+  }), 'plugins', `plugins:${platform}`)
+  sessionCache.set(key, request)
+  return request
 }
 
 /**
@@ -46,11 +64,35 @@ export async function getPluginCapabilities(platform = 'claude', options = {}) {
  * 获取市场插件列表
  */
 export async function getMarketPlugins(platform = 'claude', forceRefresh = false, options = {}) {
-  const key = requestKey('plugins-market', platform, options.scope || '', options.cwd || '')
-  return requestSingleflight(key, signal => client.get('/plugins/market', {
-    params: withPluginContext({ platform, refresh: forceRefresh ? '1' : '' }, options),
+  const key = sessionKey('plugins-market', platform, options)
+  if (sessionCache.has(key)) return sessionCache.get(key)
+  const request = requestSingleflight(key, signal => client.get('/plugins/market', {
+    params: withPluginContext({ platform }, options),
     signal
-  }).then(response => response.data), 'plugins-market', `plugins-market:${platform}`)
+  }).then(response => response.data).catch(error => {
+    sessionCache.delete(key)
+    throw error
+  }), 'plugins-market', `plugins-market:${platform}`)
+  sessionCache.set(key, request)
+  return request
+}
+
+/** Start an explicit remote plugin sync. Reads never use this endpoint. */
+export async function refreshPlugins(platform = 'claude', options = {}) {
+  clearSessionCache(platform)
+  const response = await client.post('/plugins/refresh', withPluginContext({ platform }, options))
+  return response.data
+}
+
+export async function getPluginRefreshTask(taskId, options = {}) {
+  const response = await client.get(`/plugins/refresh/${encodeURIComponent(taskId)}`, {
+    params: withPluginContext({ platform: options.platform || 'claude' }, options)
+  })
+  return response.data
+}
+
+export function invalidatePluginSessionCache(platform = '') {
+  clearSessionCache(platform)
 }
 
 /**
@@ -246,6 +288,8 @@ export function getPluginReadme(name, repoInfo = {}, platform = 'claude', option
   if (repoInfo.repoProjectPath) params.append('repoProjectPath', repoInfo.repoProjectPath)
   if (repoInfo.repoLocalPath) params.append('repoLocalPath', repoInfo.repoLocalPath)
   if (repoInfo.installPath) params.append('installPath', repoInfo.installPath)
+  if (options.scope) params.append('scope', options.scope)
+  if (options.cwd) params.append('cwd', options.cwd)
 
   return requestSingleflight(
     key,

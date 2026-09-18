@@ -377,6 +377,13 @@ function _ftsQuote(s) {
   return '"' + String(s).replace(/"/g, '""') + '"';
 }
 
+function _timestampValue(value) {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  const parsed = Date.parse(String(value || ''));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function _normalizeTypedSessionsResult(result, defaultOperation = 'resolve-driver') {
   if (!result || typeof result !== 'object') {
     return null;
@@ -659,15 +666,37 @@ function createSessionHistoryIndex(opts = {}) {
    * @returns {boolean}
    */
   function _isSourceFresh(source) {
+    return _isSourceFreshForScope(source, null);
+  }
+
+  function _isSourceFreshForScope(source, projectName = null) {
     const row = _getDb().prepare(
       'SELECT last_inventory_ms FROM source_state WHERE source = ?'
     ).get(source);
-    return Boolean(
+    const migrationPending = _hasKnownParserMigrationPending(source)
+      || (explicitAdapters && _hasParserMigrationPending(source));
+    const baseFresh = Boolean(
       row?.last_inventory_ms
       && Date.now() - Number(row.last_inventory_ms) < INDEX_INVENTORY_TTL_MS
-      && !_hasKnownParserMigrationPending(source)
-      && (!explicitAdapters || !_hasParserMigrationPending(source))
+      && !migrationPending
     );
+
+    const scope = projectName
+      ? sourceFreshness.get(`${source}:${projectName}`)
+      : sourceFreshness.get(source);
+    if (projectName) {
+      // A complete source inventory also covers project-scoped searches. A
+      // project-only refresh has no persisted source timestamp, so rely on
+      // its in-process scope marker until the normal inventory TTL expires.
+      if (baseFresh && scope?.kind === 'source') return true;
+      return scope?.kind === 'project'
+        && scope.projectName === projectName
+        && Date.now() - scope.at < INDEX_INVENTORY_TTL_MS;
+    }
+    if (!baseFresh) return false;
+    // A project-scoped refresh deliberately does not make the complete source
+    // fresh. Otherwise a later workspace search could reuse a partial index.
+    return !scope || scope.kind === 'source';
   }
 
   function _hasKnownParserMigrationPending(source) {
@@ -975,9 +1004,12 @@ function createSessionHistoryIndex(opts = {}) {
     const consistency = options.consistency || 'stale-ok';
     const force = options.force === true;
     const allowStaleData = options.allowStaleData === true;
-    const key = `ensure:${source}`;
+    const projectName = typeof options.projectName === 'string' && options.projectName.trim()
+      ? options.projectName.trim()
+      : null;
+    const key = `ensure:${source}:${projectName || '*'}`;
 
-    if (!force && _isSourceFresh(source)) {
+    if (!force && _isSourceFreshForScope(source, projectName)) {
       return;
     }
 
@@ -996,13 +1028,23 @@ function createSessionHistoryIndex(opts = {}) {
 
     const useWorker = shouldUseWorker && !runtimeProvided && !explicitAdapters;
     const workerOptions = { force };
+    if (projectName) workerOptions.projectName = projectName;
     const workerProjectsDir = source === 'claude'
       ? (options.config?.projectsDir || explicitProjectsDir)
       : explicitProjectsDir;
     if (workerProjectsDir) workerOptions.projectsDir = workerProjectsDir;
     const promise = useWorker
-      ? workerRunner(source, dbPath, workerOptions)
-      : _runInventory(source, { force, config: options.config || indexConfig });
+      ? workerRunner(source, dbPath, workerOptions).then(() => {
+        sourceFreshness.set(projectName ? `${source}:${projectName}` : source, projectName
+          ? { kind: 'project', projectName, at: Date.now() }
+          : { kind: 'source', at: Date.now() });
+        return undefined;
+      })
+      : _runInventory(source, {
+        force,
+        projectName,
+        config: options.config || indexConfig
+      });
     _inflight.set(key, promise);
     promise.finally(() => {
       if (_inflight.get(key) === promise) {
@@ -1049,7 +1091,7 @@ function createSessionHistoryIndex(opts = {}) {
     ).run(source, lastInventoryMs, lastError);
   }
 
-  async function _runInventory(source, { force = false, config = indexConfig } = {}) {
+  async function _runInventory(source, { force = false, projectName = null, config = indexConfig } = {}) {
     // SQLite's writer lock is database-wide, so source-specific lock files do
     // not prevent two different sources from entering BEGIN IMMEDIATE at the
     // same time. Acquire one lock for the whole index before opening/schema
@@ -1067,7 +1109,7 @@ function createSessionHistoryIndex(opts = {}) {
 
     try {
       db = _getDb();
-      if (!force && _isSourceFresh(source)) {
+      if (!force && _isSourceFreshForScope(source, projectName)) {
         return;
       }
       let adapter = null;
@@ -1097,17 +1139,21 @@ function createSessionHistoryIndex(opts = {}) {
       }
 
       const indexedFiles = new Map();
-      for (const row of db.prepare('SELECT file_path, size, mtime_ms, session_id, parser_version FROM session_file WHERE source = ?').all(source)) {
+      for (const row of db.prepare('SELECT file_path, size, mtime_ms, session_id, project_name, parser_version FROM session_file WHERE source = ?').all(source)) {
         indexedFiles.set(row.file_path, {
           size: row.size,
           mtime_ms: row.mtime_ms,
           sessionId: row.session_id,
+          projectName: row.project_name,
           parserVersion: row.parser_version
         });
       }
 
       const winnersBySessionId = new Map();
-      for (const descriptor of inventoryResult) {
+      const scopedInventory = projectName
+        ? inventoryResult.filter(descriptor => descriptor?.projectHint === projectName)
+        : inventoryResult;
+      for (const descriptor of scopedInventory) {
         const current = winnersBySessionId.get(descriptor.sessionId);
         if (!current
           || descriptor.mtimeMs > current.mtimeMs
@@ -1118,7 +1164,14 @@ function createSessionHistoryIndex(opts = {}) {
 
       const toParse = [];
       const activePaths = new Set();
-      for (const d of winnersBySessionId.values()) {
+      // Inventory adapters may return directory order. Parse changed files in
+      // recency order so a bounded search warms the newest conversations
+      // first, matching the result ordering used by the query layer.
+      const orderedDescriptors = [...winnersBySessionId.values()].sort((left, right) =>
+        Number(right.mtimeMs || 0) - Number(left.mtimeMs || 0)
+        || String(left.filePath).localeCompare(String(right.filePath))
+      );
+      for (const d of orderedDescriptors) {
         activePaths.add(d.filePath);
         const idx = indexedFiles.get(d.filePath);
         if (!idx
@@ -1189,8 +1242,8 @@ function createSessionHistoryIndex(opts = {}) {
 
       db.exec('BEGIN IMMEDIATE');
       try {
-        for (const filePath of indexedFiles.keys()) {
-          if (!activePaths.has(filePath)) {
+        for (const [filePath, row] of indexedFiles.entries()) {
+          if ((!projectName || row.projectName === projectName) && !activePaths.has(filePath)) {
             deletePath.run(source, filePath);
             db.prepare('DELETE FROM session_summary WHERE source = ? AND file_path = ?').run(source, filePath);
           }
@@ -1247,9 +1300,12 @@ function createSessionHistoryIndex(opts = {}) {
       }
 
       stateToRecord = {
-        lastInventoryMs: Date.now(),
+        lastInventoryMs: projectName ? null : Date.now(),
         lastError: errorMsg
       };
+      sourceFreshness.set(projectName ? `${source}:${projectName}` : source, projectName
+        ? { kind: 'project', projectName, at: Date.now() }
+        : { kind: 'source', at: Date.now() });
     } catch (err) {
       errorMsg = err && err.message ? err.message : String(err);
       stateToRecord = {
@@ -1260,7 +1316,7 @@ function createSessionHistoryIndex(opts = {}) {
     } finally {
       if (stateToRecord) {
         try {
-          if (db) {
+          if (db && !projectName) {
             _recordSourceState(db, source, stateToRecord.lastInventoryMs, stateToRecord.lastError);
           }
         } catch (_err) {}
@@ -1781,14 +1837,18 @@ function createSessionHistoryIndex(opts = {}) {
    */
   async function searchSessions(source, keyword, options = {}) {
     if (!String(keyword || '').trim()) return [];
+    const projectName = typeof options.projectName === 'string' && options.projectName.trim()
+      ? options.projectName.trim()
+      : null;
+    const resultLimit = Math.max(1, Math.min(200, Number.parseInt(options.limit, 10) || 100));
     await ensureSourceIndexed(source, {
       force: options.force === true,
       consistency: options.consistency || 'complete',
+      projectName,
       config: options.config
     });
     const db = _getDb();
-    const contextLength = options.contextLength || 35;
-    const projectName = options.projectName || null;
+    const contextLength = Math.max(1, Math.min(200, Number(options.contextLength) || 35));
 
     // Build candidate query
     let candidates;
@@ -1797,26 +1857,38 @@ function createSessionHistoryIndex(opts = {}) {
       const needle = String(keyword);
       if ([...needle].length >= 3) {
         const ftsRows = db.prepare(`
+          WITH matched_sessions AS (
+            SELECT sm.source, sm.session_id, MAX(sf.updated_at) AS updated_at
+            FROM session_message_fts fts
+            JOIN session_message sm ON sm.rowid = fts.rowid
+            JOIN session_file sf ON sf.source = sm.source AND sf.session_id = sm.session_id
+            WHERE sm.source = ? AND session_message_fts MATCH ?
+            ${projectName ? 'AND sf.project_name = ?' : ''}
+            GROUP BY sm.source, sm.session_id
+            ORDER BY updated_at DESC, sm.session_id ASC
+            LIMIT ?
+          )
           SELECT sm.source, sm.session_id, sm.ordinal, sm.content, sm.role, sm.type, sm.timestamp,
                  sf.project_name, sf.project_display_name, sf.project_full_path,
                  sf.file_path, sf.first_message, sf.updated_at
           FROM session_message_fts fts
           JOIN session_message sm ON sm.rowid = fts.rowid
+          JOIN matched_sessions ms ON ms.source = sm.source AND ms.session_id = sm.session_id
           JOIN session_file sf ON sf.source = sm.source AND sf.session_id = sm.session_id
-          WHERE sm.source = ? AND session_message_fts MATCH ?
-          ${projectName ? 'AND sf.project_name = ?' : ''}
-          ORDER BY sf.updated_at DESC, sm.ordinal ASC, sm.rowid ASC
-          LIMIT 500
+          WHERE session_message_fts MATCH ?
+          ORDER BY ms.updated_at DESC, sm.ordinal ASC, sm.rowid ASC
         `);
         const params = [source, _ftsQuote(needle)];
         if (projectName) params.push(projectName);
+        params.push(resultLimit);
+        params.push(_ftsQuote(needle));
         candidates = ftsRows.all(...params);
       } else {
         // Short needle: scan all messages for this source
-        candidates = _scanMessagesRelational(db, source, keyword, projectName);
+        candidates = _scanMessagesRelational(db, source, keyword, projectName, resultLimit);
       }
     } else {
-      candidates = _scanMessagesRelational(db, source, keyword, projectName);
+      candidates = _scanMessagesRelational(db, source, keyword, projectName, resultLimit);
     }
 
     if (candidates.length === 0) return [];
@@ -1886,22 +1958,20 @@ function createSessionHistoryIndex(opts = {}) {
       });
     }
 
-    // Sort: matchCount DESC, then updated_at DESC
+    // Search is a recency browser: matchCount remains useful metadata, but
+    // should not push older conversations above newer ones.
     results.sort((a, b) => {
-
-      const cm = b.matchCount - a.matchCount;
-      if (cm !== 0) return cm;
       const aRow = matchMap.get(a.sessionId);
       const bRow = matchMap.get(b.sessionId);
-      const au = (aRow && aRow.session.updated_at) || 0;
-      const bu = (bRow && bRow.session.updated_at) || 0;
-      return bu - au;
+      const au = _timestampValue(aRow && aRow.session.updated_at);
+      const bu = _timestampValue(bRow && bRow.session.updated_at);
+      return bu - au || a.sessionId.localeCompare(b.sessionId);
     });
 
-    return results;
+    return results.slice(0, resultLimit);
   }
 
-  function _scanMessagesRelational(db, source, keyword, projectName = null) {
+  function _scanMessagesRelational(db, source, keyword, projectName = null, resultLimit = 100) {
     const useSqlMatch = /^[\x00-\x7F]*$/.test(String(keyword));
     const select = `
       SELECT sm.source, sm.session_id, sm.ordinal, sm.content, sm.role, sm.type, sm.timestamp,
@@ -1911,13 +1981,37 @@ function createSessionHistoryIndex(opts = {}) {
       JOIN session_file sf ON sf.source = sm.source AND sf.session_id = sm.session_id
       WHERE sm.source = ?
       ${projectName ? 'AND sf.project_name = ?' : ''}
-      ORDER BY sf.updated_at DESC, sm.ordinal ASC, sm.rowid ASC
     `;
 
     if (useSqlMatch) {
-      const sql = `${select.replace('WHERE sm.source = ?', 'WHERE sm.source = ? AND instr(lower(sm.content), lower(?)) > 0')}\nLIMIT 500`;
-      const params = [source, keyword];
+      const sql = `
+        WITH matched_messages AS (
+          SELECT sm.source, sm.session_id, sm.ordinal, sm.rowid AS message_rowid,
+                 sm.content, sm.role, sm.type, sm.timestamp,
+                 sf.project_name, sf.project_display_name, sf.project_full_path,
+                 sf.file_path, sf.first_message, sf.updated_at
+          FROM session_message sm
+          JOIN session_file sf ON sf.source = sm.source AND sf.session_id = sm.session_id
+          WHERE sm.source = ?
+          ${projectName ? 'AND sf.project_name = ?' : ''}
+          AND instr(lower(sm.content), lower(?)) > 0
+        ),
+        matched_sessions AS (
+          SELECT source, session_id, MAX(updated_at) AS updated_at
+          FROM matched_messages
+          GROUP BY source, session_id
+          ORDER BY updated_at DESC, session_id ASC
+          LIMIT ?
+        )
+        SELECT mm.source, mm.session_id, mm.ordinal, mm.content, mm.role, mm.type, mm.timestamp,
+               mm.project_name, mm.project_display_name, mm.project_full_path,
+               mm.file_path, mm.first_message, mm.updated_at
+        FROM matched_messages mm
+        JOIN matched_sessions ms ON ms.source = mm.source AND ms.session_id = mm.session_id
+        ORDER BY ms.updated_at DESC, mm.ordinal ASC, mm.message_rowid ASC`;
+      const params = [source];
       if (projectName) params.push(projectName);
+      params.push(keyword, Math.max(1, resultLimit));
       return db.prepare(sql).all(...params);
     }
 
@@ -1925,17 +2019,26 @@ function createSessionHistoryIndex(opts = {}) {
     // apply the same locale-aware JavaScript matcher used by searchSessions,
     // collecting at most the 500 matching candidates (not 500 raw rows).
     const candidates = [];
+    const matchedSessionIds = new Set();
     const pageSize = 500;
     let offset = 0;
-    while (candidates.length < pageSize) {
+    let stop = false;
+    while (!stop) {
       const params = [source];
       if (projectName) params.push(projectName);
       params.push(pageSize, offset);
-      const batch = db.prepare(`${select}\nLIMIT ? OFFSET ?`).all(...params);
+      const batch = db.prepare(`${select}\nORDER BY sf.updated_at DESC, sm.ordinal ASC, sm.rowid ASC\nLIMIT ? OFFSET ?`).all(...params);
       if (batch.length === 0) break;
       for (const row of batch) {
-        if (_containsLocaleMatch(row.content, keyword)) candidates.push(row);
-        if (candidates.length >= pageSize) break;
+        if (!_containsLocaleMatch(row.content, keyword)) continue;
+        if (!matchedSessionIds.has(row.session_id)) {
+          if (matchedSessionIds.size >= resultLimit) {
+            stop = true;
+            break;
+          }
+          matchedSessionIds.add(row.session_id);
+        }
+        candidates.push(row);
       }
       if (batch.length < pageSize) break;
       offset += batch.length;
@@ -2077,6 +2180,9 @@ function createSessionHistoryIndex(opts = {}) {
     for (const key of fileVersions.keys()) {
       if (key.startsWith(`${source}:`)) fileVersions.delete(key);
     }
+    for (const key of sourceFreshness.keys()) {
+      if (key === source || key.startsWith(`${source}:`)) sourceFreshness.delete(key);
+    }
   }
   function getSourceIndexMeta(source) {
     const row = _getDb().prepare(
@@ -2088,7 +2194,7 @@ function createSessionHistoryIndex(opts = {}) {
     const error = row?.summary_error || row?.last_error || null;
     const stale = Boolean(error) || !generatedAt || Date.now() - generatedAt >= INDEX_INVENTORY_TTL_MS;
     const refreshing = _summaryInflight.has(`summary:${source}`)
-      || _inflight.has(`ensure:${source}`)
+      || [..._inflight.keys()].some(key => key === `ensure:${source}:*` || key.startsWith(`ensure:${source}:`))
       || _hasActiveInventoryLock(dbPath);
     return {
       generatedAt,
@@ -2105,6 +2211,7 @@ function createSessionHistoryIndex(opts = {}) {
     fileChecks.clear();
     _summaryInflight.clear();
     _contentInflight.clear();
+    sourceFreshness.clear();
   }
 
   // Build the API object

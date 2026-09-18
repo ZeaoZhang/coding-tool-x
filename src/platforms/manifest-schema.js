@@ -23,7 +23,9 @@ const DRIVER_IDS = new Set([
   'dsh-sessions',
   'dsh-native-config',
   'dsh-channels',
-  'dsh-proxy'
+  'dsh-proxy',
+  'dsh-statistics',
+  'dsh-native-logs'
 ]);
 
 const PATH_RESOLVER_IDS = new Set([

@@ -1,11 +1,13 @@
 import { beforeEach, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 
 const store = vi.hoisted(() => ({
   projects: [{ name: 'project-display-name', displayName: 'Project', fullPath: '/tmp/project' }],
   currentProjectInfo: { displayName: 'Project', fullPath: '/tmp/project' },
   sessions: [],
   sessionsWithAlias: [],
+  sessionsPagination: { page: 1, limit: 20, total: 0, hasMore: false },
   totalSize: 0,
   loading: false,
   error: null,
@@ -132,4 +134,32 @@ it('does not pass a relative project name to project configuration', async () =>
   await wrapper.vm.$nextTick()
 
   expect(wrapper.findComponent(drawerStub).props('projectPath')).toBe('')
+})
+
+it('focuses the current-project search input on Cmd/Ctrl+K', async () => {
+  const wrapper = mount(SessionList, {
+    props: { projectName: 'project-display-name' },
+    attachTo: document.body,
+    global: {
+      stubs: {
+        draggable: { template: '<div><slot /></div>' },
+        ChatHistoryDrawer: true,
+        ProjectConfigDrawer: true
+      }
+    }
+  })
+
+  await wrapper.vm.$nextTick()
+  const input = wrapper.find('input')
+  expect(input.exists()).toBe(true)
+
+  document.dispatchEvent(new KeyboardEvent('keydown', {
+    key: 'k',
+    ctrlKey: true,
+    bubbles: true
+  }))
+  await nextTick()
+
+  expect(document.activeElement).toBe(input.element)
+  wrapper.unmount()
 })

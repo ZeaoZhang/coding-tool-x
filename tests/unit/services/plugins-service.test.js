@@ -434,6 +434,147 @@ describe('PluginsService market cache and repository management', () => {
     expect(svc.loadMarketCacheFromFile()).toEqual(plugins);
   });
 
+  test('normal market reads never fall through to remote discovery', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('claude');
+    svc.getRepos = vi.fn(() => [{ id: 'repo-1', enabled: true, owner: 'owner', name: 'market' }]);
+    const fetchTree = vi.spyOn(svc, 'fetchRepoTree');
+
+    await expect(svc.getMarketPlugins()).resolves.toEqual([]);
+
+    expect(fetchTree).not.toHaveBeenCalled();
+  });
+
+  test('README reads are local-only unless explicitly enabled by refresh', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('claude');
+    const fetchFile = vi.spyOn(svc, 'fetchRepoFileContent');
+
+    await expect(svc.getPluginReadme({
+      name: 'remote-plugin',
+      repoProvider: 'github',
+      repoOwner: 'owner',
+      repoName: 'market',
+      repoBranch: 'main',
+      directory: 'plugins/remote-plugin'
+    })).resolves.toBe('');
+
+    expect(fetchFile).not.toHaveBeenCalled();
+  });
+
+  test('plugin list DTO removes legacy content and README bodies', () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('claude');
+
+    expect(svc.sanitizePluginList([{
+      name: 'legacy-plugin',
+      description: 'metadata',
+      content: 'plugin source',
+      fullContent: 'full plugin source',
+      readme: '# private README',
+      readmeUrl: 'https://example.com/readme'
+    }])).toEqual([{
+      name: 'legacy-plugin',
+      description: 'metadata',
+      readmeUrl: 'https://example.com/readme'
+    }]);
+  });
+
+  test('explicit plugin refresh persists market entries and README cache', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('claude');
+    const plugin = {
+      name: 'remote-plugin',
+      repoId: 'repo-1',
+      repoProvider: 'github',
+      repoOwner: 'owner',
+      repoName: 'market',
+      repoBranch: 'main',
+      directory: 'plugins/remote-plugin'
+    };
+    svc.getMarketPlugins = vi.fn(async () => [plugin]);
+    svc.getPluginReadme = vi.fn(async () => '# Remote plugin');
+    svc.getRepos = vi.fn(() => [{ id: 'repo-1', enabled: true, owner: 'owner', name: 'market' }]);
+    svc._lastFetchedRepoTrees.set('repo-1', {
+      repo: { id: 'repo-1', provider: 'github', owner: 'owner', name: 'market', branch: 'main' },
+      tree: []
+    });
+    const saveCache = vi.spyOn(svc, 'saveMarketCacheToFile');
+
+    await expect(svc.refreshRemotePlugins({ platform: 'claude' })).resolves.toEqual(expect.objectContaining({
+      status: 'succeeded',
+      fetchedPlugins: 1,
+      fetchedReadmes: 1
+    }));
+
+    expect(svc.getPluginReadme).toHaveBeenCalledWith(plugin, {
+      allowRemote: true,
+      cacheRemote: true,
+      forceRemote: true
+    });
+    expect(saveCache).toHaveBeenCalled();
+  });
+
+  test('explicit plugin refresh caches every remote file and later reads/install do not fetch', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('claude');
+    const repoRoot = {
+      provider: 'github',
+      host: 'https://github.com',
+      owner: 'owner',
+      name: 'market',
+      branch: 'main'
+    };
+    const tree = [
+      { path: 'plugins/demo/.claude-plugin/plugin.json', type: 'blob', sha: 'manifest' },
+      { path: 'plugins/demo/README.md', type: 'blob', sha: 'readme' },
+      { path: 'plugins/demo/index.js', type: 'blob', sha: 'source' }
+    ];
+    const files = {
+      'plugins/demo/.claude-plugin/plugin.json': JSON.stringify({ name: 'demo', version: '1.0.0' }),
+      'plugins/demo/README.md': '# Demo',
+      'plugins/demo/index.js': 'module.exports = {}'
+    };
+    svc.addRepo(repoRoot);
+    const fetchTree = vi.spyOn(svc, 'fetchRepoTree').mockResolvedValue(tree);
+    const fetchFile = vi.spyOn(svc, 'fetchRepoFileContent').mockImplementation(async (_repo, filePath) => {
+      if (!(filePath in files)) throw new Error(`Missing file: ${filePath}`);
+      return files[filePath];
+    });
+
+    const refreshed = await svc.refreshRemotePlugins({ platform: 'claude' });
+
+    expect(refreshed).toEqual(expect.objectContaining({
+      status: 'succeeded',
+      fetchedPlugins: 1,
+      fetchedFiles: 3
+    }));
+    expect(fetchTree).toHaveBeenCalledTimes(1);
+    expect(fetchFile.mock.calls.map(call => call[1])).toEqual(expect.arrayContaining(Object.keys(files)));
+
+    svc._marketCache = null;
+    svc._marketCacheByKey.clear();
+    fetchTree.mockClear();
+    fetchFile.mockClear();
+    await expect(svc.getMarketPlugins()).resolves.toEqual([
+      expect.objectContaining({ name: 'demo' })
+    ]);
+    expect(fetchTree).not.toHaveBeenCalled();
+    expect(fetchFile).not.toHaveBeenCalled();
+
+    svc.claudePluginsDir = path.join(testDir, 'claude-plugins');
+    svc.claudePluginsCacheDir = path.join(svc.claudePluginsDir, 'cache');
+    svc.claudeMarketplacesDir = path.join(svc.claudePluginsDir, 'marketplaces');
+    svc.claudeInstalledFile = path.join(svc.claudePluginsDir, 'installed_plugins.json');
+    svc.claudeMarketplacesFile = path.join(svc.claudePluginsDir, 'known_marketplaces.json');
+    const installed = await svc.installPlugin('', {
+      ...repoRoot,
+      directory: 'plugins/demo'
+    });
+    expect(installed.success).toBe(true);
+    expect(fetchFile).not.toHaveBeenCalled();
+  });
+
   test('prepareMarketPlugins deduplicates and marks installed plugins', () => {
     listPluginsMock.mockReturnValue([{ name: 'demo-plugin' }]);
     const { PluginsService } = loadModule();
@@ -1070,7 +1211,7 @@ describe('PluginsService OMP native plugin CLI', () => {
         provider: 'omp-marketplace'
       })
     ]);
-    await expect(svc.getMarketPlugins()).resolves.toEqual([
+    await expect(svc.getMarketPlugins(true)).resolves.toEqual([
       expect.objectContaining({
         pluginId: 'review@team',
         version: '1.2.0',
@@ -1345,7 +1486,7 @@ describe('PluginsService Codex helpers', () => {
     ]);
   });
 
-  test('getMarketPlugins reads Codex marketplace repos and install/uninstall writes Codex config', async () => {
+  test('Codex marketplace sync stays disabled when the platform manifest has no Plugin support', async () => {
     const { PluginsService } = loadModule();
     const svc = new PluginsService('codex');
     const repoRoot = path.join(testDir, 'codex-marketplace');
@@ -1379,55 +1520,8 @@ describe('PluginsService Codex helpers', () => {
     const repos = svc.addRepo({ provider: 'local', localPath: repoRoot });
     const marketPlugins = await svc.getMarketPlugins(true);
 
-    expect(repos).toEqual([expect.objectContaining({ provider: 'local', localPath: repoRoot })]);
-    expect(marketPlugins).toEqual([
-      expect.objectContaining({
-        name: 'demo-codex',
-        directory: 'plugins/demo-codex',
-        marketplace: 'local-codex-market',
-        marketplaceFormat: 'codex-marketplace',
-        repoProvider: 'local',
-        repoLocalPath: repoRoot
-      })
-    ]);
-
-    const installResult = await svc.installPlugin('', {
-      provider: 'local',
-      localPath: repoRoot,
-      directory: 'plugins/demo-codex',
-      marketplace: 'local-codex-market'
-    });
-
-    expect(installResult).toEqual(expect.objectContaining({
-      success: true,
-      plugin: expect.objectContaining({ name: 'demo-codex', version: '0.1.0' })
-    }));
-    expect(fs.existsSync(path.join(
-      testDir,
-      '.codex',
-      'plugins',
-      'cache',
-      'local-codex-market',
-      'demo-codex',
-      '0.1.0',
-      '.codex-plugin',
-      'plugin.json'
-    ))).toBe(true);
-    expect(fs.readFileSync(path.join(testDir, '.codex', 'config.toml'), 'utf8')).toContain('"demo-codex@local-codex-market"');
-    expect(svc.listPlugins().plugins).toEqual([
-      expect.objectContaining({
-        name: 'demo-codex',
-        marketplace: 'local-codex-market',
-        enabled: true,
-        description: 'Demo Codex plugin'
-      })
-    ]);
-
-    const uninstallResult = svc.uninstallPlugin('demo-codex');
-
-    expect(uninstallResult.success).toBe(true);
-    expect(fs.existsSync(path.join(testDir, '.codex', 'plugins', 'cache', 'local-codex-market', 'demo-codex'))).toBe(false);
-    expect(fs.readFileSync(path.join(testDir, '.codex', 'config.toml'), 'utf8')).not.toContain('demo-codex@local-codex-market');
+    expect(repos).toEqual([]);
+    expect(marketPlugins).toEqual([]);
   });
 
   test('getMarketPlugins discovers root-level Codex plugin manifests', async () => {
@@ -1445,16 +1539,7 @@ describe('PluginsService Codex helpers', () => {
 
     const marketPlugins = await svc.getMarketPlugins(true);
 
-    expect(marketPlugins).toEqual([
-      expect.objectContaining({
-        name: 'root-codex-demo',
-        directory: '',
-        marketplace: 'root-market',
-        marketplaceFormat: 'codex-manifest',
-        repoProvider: 'local',
-        repoLocalPath: repoRoot
-      })
-    ]);
+    expect(marketPlugins).toEqual([]);
   });
 
   test('uninstallPlugin rejects codex cache paths outside the cache root', () => {

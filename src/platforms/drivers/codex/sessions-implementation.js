@@ -322,8 +322,8 @@ async function getSessionById(sessionId) {
  * @param {string} keyword - 搜索关键词
  * @returns {Array} 搜索结果
  */
-async function searchSessions(keyword) {
-  return getSessionHistoryIndex().searchSessions('codex', keyword);
+async function searchSessions(keyword, options = {}) {
+  return getSessionHistoryIndex().searchSessions('codex', keyword, options);
 }
 
 /**

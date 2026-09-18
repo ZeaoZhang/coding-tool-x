@@ -53,6 +53,7 @@ const LEGACY_STATS_DIR = path.join(LEGACY_DIR, 'stats');
 const CONTROL_MANIFEST_PATH = path.join(CONFIG_DIR, 'effective-control.json');
 const SKILL_ARTIFACTS_DIR = path.join(STORAGE_DIR, 'skill-artifacts');
 const SKILL_REFRESH_TASKS_PATH = path.join(RUNTIME_DIR, 'skill-refresh-tasks.json');
+const PLUGIN_REFRESH_TASKS_PATH = path.join(RUNTIME_DIR, 'plugin-refresh-tasks.json');
 
 // 旧目录（升级时自动合并到 ~/.cc-tool）
 const LEGACY_BASE_DIRS = [
@@ -416,6 +417,7 @@ const PATHS = {
   effectiveControlManifest: CONTROL_MANIFEST_PATH,
   skillArtifacts: SKILL_ARTIFACTS_DIR,
   skillRefreshTasks: SKILL_REFRESH_TASKS_PATH,
+  pluginRefreshTasks: PLUGIN_REFRESH_TASKS_PATH,
 
   // 渠道配置
   channelsDir: CHANNELS_DIR,
