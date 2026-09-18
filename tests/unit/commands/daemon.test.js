@@ -222,6 +222,57 @@ describe('daemon stop helpers', () => {
     expect(daemon._test.buildStartOptions(19999, false, false).windowsHide).toBe(true);
   });
 
+  test('forwards runtime environment so restart keeps native CLI profiles', () => {
+    const keys = [
+      'HOME',
+      'PATH',
+      'CODEX_HOME',
+      'OMP_COMMAND',
+      'OMP_CONFIG_DIR',
+      'OMP_PROFILE',
+      'PI_CODING_AGENT_DIR',
+      'OMP_CODING_AGENT_DIR'
+    ];
+    const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+    try {
+      process.env.HOME = '/tmp/ctx-home';
+      process.env.PATH = '/tmp/ctx-bin';
+      process.env.CODEX_HOME = '/tmp/ctx-codex';
+      process.env.OMP_COMMAND = '/tmp/ctx-bin/omp';
+      process.env.OMP_CONFIG_DIR = '/tmp/ctx-omp';
+      process.env.OMP_PROFILE = 'work';
+      process.env.PI_CODING_AGENT_DIR = '/tmp/ctx-pi';
+      process.env.OMP_CODING_AGENT_DIR = '/tmp/ctx-omp-agent';
+
+      expect(daemon._test.buildStartOptions(19999, false, false).env).toMatchObject({
+        HOME: '/tmp/ctx-home',
+        PATH: '/tmp/ctx-bin',
+        CODEX_HOME: '/tmp/ctx-codex',
+        OMP_COMMAND: '/tmp/ctx-bin/omp',
+        OMP_CONFIG_DIR: '/tmp/ctx-omp',
+        OMP_PROFILE: 'work',
+        PI_CODING_AGENT_DIR: '/tmp/ctx-pi',
+        OMP_CODING_AGENT_DIR: '/tmp/ctx-omp-agent'
+      });
+    } finally {
+      keys.forEach((key) => {
+        if (previous[key] === undefined) delete process.env[key];
+        else process.env[key] = previous[key];
+      });
+    }
+  });
+
+  test('clears stale CODEX_HOME from the PM2 child environment', () => {
+    const previous = process.env.CODEX_HOME;
+    try {
+      delete process.env.CODEX_HOME;
+      expect(daemon._test.buildStartOptions(19999, false, false).env.CODEX_HOME).toBe('');
+    } finally {
+      if (previous === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previous;
+    }
+  });
+
   test('should only send stop to active pm2 states', () => {
     expect(daemon._test.shouldStopPM2Process('online')).toBe(true);
     expect(daemon._test.shouldStopPM2Process('stopped')).toBe(false);

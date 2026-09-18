@@ -29,13 +29,14 @@ describe('ChannelCard OAuth balance', () => {
       }
     })
 
-    const balanceTag = wrapper.find('.balance-meta-tag')
-    expect(balanceTag.exists()).toBe(true)
-    expect(balanceTag.text()).toContain('5h 剩余 80% · 7d 剩余 60%')
-    expect(balanceTag.attributes('title')).toContain('5h 剩余 80%')
-    expect(balanceTag.attributes('title')).toContain('7d 剩余 60%')
+    const balanceTags = wrapper.findAll('.balance-meta-tag')
+    expect(balanceTags).toHaveLength(2)
+    expect(balanceTags[0].text()).toBe('5h 剩余 80%')
+    expect(balanceTags[1].text()).toBe('7d 剩余 60%')
+    expect(balanceTags[0].attributes('title')).toContain('5h 剩余 80%')
+    expect(balanceTags[1].attributes('title')).toContain('7d 剩余 60%')
 
-    await balanceTag.trigger('click')
+    await balanceTags[0].trigger('click')
     expect(wrapper.emitted('refresh-balance')).toHaveLength(1)
   })
 })

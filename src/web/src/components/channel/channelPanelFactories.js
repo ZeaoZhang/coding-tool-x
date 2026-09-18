@@ -258,6 +258,10 @@ function isOAuthForm(form = {}) {
   return form.authMode === 'oauth'
 }
 
+function usesNativeOAuthChannel(channel = {}) {
+  return channel.authMode === 'oauth' && channel.transport !== 'pi-native'
+}
+
 function showApiCredentialField(form) {
   return !isOAuthForm(form)
 }
@@ -1286,10 +1290,11 @@ const channelPanelFactories = {
     },
     buildInfoRows: (channel, helpers) => ([
       { label: 'Provider', value: channel.providerKey, mono: true },
-      { label: 'URL', value: channel.baseUrl },
+      { label: 'Auth', value: channel.authMode === 'oauth' ? 'OAuth' : 'API Key', mono: true },
+      { label: 'URL', value: usesNativeOAuthChannel(channel) ? '本地 OAuth' : channel.baseUrl },
       {
         label: 'Key',
-        value: helpers.maskApiKey(channel.apiKey),
+        value: usesNativeOAuthChannel(channel) ? '本地凭据' : helpers.maskApiKey(channel.apiKey),
         mono: true,
         action: channel.health?.status !== 'healthy'
           ? () => helpers.handleResetHealth(channel)
@@ -1551,10 +1556,10 @@ const channelPanelFactories = {
     buildInfoRows: (channel, helpers) => ([
       { label: 'Model', value: channel.model, mono: true },
       { label: 'API', value: formatGeminiApiFormat(channel.apiFormat) },
-      { label: 'URL', value: channel.baseUrl },
+      { label: 'URL', value: usesNativeOAuthChannel(channel) ? '本地 OAuth' : channel.baseUrl },
       {
         label: 'Key',
-        value: helpers.maskApiKey(channel.apiKey),
+        value: usesNativeOAuthChannel(channel) ? '本地凭据' : helpers.maskApiKey(channel.apiKey),
         mono: true,
         action: channel.health?.status !== 'healthy'
           ? () => helpers.handleResetHealth(channel)
@@ -1596,12 +1601,14 @@ const channelPanelFactories = {
       {
         title: '基本信息',
         fields: [
+          buildOAuthAuthField(),
           { key: 'name', label: '渠道名称', type: 'text', required: true, placeholder: '显示名称' },
           {
             key: 'baseUrl',
             label: 'Base URL',
             type: 'text',
             required: true,
+            showWhen: showApiCredentialField,
             placeholder: 'https://api.example.com/v1',
             validate: (value) => validateHttpUrl('Base URL', value, { required: true })
           },
@@ -1610,6 +1617,7 @@ const channelPanelFactories = {
             label: 'API Key',
             type: 'password',
             required: true,
+            showWhen: showApiCredentialField,
             placeholder: 'sk-...'
           },
           buildBalanceCredentialField(),
@@ -1618,6 +1626,7 @@ const channelPanelFactories = {
             key: 'websiteUrl',
             label: '官网链接',
             type: 'text',
+            showWhen: showApiCredentialField,
             placeholder: 'https://（选填）',
             validate: (value) => validateHttpUrl('官网链接', value, { required: false })
           },
@@ -1633,6 +1642,7 @@ const channelPanelFactories = {
             key: 'speedTestModel',
             label: '测速模型',
             type: 'select',
+            showWhen: showApiCredentialField,
             placeholder: '选择用于测速的模型（留空则使用默认模型）',
             description: '指定用于速度测试的模型，留空则自动检测',
             options: [],
@@ -1667,9 +1677,15 @@ const channelPanelFactories = {
     getInitialForm: () => ({
       presetId: 'openrouter',
       name: 'OpenRouter',
+      providerKey: 'openrouter',
       baseUrl: 'https://openrouter.ai/api/v1',
       wireApi: 'openai',
       apiKey: '',
+      authMode: 'api_key',
+      authRef: { credentialId: '', providerId: '', accountId: '', identityKey: '', accountEmail: '' },
+      authSource: undefined,
+      authStatus: undefined,
+      oauthProviderId: '',
       balanceToken: '',
       balanceUserId: null,
       websiteUrl: 'https://openrouter.ai',
@@ -1689,9 +1705,17 @@ const channelPanelFactories = {
     mapChannelToForm: (channel) => ({
       presetId: channel.presetId || 'custom',
       name: channel.name || '',
+      providerKey: channel.providerKey || '',
       baseUrl: channel.baseUrl || '',
       wireApi: channel.wireApi || 'openai',
       apiKey: channel.apiKey || '',
+      authMode: channel.authMode || 'api_key',
+      authRef: channel.authRef
+        ? { credentialId: '', providerId: '', accountId: '', identityKey: '', accountEmail: '', ...channel.authRef }
+        : { credentialId: '', providerId: '', accountId: '', identityKey: '', accountEmail: '' },
+      authSource: channel.authSource,
+      authStatus: channel.authStatus,
+      oauthProviderId: channel.oauthProviderId || '',
       balanceToken: channel.balanceToken || '',
       balanceUserId: channel.balanceUserId ?? null,
       websiteUrl: channel.websiteUrl || '',
@@ -1805,6 +1829,7 @@ const channelPanelFactories = {
           authPayload.apiKey,
           {
             wireApi: form.wireApi || 'openai',
+            providerKey: form.providerKey || '',
             maxConcurrency: normalizeConcurrency(form.maxConcurrency),
             weight: normalizeWeight(form.weight),
             enabled: form.enabled,
@@ -1862,11 +1887,12 @@ const channelPanelFactories = {
       { label: '入口协议', value: formatOpenCodeGatewaySourceType(channel.gatewaySourceType), mono: true },
       { label: 'Wire API', value: channel.wireApi || 'openai', mono: true },
       { label: 'Provider Key', value: channel.providerKey || '(未设置)', mono: true },
+      { label: 'Auth', value: channel.authMode || 'api_key', mono: true },
       { label: 'Model', value: channel.model || '(默认)', mono: true },
-      { label: 'URL', value: channel.baseUrl },
+      { label: 'URL', value: usesNativeOAuthChannel(channel) ? '本地 OAuth' : channel.baseUrl },
       {
         label: 'Key',
-        value: helpers.maskApiKey(channel.apiKey),
+        value: usesNativeOAuthChannel(channel) ? '本地凭据' : helpers.maskApiKey(channel.apiKey),
         mono: true,
         action: channel.health?.status !== 'healthy'
           ? () => helpers.handleResetHealth(channel)
@@ -2337,10 +2363,10 @@ const channelPanelFactories = {
         })
       }
       rows.push(
-        { label: 'URL', value: channel.baseUrl },
+        { label: 'URL', value: usesNativeOAuthChannel(channel) ? '本地 OAuth' : channel.baseUrl },
         {
           label: 'Key',
-          value: helpers.maskApiKey(channel.apiKey),
+          value: usesNativeOAuthChannel(channel) ? '本地凭据' : helpers.maskApiKey(channel.apiKey),
           mono: true,
           action: channel.health?.status !== 'healthy'
             ? () => helpers.handleResetHealth(channel)

@@ -9,6 +9,7 @@ let service;
 let fingerprintForMock;
 let inspectToolMock;
 let readAllNativeOAuthMock;
+let updateCodexOAuthTokensMock;
 let clearNativeOAuthMock;
 let disableNativeOAuthCredentialMock;
 let applyOAuthCredentialMock;
@@ -52,6 +53,7 @@ function stubModules() {
   fingerprintForMock = vi.fn((tool, value) => `${tool}:${value}`);
   inspectToolMock = vi.fn((tool) => ({ tool, connected: false }));
   readAllNativeOAuthMock = vi.fn(() => []);
+  updateCodexOAuthTokensMock = vi.fn();
   clearNativeOAuthMock = vi.fn();
   disableNativeOAuthCredentialMock = vi.fn();
   applyOAuthCredentialMock = vi.fn();
@@ -61,10 +63,11 @@ function stubModules() {
     filename: nativeAdapterPath,
     loaded: true,
     exports: {
-      SUPPORTED_TOOLS: ['claude', 'codex', 'gemini', 'omp'],
+      SUPPORTED_TOOLS: ['claude', 'codex', 'gemini', 'omp', 'opencode'],
       fingerprintFor: fingerprintForMock,
       inspectTool: inspectToolMock,
       readAllNativeOAuth: readAllNativeOAuthMock,
+      updateCodexOAuthTokens: updateCodexOAuthTokensMock,
       clearNativeOAuth: clearNativeOAuthMock,
       disableNativeOAuthCredential: disableNativeOAuthCredentialMock,
       applyOAuthCredential: applyOAuthCredentialMock
@@ -202,7 +205,8 @@ function writeCredential(tool, credential) {
     claude: { defaultCredentialId: null, credentials: [] },
     codex: { defaultCredentialId: null, credentials: [] },
     gemini: { defaultCredentialId: null, credentials: [] },
-    omp: { defaultCredentialId: null, credentials: [] }
+    omp: { defaultCredentialId: null, credentials: [] },
+    opencode: { defaultCredentialId: null, credentials: [] }
   };
   tools[tool] = {
     defaultCredentialId: credential.id,
@@ -281,8 +285,120 @@ describe('oauth credential store operations', () => {
     expect(result.summary.credentials).toHaveLength(1);
   });
 
+  test('reuses one Codex credential record when its token rotates', () => {
+    const storePath = path.join(testDir, 'oauth', 'credentials.json');
+    fs.mkdirSync(path.dirname(storePath), { recursive: true });
+    fs.writeFileSync(storePath, JSON.stringify({
+      version: 1,
+      tools: {
+        claude: { defaultCredentialId: null, credentials: [] },
+        codex: {
+          defaultCredentialId: 'stale-codex-credential',
+          credentials: [
+            {
+              id: 'current-codex-credential',
+              tool: 'codex',
+              accountId: 'account-1',
+              accountEmail: 'dev@example.com',
+              fingerprint: 'codex:account-1',
+              createdAt: 1,
+              updatedAt: 2,
+              secrets: {
+                accessToken: 'current-access-token',
+                refreshToken: 'current-refresh-token',
+                accountId: 'account-1',
+                primaryToken: 'current-access-token'
+              }
+            },
+            {
+              id: 'stale-codex-credential',
+              tool: 'codex',
+              accountId: 'account-1',
+              accountEmail: 'dev@example.com',
+              fingerprint: 'codex:stale-access-token',
+              createdAt: 1,
+              updatedAt: 1,
+              secrets: {
+                accessToken: 'stale-access-token',
+                refreshToken: 'stale-refresh-token',
+                accountId: 'account-1',
+                primaryToken: 'stale-access-token'
+              }
+            }
+          ]
+        },
+        gemini: { defaultCredentialId: null, credentials: [] },
+        omp: { defaultCredentialId: null, credentials: [] },
+        opencode: { defaultCredentialId: null, credentials: [] }
+      }
+    }, null, 2), 'utf8');
+    readAllNativeOAuthMock.mockImplementation((tool) => (
+      tool === 'codex'
+        ? [{
+          accountId: 'account-1',
+          accountEmail: 'dev@example.com',
+          accessToken: 'rotated-access-token',
+          refreshToken: 'rotated-refresh-token',
+          primaryToken: 'rotated-access-token'
+        }]
+        : []
+    ));
+
+    const result = service.syncLocalCredential('codex');
+    const stored = JSON.parse(fs.readFileSync(storePath, 'utf8'));
+
+    expect(result.credential.id).toBe('current-codex-credential');
+    expect(stored.tools.codex.defaultCredentialId).toBe('current-codex-credential');
+    expect(stored.tools.codex.credentials).toHaveLength(1);
+    expect(stored.tools.codex.credentials[0].secrets).toMatchObject({
+      accessToken: 'rotated-access-token',
+      refreshToken: 'rotated-refresh-token'
+    });
+  });
+
   test('syncLocalCredential throws when no local credentials exist', () => {
     expect(() => service.syncLocalCredential('claude')).toThrow(/未检测到/);
+  });
+
+  test('restores a selected OMP OAuth credential into the native auth broker', () => {
+    writeCredential('omp', {
+      id: 'stored-omp-credential',
+      tool: 'omp',
+      providerId: 'openai-codex',
+      accountId: 'account-1',
+      accountEmail: 'dev@example.com',
+      identityKey: 'account-1',
+      expiresAt: Date.now() + 3600 * 1000,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      fingerprint: 'omp:stored',
+      secrets: {
+        providerId: 'openai-codex',
+        accessToken: 'stored-access-token',
+        refreshToken: 'stored-refresh-token',
+        accountId: 'account-1',
+        primaryToken: 'stored-access-token'
+      }
+    });
+
+    const result = service.restoreStoredOmpOAuthCredentials([{
+      id: 'omp-oauth-channel',
+      enabled: true,
+      authMode: 'oauth',
+      authRef: {
+        credentialId: 'stored-omp-credential',
+        providerId: 'openai-codex',
+        accountId: 'account-1'
+      }
+    }]);
+
+    expect(result).toEqual({ restored: ['stored-omp-credential'], warnings: [] });
+    expect(applyOAuthCredentialMock).toHaveBeenCalledWith('omp', expect.objectContaining({
+      providerId: 'openai-codex',
+      accessToken: 'stored-access-token',
+      refreshToken: 'stored-refresh-token',
+      accountId: 'account-1'
+    }));
   });
 
 });
@@ -464,6 +580,235 @@ describe('oauth credential usage lookup', () => {
     expect(requests[0].options.headers).toMatchObject({
       Authorization: 'Bearer access-token',
       'ChatGPT-Account-Id': 'chatgpt-account-1'
+    });
+  });
+
+  test('refreshes an expired Codex OAuth token before loading quota', async () => {
+    decodeJwtPayloadMock.mockImplementation((token) => token === 'fresh-access-token'
+      ? { 'https://api.openai.com/auth': { chatgpt_account_id: 'fresh-account-1' } }
+      : {});
+    const requests = mockHttpsResponses([
+      {
+        statusCode: 200,
+        body: JSON.stringify({
+          access_token: 'fresh-access-token',
+          refresh_token: 'rotated-refresh-token',
+          expires_in: 3600
+        })
+      },
+      {
+        statusCode: 200,
+        body: JSON.stringify({
+          rate_limit: {
+            primary_window: { used_percent: 15 },
+            secondary_window: { used_percent: 35 }
+          }
+        })
+      }
+    ]);
+    writeCredential('codex', {
+      id: 'expired-codex-credential',
+      tool: 'codex',
+      accountId: 'old-account-1',
+      expiresAt: Date.now() - 1000,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      fingerprint: 'codex:expired',
+      secrets: {
+        accessToken: 'expired-access-token',
+        refreshToken: 'refresh-token',
+        idToken: '',
+        accountId: 'old-account-1',
+        primaryToken: 'expired-access-token'
+      }
+    });
+
+    const result = await service.fetchCredentialUsage('codex', 'expired-codex-credential');
+
+    expect(result.quota).toMatchObject({
+      primary: { remainingPercent: 85 },
+      secondary: { remainingPercent: 65 }
+    });
+    expect(requests[0].options.path).toBe('/oauth/token');
+    expect(requests[0].options.method).toBe('POST');
+    expect(requests[1].options.path).toBe('/backend-api/wham/usage');
+    expect(requests[1].options.headers.Authorization).toBe('Bearer fresh-access-token');
+    expect(requests[1].options.headers['ChatGPT-Account-Id']).toBe('fresh-account-1');
+    expect(updateCodexOAuthTokensMock).toHaveBeenCalledWith(expect.objectContaining({
+      accessToken: 'fresh-access-token',
+      refreshToken: 'rotated-refresh-token',
+      accountId: 'fresh-account-1'
+    }));
+  });
+
+  test('refreshes native Codex OAuth before startup uses an expired token', async () => {
+    const requests = mockHttpsResponses([{
+      statusCode: 200,
+      body: JSON.stringify({
+        access_token: 'fresh-native-access-token',
+        refresh_token: 'fresh-native-refresh-token',
+        expires_in: 3600
+      })
+    }]);
+    readAllNativeOAuthMock.mockImplementation((tool) => (
+      tool === 'codex'
+        ? [{
+          authMode: 'chatgpt',
+          accessToken: 'expired-native-access-token',
+          refreshToken: 'native-refresh-token',
+          idToken: '',
+          accountId: 'account-1',
+          expiresAt: Date.now() - 1000,
+          lastRefresh: '2026-09-19T08:12:50.000Z',
+          primaryToken: 'expired-native-access-token'
+        }]
+        : []
+    ));
+
+    const result = await service.refreshNativeCodexOAuth();
+
+    expect(result).toMatchObject({
+      available: true,
+      refreshed: true,
+      refreshAttempted: true,
+      refreshFailed: false,
+      synchronized: true
+    });
+    expect(requests[0].options.path).toBe('/oauth/token');
+    expect(updateCodexOAuthTokensMock).toHaveBeenCalledWith(expect.objectContaining({
+      accessToken: 'fresh-native-access-token',
+      refreshToken: 'fresh-native-refresh-token',
+      accountId: 'account-1'
+    }));
+  });
+  test('keeps native OAuth stores untouched when startup refresh fails', async () => {
+    mockHttpsResponses([{
+      statusCode: 400,
+      body: JSON.stringify({ error: 'invalid_grant' })
+    }]);
+    readAllNativeOAuthMock.mockImplementation((tool) => (
+      tool === 'codex'
+        ? [{
+          authMode: 'chatgpt',
+          accessToken: 'expired-native-access-token',
+          refreshToken: 'native-refresh-token',
+          idToken: '',
+          accountId: 'account-1',
+          expiresAt: Date.now() - 1000,
+          lastRefresh: '2026-09-19T08:12:50.000Z',
+          primaryToken: 'expired-native-access-token'
+        }]
+        : []
+    ));
+
+    const result = await service.refreshNativeCodexOAuth();
+
+    expect(result).toMatchObject({
+      available: true,
+      refreshed: false,
+      refreshAttempted: true,
+      refreshFailed: true,
+      synchronized: false
+    });
+    expect(updateCodexOAuthTokensMock).not.toHaveBeenCalled();
+  });
+  test('reimports a refreshed OMP OAuth token into the native auth broker', async () => {
+    decodeJwtPayloadMock.mockImplementation((token) => token === 'fresh-omp-access-token'
+      ? { 'https://api.openai.com/auth': { chatgpt_account_id: 'fresh-omp-account-1' } }
+      : {});
+    const requests = mockHttpsResponses([
+      {
+        statusCode: 200,
+        body: JSON.stringify({
+          access_token: 'fresh-omp-access-token',
+          refresh_token: 'rotated-omp-refresh-token',
+          expires_in: 3600
+        })
+      },
+      {
+        statusCode: 200,
+        body: JSON.stringify({
+          rate_limit: {
+            primary_window: { used_percent: 20 },
+            secondary_window: { used_percent: 40 }
+          }
+        })
+      }
+    ]);
+    writeCredential('omp', {
+      id: 'expired-omp-credential',
+      tool: 'omp',
+      providerId: 'openai-codex',
+      accountId: 'old-omp-account-1',
+      accountEmail: 'dev@example.com',
+      identityKey: 'old-omp-account-1',
+      expiresAt: Date.now() - 1000,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      fingerprint: 'omp:expired',
+      secrets: {
+        providerId: 'openai-codex',
+        accessToken: 'expired-omp-access-token',
+        refreshToken: 'omp-refresh-token',
+        accountId: 'old-omp-account-1',
+        primaryToken: 'expired-omp-access-token'
+      }
+    });
+
+    const result = await service.fetchCredentialUsage('omp', 'expired-omp-credential');
+
+    expect(result.quota).toMatchObject({
+      primary: { remainingPercent: 80 },
+      secondary: { remainingPercent: 60 }
+    });
+    expect(requests[0].options.path).toBe('/oauth/token');
+    expect(requests[1].options.path).toBe('/backend-api/wham/usage');
+    expect(applyOAuthCredentialMock).toHaveBeenCalledWith('omp', expect.objectContaining({
+      providerId: 'openai-codex',
+      accessToken: 'fresh-omp-access-token',
+      refreshToken: 'rotated-omp-refresh-token',
+      accountId: 'fresh-omp-account-1',
+      accountEmail: 'dev@example.com',
+      identityKey: 'old-omp-account-1'
+    }));
+  });
+
+  test('uses OpenCode OpenAI OAuth tokens with the Codex usage endpoint', async () => {
+    decodeJwtPayloadMock.mockImplementation((token) => token === 'openai-access-token'
+      ? { 'https://api.openai.com/auth': { chatgpt_account_id: 'openai-account-1' } }
+      : {});
+    const requests = mockHttpsResponses([{
+      statusCode: 200,
+      body: JSON.stringify({
+        rate_limit: {
+          primary_window: { used_percent: 10 },
+          secondary_window: { used_percent: 30 }
+        }
+      })
+    }]);
+    writeCredential('opencode', {
+      id: 'opencode-credential',
+      tool: 'opencode',
+      providerId: 'openai-codex',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      fingerprint: 'opencode:test',
+      secrets: {
+        accessToken: 'openai-access-token',
+        primaryToken: 'openai-access-token'
+      }
+    });
+
+    const result = await service.fetchCredentialUsage('opencode', 'opencode-credential');
+
+    expect(result.quota).toMatchObject({
+      primary: { remainingPercent: 90 },
+      secondary: { remainingPercent: 70 }
+    });
+    expect(requests[0].options.path).toBe('/backend-api/wham/usage');
+    expect(requests[0].options.headers).toMatchObject({
+      Authorization: 'Bearer openai-access-token',
+      'ChatGPT-Account-Id': 'openai-account-1'
     });
   });
 

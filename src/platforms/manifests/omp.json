@@ -491,6 +491,7 @@
     "api": "legacy:omp",
     "hooks": "legacy:omp",
     "resourceSync": "legacy:omp",
-    "mcp": "legacy:omp"
+    "mcp": "legacy:omp",
+    "prompts": "legacy:omp"
   }
 }

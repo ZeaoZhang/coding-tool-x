@@ -2,6 +2,7 @@ const CONFIG_LOADER_MODULE = require.resolve('../../../src/config/loader');
 const PROXY_RUNTIME_MODULE = require.resolve('../../../src/server/services/proxy-runtime');
 const OMP_CHANNELS_MODULE = require.resolve('../../../src/platforms/drivers/omp/channels-implementation');
 const OMP_PROXY_SERVER_MODULE = require.resolve('../../../src/platforms/drivers/omp/proxy-implementation');
+const OAUTH_CREDENTIALS_SERVICE_MODULE = require.resolve('../../../src/platforms/oauth-credentials-service');
 const http = require('http');
 
 let syncManagedOmpProviders;
@@ -16,6 +17,7 @@ let saveProxyStartTime;
 let clearProxyStartTime;
 let getEnabledChannels;
 let getOrCreateOmpGatewaySecret;
+let restoreStoredOmpOAuthCredentials;
 
 function requestHealth(port) {
   return new Promise((resolve, reject) => {
@@ -47,6 +49,7 @@ function injectStub(modulePath, exports) {
 
 beforeEach(() => {
   getOrCreateOmpGatewaySecret = vi.fn(() => 'stable-gateway-secret');
+  restoreStoredOmpOAuthCredentials = vi.fn(() => ({ restored: [], warnings: [] }));
   syncManagedOmpProviders = vi.fn(() => ({ warnings: [] }));
   disableManagedOmpProviders = vi.fn(() => ({ warnings: [] }));
   activateStaticOmpChannel = vi.fn(() => ({
@@ -94,6 +97,9 @@ beforeEach(() => {
     loadManagedOmpModeState,
     getOrCreateOmpGatewaySecret
   });
+  injectStub(OAUTH_CREDENTIALS_SERVICE_MODULE, {
+    restoreStoredOmpOAuthCredentials
+  });
 });
 
 afterEach(async () => {
@@ -105,6 +111,7 @@ afterEach(async () => {
   [
     OMP_PROXY_SERVER_MODULE,
     OMP_CHANNELS_MODULE,
+    OAUTH_CREDENTIALS_SERVICE_MODULE,
     PROXY_RUNTIME_MODULE,
     CONFIG_LOADER_MODULE
   ].forEach((modulePath) => {
@@ -155,6 +162,29 @@ it('reuses the persisted gateway secret when managed mode restarts', async () =>
   expect(getOrCreateOmpGatewaySecret).toHaveBeenCalledTimes(2);
   expect(gatewayOptions[0].secret).toBe('stable-gateway-secret');
   expect(gatewayOptions[1].secret).toBe('stable-gateway-secret');
+});
+
+it('restores stored OMP OAuth credentials when the gateway is already listening', async () => {
+  const proxy = require('../../../src/platforms/drivers/omp/proxy-implementation');
+  await proxy.startOmpProxyServer({ activeChannelId: 'channel-a' });
+  restoreStoredOmpOAuthCredentials.mockClear();
+  getEnabledChannels.mockReturnValue([{
+    id: 'oauth-channel',
+    name: 'OMP OAuth',
+    authMode: 'oauth',
+    enabled: true,
+    authRef: { credentialId: 'credential-1' }
+  }]);
+
+  const result = await proxy.startOmpProxyServer({ activeChannelId: 'oauth-channel' });
+
+  expect(restoreStoredOmpOAuthCredentials).toHaveBeenCalledWith(expect.arrayContaining([
+    expect.objectContaining({ id: 'oauth-channel', authMode: 'oauth' })
+  ]));
+  expect(result).toEqual(expect.objectContaining({
+    success: true,
+    port: expect.any(Number)
+  }));
 });
 
 it('hands off to one direct current provider before stopping the gateway', async () => {

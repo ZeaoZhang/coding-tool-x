@@ -146,9 +146,7 @@ describe('built-in channel Driver contract', () => {
       for (const capability of ['resourceSync', 'mcp']) {
         expect(runtime.getDriver(platform, capability)).toBeTruthy();
       }
-      if (platform !== 'omp') {
-        expect(runtime.getDriver(platform, 'prompts')).toBeTruthy();
-      }
+      expect(runtime.getDriver(platform, 'prompts')).toBeTruthy();
     }
   });
 

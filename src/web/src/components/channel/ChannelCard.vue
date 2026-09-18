@@ -116,8 +116,22 @@
         </n-button>
         <div class="footer-spacer"></div>
         <div class="channel-meta">
+          <template v-if="showSplitOAuthBalance">
+            <n-tag
+              v-for="window in balanceWindows"
+              :key="window.id || window.label"
+              size="tiny"
+              type="success"
+              :bordered="false"
+              class="balance-meta-tag"
+              :title="balanceWindowTitle(window)"
+              @click.stop="emit('refresh-balance')"
+            >
+              {{ window.label }} 剩余 {{ formatBalancePercent(window.remainingPercent) }}%
+            </n-tag>
+          </template>
           <n-tag
-            v-if="balance?.visible && balance.label"
+            v-else-if="balance?.visible && balance.label"
             size="tiny"
             type="success"
             :bordered="false"
@@ -194,6 +208,33 @@ const emit = defineEmits(['toggle-collapse', 'apply', 'edit', 'delete', 'toggle-
 
 const testing = ref(false)
 const testResult = ref(null)
+
+const balanceWindows = computed(() => {
+  if (!props.balance?.visible || props.balance.kind !== 'oauth-quota') return []
+  const windows = Array.isArray(props.balance.windows) ? props.balance.windows : []
+  const primaryWindows = windows.filter(window => window?.id === 'primary' || window?.id === 'secondary')
+  return primaryWindows.length ? primaryWindows : windows
+})
+
+const showSplitOAuthBalance = computed(() => balanceWindows.value.length > 0)
+
+function formatBalancePercent(value) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return '—'
+  return Number.isInteger(number) ? String(number) : number.toFixed(1).replace(/\.0$/, '')
+}
+
+function balanceWindowTitle(window) {
+  const parts = []
+  if (props.balance?.platform) parts.push(props.balance.platform)
+  if (window?.label) parts.push(`${window.label} 剩余 ${formatBalancePercent(window.remainingPercent)}%`)
+  if (window?.resetsAt) {
+    try {
+      parts.push(`重置 ${new Date(window.resetsAt).toLocaleString()}`)
+    } catch {}
+  }
+  return parts.join(' · ')
+}
 
 const balanceTitle = computed(() => {
   if (!props.balance?.visible) return ''
@@ -458,7 +499,7 @@ async function runTest() {
 .balance-meta-tag {
   cursor: pointer;
   flex-shrink: 0;
-  max-width: 140px;
+  max-width: 110px;
 }
 
 .balance-meta-tag :deep(.n-tag__content) {

@@ -3,7 +3,7 @@
 const { createChannelDriver } = require('../../../shared/channel-driver');
 
 function createDriver(context = {}) {
-  return createChannelDriver({
+  const driver = createChannelDriver({
     ...context,
     platform: 'opencode',
     servicePath: './opencode/channels-implementation',
@@ -35,6 +35,11 @@ function createDriver(context = {}) {
     },
     dashboardChannelShape: 'array'
   });
+  const auth = require('../../channel-auth-service');
+  driver.getAuth = context => auth.getChannelAuth('opencode', { channelId: context?.params?.channelId || context?.query?.channelId || '' });
+  driver.syncLocalAuth = context => auth.syncLocalChannelAuth('opencode', { channelId: context?.body?.channelId || context?.params?.channelId || context?.query?.channelId || '' });
+  driver.getAuthQuota = context => auth.fetchChannelAuthQuota('opencode', context?.params?.channelId, { refresh: context?.query?.refresh === 'true' });
+  return driver;
 }
 
 module.exports = { createDriver };

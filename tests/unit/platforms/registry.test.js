@@ -151,7 +151,7 @@ test('public definitions expose support flags without internal driver configurat
 test('built-in manifests expose MCP and valid prompt capabilities', () => {
   const registry = createPlatformRegistry({ userFile: { platforms: [] } });
 
-  for (const platform of ['claude', 'codex', 'gemini', 'opencode']) {
+  for (const platform of ['claude', 'codex', 'gemini', 'opencode', 'omp']) {
     expect(registry.getCapability(platform, 'mcp')).toBe(`legacy:${platform}`);
     expect(registry.getCapability(platform, 'prompts')).toBe(`legacy:${platform}`);
     expect(registry.getPublicDefinition(platform).capabilities).toEqual(expect.objectContaining({
@@ -161,11 +161,11 @@ test('built-in manifests expose MCP and valid prompt capabilities', () => {
   }
 
   expect(registry.getCapability('omp', 'mcp')).toBe('legacy:omp');
-  expect(registry.getCapability('omp', 'prompts')).toBeNull();
+  expect(registry.getCapability('omp', 'prompts')).toBe('legacy:omp');
   expect(registry.getPublicDefinition('omp').capabilities).toEqual(expect.objectContaining({
-    mcp: true
+    mcp: true,
+    prompts: true
   }));
-  expect(registry.getPublicDefinition('omp').capabilities.prompts).toBeUndefined();
 });
 
 test('built-in manifests expose native CLI log capabilities through the registry', () => {

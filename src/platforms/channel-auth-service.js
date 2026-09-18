@@ -37,11 +37,21 @@ function resolveChannelAuthRef(adapter, channel) {
   const matched = candidates.find(candidate => matchChannel(channel, candidate));
   if (matched) return safeRef(matched.authRef);
 
+  // A channel may retain an old account ID after the local OAuth store rotates
+  // credentials. When there is exactly one account for the same provider, it
+  // is safe to rebind the stale reference for quota lookup.
+  const soleCandidate = candidates.length === 1 ? candidates[0] : null;
+  const soleRef = safeRef(soleCandidate?.authRef);
+  const providerId = current.providerId || String(channel?.oauthProviderId || '').trim();
+  if (soleCandidate && providerId && soleRef.providerId === providerId) {
+    return soleRef;
+  }
+
   // A channel created before OAuth credentials were synced can have no stable
   // reference. Only auto-select when the local scan found exactly one account.
   if (!current.credentialId && !current.providerId && !current.accountId
-    && !current.identityKey && !current.accountEmail && candidates.length === 1) {
-    return safeRef(candidates[0].authRef);
+    && !current.identityKey && !current.accountEmail && soleCandidate) {
+    return soleRef;
   }
 
   return current;

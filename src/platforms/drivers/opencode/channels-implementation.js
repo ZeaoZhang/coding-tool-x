@@ -68,6 +68,10 @@ function normalizeChannelName(value) {
     .replace(/\s+/g, ' ');
 }
 
+function normalizeAuthMode(value) {
+  return ['api_key', 'oauth', 'none'].includes(value) ? value : 'api_key';
+}
+
 // 获取渠道存储文件路径
 function getChannelsFilePath() {
   const channelsDir = path.dirname(configuredState.channels);
@@ -98,24 +102,7 @@ function loadChannels() {
     const data = JSON.parse(content);
     // 确保渠道有必要字段（兼容旧数据）
     if (data.channels) {
-      data.channels = data.channels.map(ch => {
-        const normalized = {
-          ...ch,
-          enabled: ch.enabled !== false,
-          weight: ch.weight || 1,
-          maxConcurrency: ch.maxConcurrency || null,
-          balanceToken: ch.balanceToken || '',
-          balanceUserId: ch.balanceUserId || null,
-          modelRedirects: ch.modelRedirects || [],
-          speedTestModel: ch.speedTestModel || null,
-          wireApi: ch.wireApi || 'openai',  // OpenCode 默认使用 OpenAI 兼容格式
-          gatewaySourceType: normalizeGatewaySourceType(ch.gatewaySourceType, 'codex'),
-          allowedModels: ch.allowedModels || []
-        };
-        normalized.providerKey = ch.providerKey || deriveProviderKey(normalized);
-        normalized.websiteUrl = resolveChannelWebsiteUrl('opencode', normalized);
-        return normalized;
-      });
+      data.channels = data.channels.map(ch => normalizeOpenCodeChannel(ch));
     }
     return data;
   } catch (err) {
@@ -191,12 +178,18 @@ function getChannels() {
 function createChannel(name, baseUrl, apiKey, extraConfig = {}) {
   const data = loadChannels();
   const isProxyRunning = getOpenCodeProxyRunning();
+  const authMode = normalizeAuthMode(extraConfig.authMode);
 
   const newChannel = {
     id: crypto.randomUUID(),
     name,
-    baseUrl,
-    apiKey,
+    baseUrl: authMode === 'oauth' || authMode === 'none' ? '' : baseUrl,
+    apiKey: authMode === 'oauth' || authMode === 'none' ? '' : apiKey,
+    authMode,
+    authRef: authMode === 'oauth' ? (extraConfig.authRef || {}) : undefined,
+    authSource: authMode === 'oauth' ? (extraConfig.authSource || 'synced-local') : undefined,
+    authStatus: authMode === 'oauth' ? (extraConfig.authStatus || 'available') : undefined,
+    oauthProviderId: authMode === 'oauth' ? (extraConfig.oauthProviderId || extraConfig.providerKey || '') : '',
     wireApi: extraConfig.wireApi || 'openai',
     enabled: extraConfig.enabled !== false,
     weight: extraConfig.weight || 1,
@@ -248,7 +241,7 @@ function updateChannel(channelId, updates) {
 
   const oldChannel = data.channels[index];
 
-  const merged = {
+  const merged = normalizeOpenCodeChannel({
     ...oldChannel,
     ...updates,
     id: channelId,
@@ -264,7 +257,7 @@ function updateChannel(channelId, updates) {
       'codex'
     ),
     updatedAt: Date.now()
-  };
+  });
   merged.providerKey = updates.providerKey || oldChannel.providerKey || deriveProviderKey(merged);
   merged.websiteUrl = resolveChannelWebsiteUrl('opencode', merged);
   data.channels[index] = merged;
@@ -524,6 +517,7 @@ function findOpenCodeExistingByProvider(channels = [], providerId = '', baseUrl 
 }
 
 function normalizeOpenCodeChannel(channel = {}) {
+  const authMode = normalizeAuthMode(channel.authMode);
   const normalized = {
     ...channel,
     enabled: channel.enabled !== false,
@@ -537,6 +531,15 @@ function normalizeOpenCodeChannel(channel = {}) {
     gatewaySourceType: normalizeGatewaySourceType(channel.gatewaySourceType, 'codex'),
     allowedModels: Array.isArray(channel.allowedModels) ? channel.allowedModels : []
   };
+  normalized.authMode = authMode;
+  normalized.authRef = authMode === 'oauth' ? (channel.authRef || {}) : undefined;
+  normalized.authSource = authMode === 'oauth' ? (channel.authSource || 'synced-local') : undefined;
+  normalized.authStatus = authMode === 'oauth' ? (channel.authStatus || 'available') : undefined;
+  normalized.oauthProviderId = authMode === 'oauth' ? (channel.oauthProviderId || channel.providerKey || '') : '';
+  if (authMode === 'oauth' || authMode === 'none') {
+    normalized.baseUrl = '';
+    normalized.apiKey = '';
+  }
   normalized.providerKey = normalized.providerKey || deriveProviderKey(normalized);
   normalized.websiteUrl = resolveChannelWebsiteUrl('opencode', normalized);
   return normalized;

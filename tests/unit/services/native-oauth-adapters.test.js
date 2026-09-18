@@ -2,6 +2,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
+const { execFileSync } = require('child_process');
+const childProcess = require('child_process');
 const toml = require('toml');
 const CLAUDE_CHANNELS_MODULE = require.resolve('../../../src/platforms/drivers/claude/channels-implementation');
 const GEMINI_CHANNELS_MODULE = require.resolve('../../../src/platforms/drivers/gemini/channels-implementation');
@@ -78,6 +80,13 @@ beforeEach(() => {
         oauthCredentialsEncrypted: path.join(testDir, '.gemini', 'oauth-credentials.enc'),
         oauthCredentialsLegacy: path.join(testDir, '.gemini', 'oauth-credentials.json'),
         googleAccounts: path.join(testDir, '.gemini', 'google-accounts.json')
+      },
+      opencode: {
+        data: path.join(testDir, '.local', 'share', 'opencode'),
+        auth: path.join(testDir, '.local', 'share', 'opencode', 'auth.json')
+      },
+      omp: {
+        dir: path.join(testDir, '.omp', 'agent')
       },
     }
   };
@@ -356,6 +365,34 @@ describe('native-oauth-adapters high level flows', () => {
     expect(state.mode).toBe('oauth');
   });
 
+  test('prefers a newer Codex auth.json over a stale keychain copy', () => {
+    nativeAdapters.applyOAuthCredential('codex', {
+      authMode: 'chatgpt',
+      accessToken: 'old-codex-access',
+      refreshToken: 'old-codex-refresh',
+      idToken: 'id-token',
+      accountId: 'acct-1',
+      lastRefresh: '2026-07-10T02:08:16.000Z'
+    });
+
+    writeJson(pathsStub.NATIVE_PATHS.codex.auth, {
+      auth_mode: 'chatgpt',
+      tokens: {
+        access_token: 'new-codex-access',
+        refresh_token: 'new-codex-refresh',
+        id_token: 'id-token',
+        account_id: 'acct-1'
+      },
+      last_refresh: '2026-09-09T08:12:50.000Z'
+    });
+
+    expect(nativeAdapters.readNativeOAuth('codex')).toEqual(expect.objectContaining({
+      accessToken: 'new-codex-access',
+      refreshToken: 'new-codex-refresh',
+      storage: 'auth-file'
+    }));
+  });
+
   test('reports mixed mode for Codex when channel config and native OAuth both exist', () => {
     writeJson(pathsStub.NATIVE_PATHS.codex.auth, {
       auth_mode: 'chatgpt',
@@ -516,9 +553,70 @@ describe('native-oauth-adapters high level flows', () => {
 
 
   test('disables an OMP OAuth credential without falling through as unsupported', () => {
+    const realSpawnSync = childProcess.spawnSync;
+    vi.spyOn(childProcess, 'spawnSync').mockImplementation((command, args, options) => {
+      if (Array.isArray(args) && args[0] === 'auth-broker' && args[1] === 'logout') {
+        return { status: 0, stdout: 'Logged out', stderr: '' };
+      }
+      return realSpawnSync(command, args, options);
+    });
+    delete require.cache[require.resolve('../../../src/platforms/native-oauth-adapters')];
+    nativeAdapters = require('../../../src/platforms/native-oauth-adapters');
+
     expect(() => nativeAdapters.disableNativeOAuthCredential('omp', {
       providerId: 'openai-codex'
     })).not.toThrow();
+  });
+
+  test('imports OMP OAuth credentials using the auth-broker token schema', () => {
+    const realSpawnSync = childProcess.spawnSync;
+    let importedPayload = null;
+    vi.spyOn(childProcess, 'spawnSync').mockImplementation((command, args, options) => {
+      if (Array.isArray(args) && args[0] === 'auth-broker' && args[1] === 'import') {
+        importedPayload = readJson(args[2]);
+        return { status: 0, stdout: 'imported', stderr: '' };
+      }
+      return realSpawnSync(command, args, options);
+    });
+    delete require.cache[require.resolve('../../../src/platforms/native-oauth-adapters')];
+    nativeAdapters = require('../../../src/platforms/native-oauth-adapters');
+
+    const result = nativeAdapters.applyOAuthCredential('omp', {
+      providerId: 'openai-codex',
+      accessToken: 'omp-access-token',
+      refreshToken: 'omp-refresh-token',
+      expiresAt: 2000000000000,
+      accountId: 'account-1',
+      accountEmail: 'dev@example.com'
+    });
+
+    expect(result).toEqual({ storage: 'auth-broker' });
+    expect(importedPayload).toMatchObject({
+      type: 'oauth',
+      credential_type: 'oauth',
+      disabled: false,
+      access_token: 'omp-access-token',
+      refresh_token: 'omp-refresh-token',
+      account_id: 'account-1',
+      email: 'dev@example.com'
+    });
+    expect(importedPayload.expired).toBe('2033-05-18T03:33:20.000Z');
+  });
+
+  test('does not treat an auth-broker import with no importable credentials as success', () => {
+    vi.spyOn(childProcess, 'spawnSync').mockImplementation(() => ({
+      status: 0,
+      stdout: 'No importable credentials in file.',
+      stderr: ''
+    }));
+    delete require.cache[require.resolve('../../../src/platforms/native-oauth-adapters')];
+    nativeAdapters = require('../../../src/platforms/native-oauth-adapters');
+
+    expect(() => nativeAdapters.applyOAuthCredential('omp', {
+      providerId: 'openai-codex',
+      accessToken: 'omp-access-token',
+      refreshToken: 'omp-refresh-token'
+    })).toThrow(/rejected the credential/);
   });
 
   test('reads OMP OAuth accounts from auth-broker provider snapshot', () => {
@@ -550,6 +648,65 @@ describe('native-oauth-adapters high level flows', () => {
       mode: 'oauth',
       oauthPresent: true
     }));
+  });
+
+  test('joins OMP provider accounts with OAuth tokens from the auth-broker database', () => {
+    fs.mkdirSync(pathsStub.NATIVE_PATHS.omp.dir, { recursive: true });
+    const databasePath = path.join(pathsStub.NATIVE_PATHS.omp.dir, 'agent.db');
+    const data = JSON.stringify({
+      access: 'omp-access-token',
+      refresh: 'omp-refresh-token',
+      accountId: 'omp-account-1',
+      email: 'omp@example.com',
+      expires: 2000000000
+    }).replace(/'/g, "''");
+    execFileSync('sqlite3', [databasePath, [
+      'create table auth_credentials (provider text, credential_type text, data text, identity_key text, disabled_cause text, updated_at integer);',
+      `insert into auth_credentials values ('openai-codex', 'oauth', '${data}', 'email:omp@example.com|org:omp-account-1', null, 1);`
+    ].join(' ')], { stdio: 'ignore' });
+    getOmpAuthProviderSnapshotMock.mockReturnValue({
+      available: true,
+      providers: [{
+        id: 'openai-codex',
+        loggedIn: true,
+        accountCount: 1,
+        accounts: [{ index: 1, identity: 'om***e@example.com' }]
+      }]
+    });
+
+    expect(nativeAdapters.readAllNativeOAuth('omp')).toEqual([
+      expect.objectContaining({
+        providerId: 'openai-codex',
+        accountId: 'omp-account-1',
+        accountEmail: 'omp@example.com',
+        accessToken: 'omp-access-token',
+        refreshToken: 'omp-refresh-token'
+      })
+    ]);
+  });
+
+  test('reads OpenCode OAuth tokens and maps OpenAI providers to Codex quota lookup', () => {
+    fs.mkdirSync(pathsStub.NATIVE_PATHS.opencode.data, { recursive: true });
+    writeJson(pathsStub.NATIVE_PATHS.opencode.auth, {
+      'https://auth.openai.com': {
+        access: 'openai-access-token',
+        refresh: 'openai-refresh-token',
+        accountId: 'openai-account-1',
+        email: 'openai@example.com',
+        expiresAt: 2000000000000
+      }
+    });
+
+    expect(nativeAdapters.readAllNativeOAuth('opencode')).toEqual([
+      expect.objectContaining({
+        providerId: 'openai-codex',
+        accountId: 'openai-account-1',
+        accountEmail: 'openai@example.com',
+        accessToken: 'openai-access-token',
+        refreshToken: 'openai-refresh-token',
+        expiresAt: 2000000000000
+      })
+    ]);
   });
 
   test('keeps multiple OMP provider accounts as separate native credentials', () => {

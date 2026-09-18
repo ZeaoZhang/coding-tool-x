@@ -4,6 +4,22 @@
 
 export const opencodePresets = [
   // ============================================
+  // OAuth
+  // ============================================
+  {
+    id: 'opencode_oauth',
+    name: 'OpenCode OAuth',
+    category: 'oauth',
+    description: '使用本地 OpenCode / Codex OAuth 登录凭据',
+    websiteUrl: '',
+    baseUrl: '',
+    wireApi: 'openai',
+    authMode: 'oauth',
+    oauthProviderId: 'openai-codex',
+    models: []
+  },
+
+  // ============================================
   // API Key 提供商
   // ============================================
   {
@@ -137,6 +153,7 @@ export const opencodePresets = [
 ]
 
 export const opencodePresetCategories = {
+  oauth: 'OAuth',
   apikey: 'API Key',
   entry: '转换入口',
   custom: '自定义'

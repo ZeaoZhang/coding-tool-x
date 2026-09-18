@@ -15,6 +15,17 @@ const { hasHostFlag } = require('../utils/cli-flags');
 const { getPlatformRegistry, getPlatformRuntime } = require('../platforms/runtime');
 const PM2_APP_NAME = 'cc-tool';
 const STARTUP_LOG_FILE = 'cc-tool-out.log';
+const PM2_RUNTIME_ENV_KEYS = [
+  'HOME',
+  'USERPROFILE',
+  'PATH',
+  'CODEX_HOME',
+  'OMP_COMMAND',
+  'OMP_CONFIG_DIR',
+  'OMP_PROFILE',
+  'PI_CODING_AGENT_DIR',
+  'OMP_CODING_AGENT_DIR'
+];
 const CURRENT_PM2_FORK_PATH = resolveCurrentPm2ForkPath();
 
 function resolveCurrentPm2ForkPath() {
@@ -475,6 +486,21 @@ function buildStartOptions(port, enableHost, enableHttps) {
     pmArgs.push('--https');
   }
 
+  const env = {
+    NODE_ENV: 'production',
+    CC_TOOL_PORT: port
+  };
+  PM2_RUNTIME_ENV_KEYS.forEach((key) => {
+    if (key === 'CODEX_HOME'
+      || key.startsWith('OMP_')
+      || key.endsWith('_CODING_AGENT_DIR')) {
+      // Explicitly pass empty native path/profile overrides too, so PM2 cannot resurrect stale state.
+      env[key] = process.env[key] || '';
+    } else if (process.env[key]) {
+      env[key] = process.env[key];
+    }
+  });
+
   return {
     name: PM2_APP_NAME,
     script: path.join(__dirname, '../index.js'),
@@ -484,10 +510,7 @@ function buildStartOptions(port, enableHost, enableHttps) {
     autorestart: true,
     kill_timeout: 5000,
     max_memory_restart: '500M',
-    env: {
-      NODE_ENV: 'production',
-      CC_TOOL_PORT: port
-    },
+    env,
     output: path.join(PATHS.logs, STARTUP_LOG_FILE),
     error: path.join(PATHS.logs, STARTUP_LOG_FILE),
     merge_logs: true,

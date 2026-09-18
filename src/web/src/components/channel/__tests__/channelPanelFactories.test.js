@@ -10,6 +10,7 @@ const {
   fetchOmpCatalogMetadata,
   fetchOmpChannelModels,
   fetchOpenCodeChannelModels,
+  createOpenCodeChannel,
   createOmpChannel,
   updateOmpChannel,
   getAllModelsByToolType,
@@ -26,6 +27,7 @@ const {
   fetchOmpCatalogMetadata: vi.fn(),
   fetchOmpChannelModels: vi.fn(),
   fetchOpenCodeChannelModels: vi.fn(),
+  createOpenCodeChannel: vi.fn(),
   createOmpChannel: vi.fn(),
   updateOmpChannel: vi.fn(),
   getAllModelsByToolType: vi.fn(),
@@ -45,6 +47,7 @@ vi.mock('../../../api/channels', async () => ({
   fetchOmpCatalogMetadata,
   fetchOmpChannelModels,
   fetchOpenCodeChannelModels,
+  createOpenCodeChannel,
   createOmpChannel,
   updateOmpChannel,
   probeOmpChannelModels,
@@ -82,6 +85,7 @@ describe('channel panel model catalogs', () => {
     probeOmpChannelModels.mockReset()
     probeOpenCodeChannelModels.mockReset()
     createOmpChannel.mockReset().mockResolvedValue({ id: 'created' })
+    createOpenCodeChannel.mockReset().mockResolvedValue({ id: 'created-opencode' })
     updateOmpChannel.mockReset().mockResolvedValue({ id: 'updated' })
   })
   it('keeps array channel responses from the platform API', async () => {
@@ -286,12 +290,13 @@ describe('channel panel model catalogs', () => {
 
   it('uses presets to select OAuth and hides API-only fields', () => {
     const cases = [
-      ['claude', 'claude_oauth'],
-      ['codex', 'codex_oauth'],
-      ['gemini', 'gemini_oauth']
+      ['claude', 'claude_oauth', 'claude'],
+      ['codex', 'codex_oauth', 'codex'],
+      ['gemini', 'gemini_oauth', 'gemini'],
+      ['opencode', 'opencode_oauth', 'openai-codex']
     ]
 
-    for (const [platform, presetId] of cases) {
+    for (const [platform, presetId, oauthProviderId] of cases) {
       const config = channelPanelFactories[platform]()
       const fields = config.formSections.flatMap(section => section.fields)
       const oauthField = fields.find(field => field.type === 'channel-auth')
@@ -302,13 +307,14 @@ describe('channel panel model catalogs', () => {
       expect(oauthPreset).toEqual(expect.objectContaining({
         id: presetId,
         authMode: 'oauth',
-        oauthProviderId: platform
+        oauthProviderId
       }))
       expect(form).toEqual(expect.objectContaining({
         presetId,
         authMode: 'oauth',
         baseUrl: '',
-        apiKey: ''
+        apiKey: '',
+        oauthProviderId
       }))
       expect(oauthField?.showWhen(form)).toBe(true)
 
@@ -317,6 +323,58 @@ describe('channel panel model catalogs', () => {
       }
     }
   })
+
+  it('keeps OpenCode OAuth fields when creating a channel', async () => {
+    const config = channelPanelFactories.opencode()
+    const form = {
+      ...config.onPresetChange('opencode_oauth', config.getInitialForm()),
+      name: 'OpenCode OAuth',
+      authRef: {
+        credentialId: 'credential-1',
+        providerId: 'openai-codex',
+        accountId: 'account-1',
+        identityKey: 'account-1',
+        accountEmail: 'user@example.com'
+      },
+      authSource: 'synced-local',
+      authStatus: 'available'
+    }
+
+    await config.api.create(form)
+
+    expect(createOpenCodeChannel).toHaveBeenCalledWith(
+      'OpenCode OAuth',
+      '',
+      '',
+      expect.objectContaining({
+        authMode: 'oauth',
+        authRef: expect.objectContaining({
+          credentialId: 'credential-1',
+          providerId: 'openai-codex',
+          accountId: 'account-1'
+        }),
+        authSource: 'synced-local',
+        oauthProviderId: 'openai-codex'
+      })
+    )
+  })
+
+  it('keeps OMP and OpenCode OAuth presets isolated', () => {
+    const omp = channelPanelFactories.omp()
+    const opencode = channelPanelFactories.opencode()
+
+    expect(omp.getPresetById('opencode_oauth')).toBeUndefined()
+    expect(omp.getPresetById('omp_oauth')).toEqual(expect.objectContaining({
+      authMode: 'oauth'
+    }))
+    expect(opencode.getPresetById('omp_oauth')).toBeUndefined()
+    expect(opencode.getPresetById('omp_oauth_gateway')).toBeUndefined()
+    expect(opencode.getPresetById('opencode_oauth')).toEqual(expect.objectContaining({
+      authMode: 'oauth',
+      oauthProviderId: 'openai-codex'
+    }))
+  })
+
   it('preserves imported OMP OAuth gateway credentials when editing a channel', async () => {
     const config = channelPanelFactories.omp()
     const form = {

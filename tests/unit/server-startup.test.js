@@ -45,6 +45,40 @@ test('autoRestoreProxies restores platforms sequentially and continues after fai
   expect(drivers.codex.restoreOnBoot).toHaveBeenCalledWith({ config: { marker: 'shared-config' } });
 });
 
+test('refreshes native Codex OAuth during startup without exposing refresh failures', async () => {
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const refreshNativeCodexOAuth = vi.fn(async () => ({
+    available: true,
+    refreshed: true,
+    synchronized: true
+  }));
+
+  await expect(_test.refreshNativeCodexOAuthOnStartup({
+    oauthService: { refreshNativeCodexOAuth }
+  })).resolves.toMatchObject({
+    available: true,
+    refreshed: true,
+    synchronized: true
+  });
+  expect(refreshNativeCodexOAuth).toHaveBeenCalledTimes(1);
+  expect(log).toHaveBeenCalledWith('[Codex OAuth] Native OAuth token refreshed during startup');
+
+  refreshNativeCodexOAuth.mockRejectedValueOnce(new Error('refresh unavailable'));
+  await expect(_test.refreshNativeCodexOAuthOnStartup({
+    oauthService: { refreshNativeCodexOAuth }
+  })).resolves.toMatchObject({
+    available: false,
+    refreshed: false,
+    synchronized: false,
+    error: 'refresh unavailable'
+  });
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining('refresh unavailable'));
+
+  log.mockRestore();
+  warn.mockRestore();
+});
+
 test('startup memory tracing is opt-in and exposes the five V8/process memory counters', () => {
   process.env.CC_TOOL_MEMORY_TRACE = '1';
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
