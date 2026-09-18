@@ -9,6 +9,7 @@ let service;
 let fingerprintForMock;
 let inspectToolMock;
 let readAllNativeOAuthMock;
+let updateCodexOAuthTokensMock;
 let clearNativeOAuthMock;
 let disableNativeOAuthCredentialMock;
 let applyOAuthCredentialMock;
@@ -52,6 +53,7 @@ function stubModules() {
   fingerprintForMock = vi.fn((tool, value) => `${tool}:${value}`);
   inspectToolMock = vi.fn((tool) => ({ tool, connected: false }));
   readAllNativeOAuthMock = vi.fn(() => []);
+  updateCodexOAuthTokensMock = vi.fn();
   clearNativeOAuthMock = vi.fn();
   disableNativeOAuthCredentialMock = vi.fn();
   applyOAuthCredentialMock = vi.fn();
@@ -61,10 +63,11 @@ function stubModules() {
     filename: nativeAdapterPath,
     loaded: true,
     exports: {
-      SUPPORTED_TOOLS: ['claude', 'codex', 'gemini', 'omp'],
+      SUPPORTED_TOOLS: ['claude', 'codex', 'gemini', 'omp', 'opencode'],
       fingerprintFor: fingerprintForMock,
       inspectTool: inspectToolMock,
       readAllNativeOAuth: readAllNativeOAuthMock,
+      updateCodexOAuthTokens: updateCodexOAuthTokensMock,
       clearNativeOAuth: clearNativeOAuthMock,
       disableNativeOAuthCredential: disableNativeOAuthCredentialMock,
       applyOAuthCredential: applyOAuthCredentialMock
@@ -202,7 +205,8 @@ function writeCredential(tool, credential) {
     claude: { defaultCredentialId: null, credentials: [] },
     codex: { defaultCredentialId: null, credentials: [] },
     gemini: { defaultCredentialId: null, credentials: [] },
-    omp: { defaultCredentialId: null, credentials: [] }
+    omp: { defaultCredentialId: null, credentials: [] },
+    opencode: { defaultCredentialId: null, credentials: [] }
   };
   tools[tool] = {
     defaultCredentialId: credential.id,
@@ -464,6 +468,103 @@ describe('oauth credential usage lookup', () => {
     expect(requests[0].options.headers).toMatchObject({
       Authorization: 'Bearer access-token',
       'ChatGPT-Account-Id': 'chatgpt-account-1'
+    });
+  });
+
+  test('refreshes an expired Codex OAuth token before loading quota', async () => {
+    decodeJwtPayloadMock.mockImplementation((token) => token === 'fresh-access-token'
+      ? { 'https://api.openai.com/auth': { chatgpt_account_id: 'fresh-account-1' } }
+      : {});
+    const requests = mockHttpsResponses([
+      {
+        statusCode: 200,
+        body: JSON.stringify({
+          access_token: 'fresh-access-token',
+          refresh_token: 'rotated-refresh-token',
+          expires_in: 3600
+        })
+      },
+      {
+        statusCode: 200,
+        body: JSON.stringify({
+          rate_limit: {
+            primary_window: { used_percent: 15 },
+            secondary_window: { used_percent: 35 }
+          }
+        })
+      }
+    ]);
+    writeCredential('codex', {
+      id: 'expired-codex-credential',
+      tool: 'codex',
+      accountId: 'old-account-1',
+      expiresAt: Date.now() - 1000,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      fingerprint: 'codex:expired',
+      secrets: {
+        accessToken: 'expired-access-token',
+        refreshToken: 'refresh-token',
+        idToken: '',
+        accountId: 'old-account-1',
+        primaryToken: 'expired-access-token'
+      }
+    });
+
+    const result = await service.fetchCredentialUsage('codex', 'expired-codex-credential');
+
+    expect(result.quota).toMatchObject({
+      primary: { remainingPercent: 85 },
+      secondary: { remainingPercent: 65 }
+    });
+    expect(requests[0].options.path).toBe('/oauth/token');
+    expect(requests[0].options.method).toBe('POST');
+    expect(requests[1].options.path).toBe('/backend-api/wham/usage');
+    expect(requests[1].options.headers.Authorization).toBe('Bearer fresh-access-token');
+    expect(requests[1].options.headers['ChatGPT-Account-Id']).toBe('fresh-account-1');
+    expect(updateCodexOAuthTokensMock).toHaveBeenCalledWith(expect.objectContaining({
+      accessToken: 'fresh-access-token',
+      refreshToken: 'rotated-refresh-token',
+      accountId: 'fresh-account-1'
+    }));
+  });
+
+  test('uses OpenCode OpenAI OAuth tokens with the Codex usage endpoint', async () => {
+    decodeJwtPayloadMock.mockImplementation((token) => token === 'openai-access-token'
+      ? { 'https://api.openai.com/auth': { chatgpt_account_id: 'openai-account-1' } }
+      : {});
+    const requests = mockHttpsResponses([{
+      statusCode: 200,
+      body: JSON.stringify({
+        rate_limit: {
+          primary_window: { used_percent: 10 },
+          secondary_window: { used_percent: 30 }
+        }
+      })
+    }]);
+    writeCredential('opencode', {
+      id: 'opencode-credential',
+      tool: 'opencode',
+      providerId: 'openai-codex',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      fingerprint: 'opencode:test',
+      secrets: {
+        accessToken: 'openai-access-token',
+        primaryToken: 'openai-access-token'
+      }
+    });
+
+    const result = await service.fetchCredentialUsage('opencode', 'opencode-credential');
+
+    expect(result.quota).toMatchObject({
+      primary: { remainingPercent: 90 },
+      secondary: { remainingPercent: 70 }
+    });
+    expect(requests[0].options.path).toBe('/backend-api/wham/usage');
+    expect(requests[0].options.headers).toMatchObject({
+      Authorization: 'Bearer openai-access-token',
+      'ChatGPT-Account-Id': 'openai-account-1'
     });
   });
 

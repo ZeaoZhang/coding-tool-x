@@ -58,10 +58,32 @@ function scanNative(adapter) {
 }
 
 function scanOmp() {
-  const snapshot = getOmpAuthProviderSnapshot({ forceRefresh: true, accountCheck: true });
+  const snapshot = getOmpAuthProviderSnapshot({ forceRefresh: true, accountCheck: true }) || {};
   const hasAccounts = (snapshot.providers || []).some(provider => (
     provider.loggedIn === true && Array.isArray(provider.accounts) && provider.accounts.length > 0
   ));
+  if (!hasAccounts) {
+    const native = readAllNativeOAuth('omp') || [];
+    let synced = null;
+    if (native.length) {
+      try {
+        synced = oauthStore.syncLocalCredential('omp');
+      } catch {
+        synced = null;
+      }
+    }
+    const credentials = synced?.credentials || [];
+    const candidates = native.map((metadata, index) => nativeCandidate('omp', metadata, credentials[index]));
+    return {
+      candidates,
+      nativeState: {
+        available: snapshot.available === true || candidates.length > 0,
+        providers: snapshot.providers || [],
+        checkedAt: snapshot.checkedAt
+      },
+      warnings: candidates.length ? [] : [snapshot.reason || 'omp: unavailable: no logged-in local provider']
+    };
+  }
   let synced = null;
   if (hasAccounts) {
     try {
@@ -81,13 +103,14 @@ function scanOmp() {
       const credential = credentials.find(item => (
         item.providerId === provider.id
         && (item.accountId === String(accountId || '') || item.accountEmail === String(accountEmail || ''))
-      ));
+      )) || credentials
+        .filter(item => item.providerId === provider.id)[Number(accountId) - 1] || null;
       const ref = safeRef({
         credentialId: credential?.id,
         providerId: provider.id,
-        accountId,
-        identityKey,
-        accountEmail
+        accountId: credential?.accountId || accountId,
+        identityKey: credential?.identityKey || identityKey,
+        accountEmail: credential?.accountEmail || accountEmail
       });
       if (!ref.accountId && !ref.identityKey && (provider.accounts || []).length > 1) continue;
       candidates.push({
@@ -132,8 +155,15 @@ const adapters = Object.freeze({
   },
   omp: {
     scan: scanOmp,
-    quota: async () => ({ status: 'unavailable', error: 'OMP native OAuth quota is unavailable' }),
+    usage: (ref) => oauthStore.fetchCredentialUsage('omp', ref.credentialId),
+    quota: (ref) => oauthStore.fetchCredentialUsage('omp', ref.credentialId),
     channelServicePath: './drivers/omp/channels-implementation'
+  },
+  opencode: {
+    scan: () => scanNative('opencode'),
+    usage: (ref) => oauthStore.fetchCredentialUsage('opencode', ref.credentialId),
+    quota: (ref) => oauthStore.fetchCredentialUsage('opencode', ref.credentialId),
+    channelServicePath: './drivers/opencode/channels-implementation'
   }
 });
 

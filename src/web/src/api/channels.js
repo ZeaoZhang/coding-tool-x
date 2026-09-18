@@ -380,7 +380,16 @@ export async function createOpenCodeChannel(name, baseUrl, apiKey, extra = {}) {
     modelRedirects: extra.modelRedirects || [],
     speedTestModel: extra.speedTestModel || null,
     presetId: extra.presetId || null,
-    websiteUrl: extra.websiteUrl || ''
+    providerKey: extra.providerKey || '',
+    websiteUrl: extra.websiteUrl || '',
+    allowedModels: extra.allowedModels || [],
+    authMode: extra.authMode || 'api_key',
+    authRef: extra.authRef,
+    authSource: extra.authSource,
+    authStatus: extra.authStatus,
+    oauthProviderId: extra.oauthProviderId || '',
+    balanceToken: extra.balanceToken || '',
+    balanceUserId: extra.balanceUserId || null
   })
   return response.data
 }

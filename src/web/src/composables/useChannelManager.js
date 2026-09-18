@@ -63,6 +63,7 @@ export default function useChannelManager(config) {
   const globalStore = useGlobalStore()
   let healthRefreshTimer = null
   let balanceLoadTimer = null
+  let balanceRetryTimer = null
   let balanceIdleCallbackId = null
   let balanceLoadPromise = null
   let uiConfigPromise = null
@@ -228,6 +229,13 @@ export default function useChannelManager(config) {
         state.formData._showChannelBalance = true
         const response = await getChannelBalances(config.type)
         state.balances = response?.enabled && response.balances ? response.balances : {}
+        if (response?.refreshing) {
+          if (balanceRetryTimer) clearTimeout(balanceRetryTimer)
+          balanceRetryTimer = setTimeout(() => {
+            balanceRetryTimer = null
+            if (isDocumentVisible()) loadChannelBalances().catch(() => {})
+          }, 1200)
+        }
         return response
       } catch (error) {
         state.balanceError = resolveError(error, `${config.displayName} 余额加载失败`)
@@ -254,6 +262,10 @@ export default function useChannelManager(config) {
       window.cancelIdleCallback(balanceIdleCallbackId)
     }
     balanceIdleCallbackId = null
+    if (balanceRetryTimer) {
+      clearTimeout(balanceRetryTimer)
+      balanceRetryTimer = null
+    }
   }
 
   function scheduleChannelBalanceLoad() {

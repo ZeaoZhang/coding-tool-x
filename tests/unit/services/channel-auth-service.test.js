@@ -40,6 +40,24 @@ describe('channel OAuth usage reference resolution', () => {
     })).toMatchObject(candidate.authRef);
   });
 
+  test('rebinds a stale sole account reference when the provider still matches', () => {
+    const candidate = {
+      authRef: {
+        credentialId: 'current-credential',
+        providerId: 'openai-codex',
+        accountId: 'current-chatgpt-account'
+      }
+    };
+
+    expect(resolveChannelAuthRef({ scan: () => ({ candidates: [candidate] }) }, {
+      authMode: 'oauth',
+      authRef: {
+        providerId: 'openai-codex',
+        accountId: 'legacy-account-index'
+      }
+    })).toMatchObject(candidate.authRef);
+  });
+
   test('does not guess between multiple accounts', () => {
     const channel = { authMode: 'oauth', authRef: {} };
     const candidates = [

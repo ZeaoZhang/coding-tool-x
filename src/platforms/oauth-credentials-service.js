@@ -6,7 +6,8 @@ const {
   inspectTool,
   SUPPORTED_TOOLS,
   fingerprintFor,
-  readAllNativeOAuth
+  readAllNativeOAuth,
+  updateCodexOAuthTokens
 } = require('./native-oauth-adapters');
 const { maskToken } = require('../server/services/oauth-utils');
 
@@ -110,6 +111,7 @@ function sanitizeCredential(entry, defaultCredentialId) {
     providerId: entry.providerId || '',
     accountId: entry.accountId || '',
     accountEmail: entry.accountEmail || '',
+    identityKey: entry.identityKey || '',
     expiresAt: entry.expiresAt || null,
     lastRefresh: entry.lastRefresh || null,
     lastUsedAt: entry.lastUsedAt || null,
@@ -207,6 +209,18 @@ function extractSecrets(tool, metadata) {
         accountEmail: metadata.accountEmail || '',
         identityKey: metadata.identityKey || '',
         importPayload: metadata.importPayload || null,
+        primaryToken: metadata.primaryToken || metadata.accessToken || ''
+      };
+    case 'opencode':
+      return {
+        providerId: metadata.providerId || '',
+        accessToken: metadata.accessToken || '',
+        idToken: metadata.idToken || '',
+        refreshToken: metadata.refreshToken || '',
+        expiresAt: metadata.expiresAt || null,
+        accountId: metadata.accountId || '',
+        accountEmail: metadata.accountEmail || '',
+        identityKey: metadata.identityKey || '',
         primaryToken: metadata.primaryToken || metadata.accessToken || ''
       };
     default:
@@ -359,6 +373,11 @@ function httpPost(url, body, headers = {}) {
   });
 }
 
+const CODEX_OAUTH_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
+const CODEX_OAUTH_TOKEN_URL = 'https://auth.openai.com/oauth/token';
+const CODEX_REFRESH_SKEW_MS = 60 * 1000;
+const codexRefreshPromises = new Map();
+
 function parseJsonBody(body) {
   try {
     return JSON.parse(body);
@@ -400,11 +419,21 @@ function extractCodexAccountId(...tokens) {
   return '';
 }
 
+function isCodexOAuthProvider(providerId = '') {
+  const value = String(providerId || '').trim().toLowerCase();
+  return value === 'codex'
+    || value === 'openai'
+    || value.includes('openai-codex')
+    || value.includes('codex');
+}
+
 async function fetchCodexUsage(accessToken, accountId = '') {
   try {
     const headers = {
       'Authorization': `Bearer ${accessToken}`,
-      'User-Agent': 'codex-cli/0.1'
+      'User-Agent': 'codex-cli/0.1',
+      'Accept': 'application/json',
+      'originator': 'codex_cli_rs'
     };
     if (accountId) headers['ChatGPT-Account-Id'] = accountId;
     const result = await httpGet('https://chatgpt.com/backend-api/wham/usage', headers);
@@ -413,6 +442,109 @@ async function fetchCodexUsage(accessToken, accountId = '') {
   } catch (err) {
     return { error: err.message, provider: 'codex' };
   }
+}
+
+function isCodexCredential(tool, entry = {}) {
+  if (tool === 'codex') return true;
+  if (tool !== 'omp' && tool !== 'opencode') return false;
+  return isCodexOAuthProvider(entry.providerId || entry.secrets?.providerId);
+}
+
+function credentialExpiresAt(entry = {}) {
+  const explicit = Number(entry.expiresAt || entry.secrets?.expiresAt || 0);
+  if (Number.isFinite(explicit) && explicit > 0) return explicit;
+  const { decodeJwtPayload } = require('../server/services/oauth-utils');
+  for (const token of [entry.secrets?.accessToken, entry.secrets?.idToken]) {
+    const exp = Number(decodeJwtPayload(token)?.exp || 0);
+    if (Number.isFinite(exp) && exp > 0) return exp * 1000;
+  }
+  return null;
+}
+
+async function refreshCodexCredential(entry) {
+  const refreshToken = String(entry?.secrets?.refreshToken || '').trim();
+  if (!refreshToken) return { entry, refreshed: false };
+  const existing = codexRefreshPromises.get(entry.id);
+  if (existing) return existing;
+
+  const promise = (async () => {
+    const form = new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id: CODEX_OAUTH_CLIENT_ID
+    }).toString();
+    const result = await httpPost(CODEX_OAUTH_TOKEN_URL, form, {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Accept': 'application/json'
+    });
+    const payload = parseJsonBody(result.body) || {};
+    if (result.statusCode < 200 || result.statusCode >= 300 || !payload.access_token) {
+      return { entry, refreshed: false };
+    }
+
+    const accessToken = String(payload.access_token).trim();
+    const nextRefreshToken = String(payload.refresh_token || refreshToken).trim();
+    const idToken = String(payload.id_token || entry.secrets.idToken || '').trim();
+    const accountId = extractCodexAccountId(idToken, accessToken)
+      || entry.accountId
+      || entry.secrets.accountId
+      || '';
+    const expiresIn = Number(payload.expires_in || 0);
+    const expiresAt = expiresIn > 0
+      ? Date.now() + expiresIn * 1000
+      : credentialExpiresAt({ secrets: { accessToken, idToken } });
+    const lastRefresh = new Date().toISOString();
+
+    const store = readStore();
+    const toolStore = getToolStore(store, entry.tool);
+    const stored = toolStore.credentials.find(item => item.id === entry.id);
+    if (!stored) return { entry, refreshed: false };
+    stored.accountId = accountId || stored.accountId || '';
+    stored.expiresAt = expiresAt || stored.expiresAt || null;
+    stored.updatedAt = Date.now();
+    stored.secrets = {
+      ...stored.secrets,
+      accessToken,
+      refreshToken: nextRefreshToken,
+      idToken,
+      accountId: accountId || stored.secrets.accountId || '',
+      expiresAt: expiresAt || stored.secrets.expiresAt || null,
+      lastRefresh,
+      primaryToken: accessToken
+    };
+    writeStore(store);
+
+    if (entry.tool === 'codex' && typeof updateCodexOAuthTokens === 'function') {
+      try {
+        updateCodexOAuthTokens({
+          authMode: stored.secrets.authMode,
+          accessToken,
+          refreshToken: nextRefreshToken,
+          idToken,
+          accountId,
+          lastRefresh
+        });
+      } catch {
+        // The credential store is sufficient for quota lookup; native sync is best-effort.
+      }
+    }
+
+    return { entry: stored, refreshed: true };
+  })().catch(() => ({ entry, refreshed: false }));
+  codexRefreshPromises.set(entry.id, promise);
+  try {
+    return await promise;
+  } finally {
+    codexRefreshPromises.delete(entry.id);
+  }
+}
+
+async function ensureFreshCodexCredential(entry) {
+  const expiresAt = credentialExpiresAt(entry);
+  if (expiresAt && expiresAt - Date.now() > CODEX_REFRESH_SKEW_MS) {
+    return { entry, refreshed: false };
+  }
+  return refreshCodexCredential(entry);
 }
 
 async function fetchGeminiUsage(accessToken) {
@@ -586,9 +718,16 @@ function normalizeOAuthQuota(tool, raw) {
 }
 
 async function fetchCredentialUsage(tool, credentialId) {
-  const entry = findStoredCredential(tool, credentialId);
-  const secrets = entry.secrets || {};
-  const accessToken = secrets.accessToken || secrets.primaryToken || '';
+  let entry = findStoredCredential(tool, credentialId);
+  let secrets = entry.secrets || {};
+  let codexRefreshed = false;
+  if (isCodexCredential(tool, entry)) {
+    const refreshed = await ensureFreshCodexCredential(entry);
+    entry = refreshed.entry;
+    secrets = entry.secrets || {};
+    codexRefreshed = refreshed.refreshed;
+  }
+  let accessToken = secrets.accessToken || secrets.primaryToken || '';
   if (!accessToken) return { error: '无有效 token' };
 
   let response;
@@ -606,7 +745,7 @@ async function fetchCredentialUsage(tool, credentialId) {
       response = await fetchGeminiUsage(accessToken);
       break;
     case 'omp': {
-      const providerId = entry.providerId || secrets.providerId || '';
+      const providerId = String(entry.providerId || secrets.providerId || '').toLowerCase();
       response = providerId.includes('claude') || providerId.includes('anthropic')
         ? await fetchClaudeUsage(accessToken)
         : providerId.includes('gemini') || providerId.includes('google')
@@ -614,11 +753,34 @@ async function fetchCredentialUsage(tool, credentialId) {
           : await fetchCodexUsage(accessToken, extractCodexAccountId(accessToken) || entry.accountId || secrets.accountId);
       break;
     }
+    case 'opencode': {
+      const providerId = entry.providerId || secrets.providerId || '';
+      response = isCodexOAuthProvider(providerId)
+        ? await fetchCodexUsage(accessToken, extractCodexAccountId(secrets.idToken, accessToken) || entry.accountId || secrets.accountId)
+        : { raw: null, provider: 'opencode', statusCode: 200 };
+      break;
+    }
     default:
       return { quota: null, status: 'unsupported', error: `不支持的工具: ${tool}` };
   }
   if (response?.error) return { quota: null, status: 'unavailable', error: response.error };
   if (response?.statusCode === 401 || response?.statusCode === 403) {
+    if (isCodexCredential(tool, entry) && !codexRefreshed) {
+      const refreshed = await refreshCodexCredential(entry);
+      if (refreshed.refreshed) {
+        entry = refreshed.entry;
+        secrets = entry.secrets || {};
+        accessToken = secrets.accessToken || secrets.primaryToken || '';
+        response = await fetchCodexUsage(
+          accessToken,
+          extractCodexAccountId(secrets.idToken, accessToken) || entry.accountId || secrets.accountId
+        );
+        if (response?.error) return { quota: null, status: 'unavailable', error: response.error };
+        if (response?.statusCode !== 401 && response?.statusCode !== 403) {
+          return normalizeOAuthQuota(tool, response?.raw);
+        }
+      }
+    }
     return { quota: null, status: 'unauthorized', error: '上游 OAuth 授权已失效' };
   }
   return normalizeOAuthQuota(tool, response?.raw);

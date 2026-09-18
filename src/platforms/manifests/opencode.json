@@ -9,6 +9,10 @@
   "defaultEnabled": true,
   "sortOrder": 30,
   "modelConfig": { "catalogKey": "codex" },
+  "auth": {
+    "modes": ["api_key", "oauth", "none"],
+    "oauth": { "adapter": "opencode", "policy": "single-enabled", "quota": "codex" }
+  },
   "helpLabel": "OpenCode",
   "terminalColor": "yellow",
   "cliSelectable": true,
@@ -254,6 +258,30 @@
         "path": "/channels/best-for-restore",
         "capability": "channels",
         "operation": "bestForRestore",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/channels/auth",
+        "capability": "channels",
+        "operation": "getAuth",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/channels/auth/sync-local",
+        "capability": "channels",
+        "operation": "syncLocalAuth",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/channels/:channelId/auth/quota",
+        "capability": "channels",
+        "operation": "getAuthQuota",
         "request": "default",
         "response": "default"
       },

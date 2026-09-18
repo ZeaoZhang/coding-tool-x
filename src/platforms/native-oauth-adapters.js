@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
-const { spawnSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
 const pathsModule = require('../config/paths');
@@ -17,7 +17,7 @@ const { syncCodexUserEnvironment } = require('./drivers/codex/env-manager');
 const nativeKeychain = require('../server/services/native-keychain');
 const { maskToken, decodeJwtPayload, removeFileIfExists, sha256 } = require('../server/services/oauth-utils');
 
-const SUPPORTED_TOOLS = ['claude', 'codex', 'gemini', 'omp'];
+const SUPPORTED_TOOLS = ['claude', 'codex', 'gemini', 'omp', 'opencode'];
 const GEMINI_MAIN_ACCOUNT_KEY = 'main-account';
 const GEMINI_KEYCHAIN_SERVICE = 'gemini-cli-oauth';
 const CODEX_KEYCHAIN_SERVICE = 'Codex Auth';
@@ -295,6 +295,43 @@ function readJsonFileFromString(raw) {
   }
 }
 
+function firstString(...values) {
+  return values.find(value => typeof value === 'string' && value.trim())?.trim() || '';
+}
+
+function extractTokenMetadata(...tokens) {
+  const payloads = tokens
+    .filter(Boolean)
+    .map(token => decodeJwtPayload(token))
+    .filter(payload => payload && typeof payload === 'object');
+  const payload = payloads.find(item => (
+    item.chatgpt_account_id
+      || item['https://api.openai.com/auth.chatgpt_account_id']
+      || item['https://api.openai.com/auth']?.chatgpt_account_id
+      || item.email
+  )) || payloads[0] || {};
+  const auth = payload['https://api.openai.com/auth'] || {};
+  const profile = payload['https://api.openai.com/profile'] || {};
+  const accountId = firstString(
+    payload.chatgpt_account_id,
+    payload['https://api.openai.com/auth.chatgpt_account_id'],
+    auth.chatgpt_account_id,
+    payload.account_id,
+    payload.organizations?.[0]?.id
+  );
+  const accountEmail = firstString(
+    payload.email,
+    profile.email,
+    auth.email
+  );
+  const exp = Number(payload.exp || 0);
+  return {
+    accountId,
+    accountEmail,
+    expiresAt: Number.isFinite(exp) && exp > 0 ? exp * 1000 : null
+  };
+}
+
 function getCodexKeychainAccount() {
   const codexHome = NATIVE_PATHS.codex.dir;
   const resolvedPath = fs.existsSync(codexHome)
@@ -320,7 +357,13 @@ function parseCodexAuthPayload(raw) {
 
   const idTokenPayload = decodeJwtPayload(tokens.id_token);
   const accessTokenPayload = decodeJwtPayload(tokens.access_token);
-  const exp = Number(idTokenPayload?.exp || accessTokenPayload?.exp || 0) || null;
+  const tokenMetadata = extractTokenMetadata(tokens.id_token, tokens.access_token);
+  // The id token can expire before the access token. Use the newest usable
+  // expiry so a still-valid access token is not unnecessarily refreshed.
+  const exp = Math.max(
+    Number(idTokenPayload?.exp || 0),
+    Number(accessTokenPayload?.exp || 0)
+  ) || null;
   const accountId = tokens.account_id
     || idTokenPayload?.chatgpt_account_id
     || accessTokenPayload?.chatgpt_account_id
@@ -337,8 +380,8 @@ function parseCodexAuthPayload(raw) {
     refreshToken: String(tokens.refresh_token || '').trim() || '',
     idToken: String(tokens.id_token || '').trim() || '',
     accountId: String(accountId).trim(),
-    accountEmail: String(idTokenPayload?.email || '').trim() || '',
-    expiresAt: exp ? exp * 1000 : null,
+    accountEmail: tokenMetadata.accountEmail,
+    expiresAt: exp ? exp * 1000 : tokenMetadata.expiresAt,
     lastRefresh: auth.last_refresh || null,
     primaryToken: String(tokens.access_token || '').trim()
   };
@@ -362,7 +405,21 @@ function readCodexFileAuth() {
 }
 
 function readCodexNativeOAuth() {
-  return readCodexKeychainAuth() || readCodexFileAuth();
+  const keychain = readCodexKeychainAuth();
+  const file = readCodexFileAuth();
+  if (!keychain) return file;
+  if (!file) return keychain;
+
+  const recency = (credential) => {
+    const lastRefresh = Date.parse(credential.lastRefresh || '') || 0;
+    const expiresAt = Number(credential.expiresAt || 0);
+    return lastRefresh || (Number.isFinite(expiresAt) ? expiresAt : 0);
+  };
+
+  // Codex stores the same auth payload in the keychain and auth.json. When
+  // they diverge, prefer the copy refreshed most recently instead of blindly
+  // selecting a stale keychain entry.
+  return recency(file) > recency(keychain) ? file : keychain;
 }
 
 function clearCodexOAuth() {
@@ -439,6 +496,45 @@ function applyCodexOAuth(credential) {
     },
     last_refresh: credential.lastRefresh || new Date().toISOString()
   };
+
+  writeJsonFile(NATIVE_PATHS.codex.auth, authPayload);
+  const wroteKeychain = nativeKeychain.isSupported()
+    ? nativeKeychain.setPassword(CODEX_KEYCHAIN_SERVICE, getCodexKeychainAccount(), JSON.stringify(authPayload))
+    : false;
+  return { storage: wroteKeychain ? 'auth-file+keychain' : 'auth-file' };
+}
+
+// Refreshing an OAuth token must not clear the user's configured channels.
+// `applyCodexOAuth` is intentionally broader because it switches the active
+// auth mode; this helper only replaces the rotating token pair in place.
+function updateCodexOAuthTokens(credential = {}) {
+  const current = readCodexNativeOAuth();
+  const currentAuth = (() => {
+    try {
+      return codexSettingsManager.readAuth() || {};
+    } catch {
+      return {};
+    }
+  })();
+  const currentTokens = currentAuth.tokens && typeof currentAuth.tokens === 'object'
+    ? currentAuth.tokens
+    : {};
+  const authPayload = {
+    ...currentAuth,
+    auth_mode: credential.authMode || current?.authMode || currentAuth.auth_mode || 'chatgpt',
+    tokens: {
+      ...currentTokens,
+      access_token: credential.accessToken || current?.accessToken || currentTokens.access_token || '',
+      refresh_token: credential.refreshToken || current?.refreshToken || currentTokens.refresh_token || '',
+      id_token: credential.idToken || current?.idToken || currentTokens.id_token || '',
+      account_id: credential.accountId || current?.accountId || currentTokens.account_id || ''
+    },
+    last_refresh: credential.lastRefresh || new Date().toISOString()
+  };
+
+  if (!authPayload.tokens.access_token) {
+    throw new Error('Codex OAuth access token is missing');
+  }
 
   writeJsonFile(NATIVE_PATHS.codex.auth, authPayload);
   const wroteKeychain = nativeKeychain.isSupported()
@@ -749,23 +845,184 @@ function getOmpAuthSnapshot(options = {}) {
 }
 
 function readAllOmpNativeOAuth() {
+  const storedOAuth = readOmpOAuthCredentialsFromDb();
   const snapshot = getOmpAuthSnapshot({ forceRefresh: true });
-  if (!snapshot?.available || !Array.isArray(snapshot.providers)) {
-    return [];
-  }
+  if (!snapshot?.available || !Array.isArray(snapshot.providers)) return storedOAuth;
 
-  return snapshot.providers
+  const snapshotCredentials = snapshot.providers
     .filter(provider => provider?.loggedIn || Number(provider?.accountCount || 0) > 0)
     .flatMap((provider) => {
       const accounts = Array.isArray(provider.accounts) ? provider.accounts : [];
-      return accounts.map((account) => ({
-        providerId: provider.id,
-        accountId: String(account.index || account.id || account.accountId || '').trim(),
-        accountEmail: String(account.identity || account.email || account.accountEmail || '').trim(),
-        storage: 'auth-broker',
-        primaryToken: ''
-      }));
+      const providerCredentials = storedOAuth.filter(item => item.providerId === provider.id);
+      return accounts.map((account, index) => {
+        const accountId = String(account.index || account.id || account.accountId || '').trim();
+        const accountEmail = String(account.identity || account.email || account.accountEmail || '').trim();
+        const stored = providerCredentials.find(item => (
+          (item.accountId && item.accountId === accountId)
+            || (item.accountEmail && item.accountEmail === accountEmail)
+        )) || providerCredentials[index] || null;
+        return {
+          providerId: provider.id,
+          accountId: stored?.accountId || accountId,
+          accountEmail: stored?.accountEmail || accountEmail,
+          identityKey: stored?.identityKey || '',
+          accessToken: stored?.accessToken || '',
+          refreshToken: stored?.refreshToken || '',
+          expiresAt: stored?.expiresAt || null,
+          storage: stored?.storage || 'auth-broker',
+          primaryToken: stored?.primaryToken || ''
+        };
+      });
     });
+  return snapshotCredentials.length > 0 ? snapshotCredentials : storedOAuth;
+}
+
+function getOmpAgentDatabasePath() {
+  const agentDir = NATIVE_PATHS.omp?.dir;
+  return agentDir ? path.join(agentDir, 'agent.db') : '';
+}
+
+function readSqliteRows(databasePath, sql) {
+  if (!databasePath || !fs.existsSync(databasePath)) return [];
+  try {
+    const output = execFileSync('sqlite3', ['-json', databasePath, sql], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      maxBuffer: 4 * 1024 * 1024,
+      windowsHide: true
+    }).trim();
+    if (!output) return [];
+    const parsed = JSON.parse(output);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseOAuthCredentialData(value) {
+  if (!value) return null;
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeCredentialExpiry(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  return numeric < 1e12 ? numeric * 1000 : numeric;
+}
+
+function readOmpOAuthCredentialsFromDb() {
+  const rows = readSqliteRows(
+    getOmpAgentDatabasePath(),
+    "select provider, credential_type, data, identity_key, disabled_cause from auth_credentials where credential_type = 'oauth' order by updated_at desc"
+  );
+  return rows.map(row => {
+    if (row?.disabled_cause) return null;
+    const data = parseOAuthCredentialData(row?.data) || {};
+    const accessToken = firstString(data.access, data.accessToken, data.access_token, data.token);
+    if (!accessToken) return null;
+    const tokenMetadata = extractTokenMetadata(accessToken, data.id_token, data.idToken);
+    const identityKey = firstString(data.identityKey, data.identity_key, row?.identity_key);
+    const identityAccountId = identityKey.match(/(?:^|[|:])org:([^|]+)/)?.[1] || '';
+    return {
+      providerId: firstString(row?.provider),
+      accountId: firstString(data.accountId, data.account_id, data.orgId, data.org_id, tokenMetadata.accountId, identityAccountId),
+      accountEmail: firstString(data.accountEmail, data.account_email, data.email, tokenMetadata.accountEmail),
+      identityKey,
+      accessToken,
+      refreshToken: firstString(data.refresh, data.refreshToken, data.refresh_token),
+      expiresAt: normalizeCredentialExpiry(data.expires || data.expiresAt || data.expires_at) || tokenMetadata.expiresAt,
+      storage: 'auth-broker',
+      primaryToken: accessToken
+    };
+  }).filter(Boolean);
+}
+
+function normalizeOpenCodeProviderId(value = '') {
+  const text = String(value || '').trim().toLowerCase();
+  if (text.includes('openai') || text.includes('codex')) return 'openai-codex';
+  try {
+    return new URL(text).hostname.replace(/^www\./, '') || text;
+  } catch {
+    return text || 'opencode';
+  }
+}
+
+function parseOpenCodeCredential(row = {}, storage = 'opencode') {
+  const accessToken = firstString(row.accessToken, row.access_token, row.access, row.token);
+  if (!accessToken) return null;
+  const tokenMetadata = extractTokenMetadata(accessToken, row.idToken, row.id_token);
+  const providerId = normalizeOpenCodeProviderId(row.providerId || row.provider || row.url);
+  return {
+    providerId,
+    accountId: firstString(row.accountId, row.account_id, tokenMetadata.accountId),
+    accountEmail: firstString(row.accountEmail, row.account_email, row.email, tokenMetadata.accountEmail),
+    identityKey: firstString(row.identityKey, row.identity_key),
+    accessToken,
+    idToken: firstString(row.idToken, row.id_token),
+    refreshToken: firstString(row.refreshToken, row.refresh_token, row.refresh),
+    expiresAt: normalizeCredentialExpiry(row.expiresAt || row.expires_at || row.token_expiry) || tokenMetadata.expiresAt,
+    storage,
+    primaryToken: accessToken
+  };
+}
+
+function readOpenCodeAuthFile() {
+  const filePath = NATIVE_PATHS.opencode?.auth;
+  const payload = filePath ? readJsonFile(filePath, null) : null;
+  if (!payload || typeof payload !== 'object') return [];
+  const entries = payload.access_token || payload.accessToken || payload.access
+    ? [{ ...payload }]
+    : Object.entries(payload).map(([providerId, value]) => ({
+      ...(value && typeof value === 'object' ? value : {}),
+      providerId
+    }));
+  return entries.map(entry => parseOpenCodeCredential(entry, 'opencode-auth-file')).filter(Boolean);
+}
+
+function readOpenCodeDatabaseCredentials() {
+  const dataDir = NATIVE_PATHS.opencode?.data;
+  if (!dataDir || !fs.existsSync(dataDir)) return [];
+  const databases = fs.readdirSync(dataDir)
+    .filter(name => /^opencode-.*\.db$/i.test(name) || /^opencode\.db$/i.test(name))
+    .map(name => path.join(dataDir, name))
+    .filter(filePath => {
+      try { return fs.statSync(filePath).isFile(); } catch { return false; }
+    })
+    .sort((left, right) => {
+      try { return fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs; } catch { return 0; }
+    });
+  const rows = [];
+  for (const databasePath of databases) {
+    rows.push(...readSqliteRows(
+      databasePath,
+      'select email, url, access_token, refresh_token, token_expiry from account'
+    ));
+    rows.push(...readSqliteRows(
+      databasePath,
+      'select email, url, access_token, refresh_token, token_expiry from control_account'
+    ));
+  }
+  return rows.map(row => parseOpenCodeCredential(row, 'opencode-sqlite')).filter(Boolean);
+}
+
+function readAllOpenCodeNativeOAuth() {
+  const entries = [...readOpenCodeAuthFile(), ...readOpenCodeDatabaseCredentials()];
+  const seen = new Set();
+  return entries.filter(entry => {
+    const key = `${entry.providerId}:${entry.accountId || entry.accountEmail || entry.primaryToken}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function readOpenCodeNativeOAuth() {
+  return readAllOpenCodeNativeOAuth()[0] || null;
 }
 
 function readOmpNativeOAuth() {
@@ -894,6 +1151,24 @@ function inspectOmpState() {
   };
 }
 
+function inspectOpenCodeState() {
+  let proxyRunning = false;
+  try {
+    proxyRunning = Boolean(require('./drivers/opencode/proxy-implementation').getOpenCodeProxyStatus()?.running);
+  } catch {
+    proxyRunning = false;
+  }
+  const nativeCredentials = readAllOpenCodeNativeOAuth();
+  return {
+    tool: 'opencode',
+    mode: proxyRunning ? 'proxy' : (nativeCredentials.length > 0 ? 'oauth' : 'idle'),
+    proxyRunning,
+    oauthPresent: nativeCredentials.length > 0,
+    channelConfigured: false,
+    nativeCredential: nativeCredentials[0] ? buildNativeSummary(nativeCredentials[0]) : null
+  };
+}
+
 function inspectTool(tool) {
   switch (tool) {
     case 'claude':
@@ -904,6 +1179,8 @@ function inspectTool(tool) {
       return inspectGeminiState();
     case 'omp':
       return inspectOmpState();
+    case 'opencode':
+      return inspectOpenCodeState();
     default:
       throw new Error(`Unsupported OAuth tool: ${tool}`);
   }
@@ -919,6 +1196,8 @@ function readNativeOAuth(tool) {
       return readGeminiNativeOAuth();
     case 'omp':
       return readOmpNativeOAuth();
+    case 'opencode':
+      return readOpenCodeNativeOAuth();
     default:
       throw new Error(`Unsupported OAuth tool: ${tool}`);
   }
@@ -940,6 +1219,8 @@ function readAllNativeOAuth(tool) {
     }
     case 'omp':
       return readAllOmpNativeOAuth();
+    case 'opencode':
+      return readAllOpenCodeNativeOAuth();
     default:
       throw new Error(`Unsupported OAuth tool: ${tool}`);
   }
@@ -1008,6 +1289,7 @@ module.exports = {
   clearClaudeChannelConfig,
   clearGeminiChannelConfig,
   clearCodexChannelConfig,
+  updateCodexOAuthTokens,
   clearNativeOAuth,
   disableNativeOAuthCredential,
   applyOAuthCredential
