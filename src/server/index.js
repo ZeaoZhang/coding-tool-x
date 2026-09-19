@@ -58,6 +58,30 @@ function traceStartupMemory(stage) {
   })}`);
 }
 
+async function refreshNativeCodexOAuthOnStartup({ oauthService } = {}) {
+  try {
+    const service = oauthService || require('../platforms/oauth-credentials-service');
+    if (typeof service.refreshNativeCodexOAuth !== 'function') {
+      return { available: false, refreshed: false, synchronized: false };
+    }
+    const result = await service.refreshNativeCodexOAuth();
+    if (result?.refreshed) {
+      console.log('[Codex OAuth] Native OAuth token refreshed during startup');
+    } else if (result?.refreshFailed) {
+      console.warn('[Codex OAuth] 启动刷新失败，请运行 codex login 重新登录');
+    }
+    return result;
+  } catch (error) {
+    console.warn(`[Codex OAuth] 启动同步失败，保留本地凭证: ${error.message}`);
+    return {
+      available: false,
+      refreshed: false,
+      synchronized: false,
+      error: error.message
+    };
+  }
+}
+
 function printPortConflictHelp(port) {
   console.log(chalk.yellow('\n[TIP] 解决方案:'));
   console.log(chalk.gray('   1. 运行 ctx 命令，选择"配置端口"修改端口'));
@@ -335,6 +359,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
       console.log(chalk.yellow('   [LOCK] 已启用 LAN 安全保护：远程写操作默认关闭'));
     }
   }
+  await refreshNativeCodexOAuthOnStartup();
   // 自动恢复代理状态
   try {
     await autoRestoreProxies({ ...platformContext, config });
@@ -468,5 +493,10 @@ async function performStartupHealthCheck({ config = loadConfig() } = {}) {
 
 module.exports = {
   startServer,
-  _test: { autoRestoreProxies, performStartupHealthCheck, traceStartupMemory }
+  _test: {
+    autoRestoreProxies,
+    performStartupHealthCheck,
+    traceStartupMemory,
+    refreshNativeCodexOAuthOnStartup
+  }
 };

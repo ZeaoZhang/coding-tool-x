@@ -19,6 +19,7 @@ const PM2_RUNTIME_ENV_KEYS = [
   'HOME',
   'USERPROFILE',
   'PATH',
+  'CODEX_HOME',
   'OMP_COMMAND',
   'OMP_CONFIG_DIR',
   'OMP_PROFILE',
@@ -490,8 +491,10 @@ function buildStartOptions(port, enableHost, enableHttps) {
     CC_TOOL_PORT: port
   };
   PM2_RUNTIME_ENV_KEYS.forEach((key) => {
-    if (key.startsWith('OMP_') || key.endsWith('_CODING_AGENT_DIR')) {
-      // Explicitly pass empty OMP overrides too, so PM2 cannot resurrect a stale profile.
+    if (key === 'CODEX_HOME'
+      || key.startsWith('OMP_')
+      || key.endsWith('_CODING_AGENT_DIR')) {
+      // Explicitly pass empty native path/profile overrides too, so PM2 cannot resurrect stale state.
       env[key] = process.env[key] || '';
     } else if (process.env[key]) {
       env[key] = process.env[key];
