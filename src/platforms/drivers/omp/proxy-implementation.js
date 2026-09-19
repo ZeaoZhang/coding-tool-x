@@ -15,6 +15,7 @@ const {
 const { createOmpGateway } = require('./gateway');
 const { prepareManagedOmpChannels } = require('./gateway-routing');
 const { probeOmpAuthGateways } = require('./auth-gateway-client');
+const { restoreStoredOmpOAuthCredentials } = require('../../oauth-credentials-service');
 
 let currentPort = null;
 let lastSyncResult = null;
@@ -33,11 +34,24 @@ function withLifecycleLock(operation) {
 
 async function startOmpProxyServerUnlocked(options = {}) {
   if (gateway.status().listening) {
+    const oauthRestore = restoreStoredOmpOAuthCredentials(getEnabledChannels());
+    if (oauthRestore.warnings.length > 0) {
+      lastSyncResult = {
+        ...(lastSyncResult || {}),
+        warnings: [
+          ...(lastSyncResult?.warnings || []),
+          ...oauthRestore.warnings
+        ]
+      };
+    }
     return {
       success: true,
       port: gateway.status().port,
       sync: lastSyncResult,
-      warnings: lastSyncResult?.warnings || []
+      warnings: [
+        ...(lastSyncResult?.warnings || []),
+        ...(oauthRestore.warnings || [])
+      ]
     };
   }
   const preserveStartTime = options.preserveStartTime || false;
@@ -56,6 +70,7 @@ async function startOmpProxyServerUnlocked(options = {}) {
   });
   currentPort = gatewayStatus.port;
   try {
+    const oauthRestore = restoreStoredOmpOAuthCredentials(channels);
     const oauthSupport = await probeOmpAuthGateways(channels);
     const descriptor = {
       ...gateway.descriptor(),
@@ -71,8 +86,17 @@ async function startOmpProxyServerUnlocked(options = {}) {
       lastSyncResult = {
         ...lastSyncResult,
         warnings: [
+          ...(oauthRestore.warnings || []),
           ...(lastSyncResult?.warnings || []),
           ...oauthSupport.warnings
+        ]
+      };
+    } else if (oauthRestore.warnings.length > 0) {
+      lastSyncResult = {
+        ...lastSyncResult,
+        warnings: [
+          ...(oauthRestore.warnings || []),
+          ...(lastSyncResult?.warnings || [])
         ]
       };
     }

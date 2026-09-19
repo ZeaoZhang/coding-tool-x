@@ -122,7 +122,7 @@ describe('prompts-service initialization and preset management', () => {
 });
 
 describe('prompts-service platform sync', () => {
-  test('activatePreset writes registry-backed prompt files and ignores unsupported OMP app flags', async () => {
+  test('activatePreset writes registry-backed prompt files and OMP prompt templates', async () => {
     const promptsService = require('../../../src/server/services/prompts-service');
     promptsService.savePreset({
       id: 'team-preset',
@@ -132,14 +132,14 @@ describe('prompts-service platform sync', () => {
     });
 
     const preset = await promptsService.activatePreset('team-preset');
-    const ompTemplatePath = path.join(testDir, 'omp-agent', 'prompts', 'coding-tool-x', 'team-preset.md');
+    const ompTemplatePath = path.join(testDir, 'omp-agent', 'prompts', 'coding-tool-x', 'prompt.md');
 
     expect(preset.id).toBe('team-preset');
     expect(fs.readFileSync(path.join(globalClaudeDir, 'CLAUDE.md'), 'utf8')).toBe('team instructions');
     expect(fs.existsSync(path.join(testDir, '.codex', 'AGENTS.md'))).toBe(false);
     expect(fs.readFileSync(path.join(testDir, '.gemini', 'GEMINI.md'), 'utf8')).toBe('team instructions');
     expect(fs.readFileSync(path.join(testDir, 'opencode', 'AGENTS.md'), 'utf8')).toBe('team instructions');
-    expect(fs.existsSync(ompTemplatePath)).toBe(false);
+    expect(fs.readFileSync(ompTemplatePath, 'utf8')).toContain('team instructions');
   });
 
   test('deactivatePrompt clears active preset and removes prompt files', async () => {
@@ -159,14 +159,14 @@ describe('prompts-service platform sync', () => {
     const active = promptsService.getActivePreset();
 
     expect(result.claude).toBe(true);
-    expect(result.omp).toBeUndefined();
+    expect(result.omp).toBe(true);
     expect(active.activePresetId).toBeNull();
     expect(fs.existsSync(path.join(globalClaudeDir, 'CLAUDE.md'))).toBe(false);
-    expect(fs.existsSync(path.join(testDir, 'omp-agent', 'prompts', 'coding-tool-x', 'team-preset.md'))).toBe(false);
+    expect(fs.existsSync(path.join(testDir, 'omp-agent', 'prompts', 'coding-tool-x', 'prompt.md'))).toBe(false);
     expect(fs.existsSync(userTemplate)).toBe(true);
   });
 
-  test('does not activate legacy OMP app flags without a prompt capability', async () => {
+  test('activates OMP-only presets as native prompt templates', async () => {
     const promptsService = require('../../../src/server/services/prompts-service');
     promptsService.savePreset({
       id: 'first',
@@ -177,7 +177,8 @@ describe('prompts-service platform sync', () => {
 
     await promptsService.activatePreset('first');
 
-    expect(fs.existsSync(path.join(testDir, 'omp-agent', 'prompts', 'coding-tool-x', 'first.md'))).toBe(false);
+    expect(fs.readFileSync(path.join(testDir, 'omp-agent', 'prompts', 'coding-tool-x', 'prompt.md'), 'utf8'))
+      .toContain('first instructions');
   });
 });
 
@@ -195,7 +196,7 @@ describe('prompts-service import and stats', () => {
     expect(imported.name).toBe('Imported Codex');
     expect(imported.apps.codex).toBe(true);
     expect(platformStatus.codex.exists).toBe(true);
-    expect(platformStatus.omp).toBeUndefined();
+    expect(platformStatus.omp).toEqual(expect.objectContaining({ exists: false }));
     expect(stats.total).toBeGreaterThanOrEqual(4);
   });
 
@@ -220,8 +221,12 @@ describe('legacy prompt file adapters', () => {
       expect(fs.existsSync(promptPath)).toBe(false);
     }
 
-    expect(() => promptsService.writePlatformPrompt('omp', 'unsupported')).toThrow(/prompts capability/);
-    expect(() => promptsService.removePlatformPrompt('omp')).toThrow(/prompts capability/);
+    const ompPromptPath = path.join(testDir, 'omp-agent', 'prompts', 'coding-tool-x', 'prompt.md');
+    expect(promptsService.writePlatformPrompt('omp', 'omp prompt')).toBe('omp prompt');
+    expect(promptsService.readPlatformPrompt('omp')).toBe('omp prompt');
+    expect(fs.existsSync(ompPromptPath)).toBe(true);
+    expect(promptsService.removePlatformPrompt('omp')).toBe(true);
+    expect(fs.existsSync(ompPromptPath)).toBe(false);
   });
 });
 describe('registry-driven prompt platforms', () => {

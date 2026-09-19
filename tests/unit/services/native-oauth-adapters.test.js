@@ -3,6 +3,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
+const childProcess = require('child_process');
 const toml = require('toml');
 const CLAUDE_CHANNELS_MODULE = require.resolve('../../../src/platforms/drivers/claude/channels-implementation');
 const GEMINI_CHANNELS_MODULE = require.resolve('../../../src/platforms/drivers/gemini/channels-implementation');
@@ -552,9 +553,70 @@ describe('native-oauth-adapters high level flows', () => {
 
 
   test('disables an OMP OAuth credential without falling through as unsupported', () => {
+    const realSpawnSync = childProcess.spawnSync;
+    vi.spyOn(childProcess, 'spawnSync').mockImplementation((command, args, options) => {
+      if (Array.isArray(args) && args[0] === 'auth-broker' && args[1] === 'logout') {
+        return { status: 0, stdout: 'Logged out', stderr: '' };
+      }
+      return realSpawnSync(command, args, options);
+    });
+    delete require.cache[require.resolve('../../../src/platforms/native-oauth-adapters')];
+    nativeAdapters = require('../../../src/platforms/native-oauth-adapters');
+
     expect(() => nativeAdapters.disableNativeOAuthCredential('omp', {
       providerId: 'openai-codex'
     })).not.toThrow();
+  });
+
+  test('imports OMP OAuth credentials using the auth-broker token schema', () => {
+    const realSpawnSync = childProcess.spawnSync;
+    let importedPayload = null;
+    vi.spyOn(childProcess, 'spawnSync').mockImplementation((command, args, options) => {
+      if (Array.isArray(args) && args[0] === 'auth-broker' && args[1] === 'import') {
+        importedPayload = readJson(args[2]);
+        return { status: 0, stdout: 'imported', stderr: '' };
+      }
+      return realSpawnSync(command, args, options);
+    });
+    delete require.cache[require.resolve('../../../src/platforms/native-oauth-adapters')];
+    nativeAdapters = require('../../../src/platforms/native-oauth-adapters');
+
+    const result = nativeAdapters.applyOAuthCredential('omp', {
+      providerId: 'openai-codex',
+      accessToken: 'omp-access-token',
+      refreshToken: 'omp-refresh-token',
+      expiresAt: 2000000000000,
+      accountId: 'account-1',
+      accountEmail: 'dev@example.com'
+    });
+
+    expect(result).toEqual({ storage: 'auth-broker' });
+    expect(importedPayload).toMatchObject({
+      type: 'oauth',
+      credential_type: 'oauth',
+      disabled: false,
+      access_token: 'omp-access-token',
+      refresh_token: 'omp-refresh-token',
+      account_id: 'account-1',
+      email: 'dev@example.com'
+    });
+    expect(importedPayload.expired).toBe('2033-05-18T03:33:20.000Z');
+  });
+
+  test('does not treat an auth-broker import with no importable credentials as success', () => {
+    vi.spyOn(childProcess, 'spawnSync').mockImplementation(() => ({
+      status: 0,
+      stdout: 'No importable credentials in file.',
+      stderr: ''
+    }));
+    delete require.cache[require.resolve('../../../src/platforms/native-oauth-adapters')];
+    nativeAdapters = require('../../../src/platforms/native-oauth-adapters');
+
+    expect(() => nativeAdapters.applyOAuthCredential('omp', {
+      providerId: 'openai-codex',
+      accessToken: 'omp-access-token',
+      refreshToken: 'omp-refresh-token'
+    })).toThrow(/rejected the credential/);
   });
 
   test('reads OMP OAuth accounts from auth-broker provider snapshot', () => {

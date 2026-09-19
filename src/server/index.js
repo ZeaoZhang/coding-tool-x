@@ -382,6 +382,10 @@ async function autoRestoreProxies({ registry, runtime, config, fsImpl = require(
     try {
       const result = await driver.restoreOnBoot({ config: resolvedConfig });
       if (!result || result.status === 'ok') {
+        const warnings = result?.warnings || result?.data?.warnings || result?.result?.warnings || [];
+        warnings.forEach((warning) => {
+          console.log(chalk.yellow(`[WARN]  ${platform.label || key}: ${warning}`));
+        });
         const port = result?.port;
         const suffix = port
           ? platform.proxyMode === 'managed'

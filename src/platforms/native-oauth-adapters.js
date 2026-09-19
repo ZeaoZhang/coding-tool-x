@@ -1062,17 +1062,32 @@ function buildOmpImportPayload(credential = {}) {
   }
 
   const access = String(credential.accessToken || credential.primaryToken || '').trim();
+  const refresh = String(credential.refreshToken || '').trim();
+  const expiresAt = Number(credential.expiresAt || 0);
+  const expired = Number.isFinite(expiresAt) && expiresAt > 0
+    ? new Date(expiresAt).toISOString()
+    : undefined;
   if (!access) {
     return null;
   }
 
   return {
     provider: credential.providerId,
+    type: credential.credentialType || 'oauth',
     credential_type: credential.credentialType || 'oauth',
+    // OMP keeps a logged-out credential row in the broker database. Explicitly
+    // marking the imported row active is required to revive a token after a
+    // restart or token rotation.
+    disabled: false,
     identity_key: credential.identityKey || credential.accountId || credential.accountEmail || undefined,
+    access_token: access,
+    refresh_token: refresh,
+    expired,
+    account_id: credential.accountId || undefined,
+    email: credential.accountEmail || undefined,
     data: {
       access,
-      refresh: credential.refreshToken || '',
+      refresh,
       expires: credential.expiresAt || null,
       accountId: credential.accountId || undefined,
       accountEmail: credential.accountEmail || undefined
@@ -1109,6 +1124,9 @@ function applyOmpOAuth(credential = {}) {
     if (!result.ok) {
       const detail = result.stderr.trim() || result.stdout.trim() || result.error?.message || `exit code ${result.status}`;
       throw new Error(`OMP auth-broker import failed: ${detail}`);
+    }
+    if (/no importable credentials|missing access_token|cannot parse expired|^skip\b/im.test(result.stdout)) {
+      throw new Error(`OMP auth-broker import rejected the credential: ${result.stdout.trim()}`);
     }
     try {
       require('./drivers/omp/auth-providers').clearOmpAuthProviderCache();

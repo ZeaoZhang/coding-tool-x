@@ -289,6 +289,47 @@ describe('oauth credential store operations', () => {
     expect(() => service.syncLocalCredential('claude')).toThrow(/未检测到/);
   });
 
+  test('restores a selected OMP OAuth credential into the native auth broker', () => {
+    writeCredential('omp', {
+      id: 'stored-omp-credential',
+      tool: 'omp',
+      providerId: 'openai-codex',
+      accountId: 'account-1',
+      accountEmail: 'dev@example.com',
+      identityKey: 'account-1',
+      expiresAt: Date.now() + 3600 * 1000,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      fingerprint: 'omp:stored',
+      secrets: {
+        providerId: 'openai-codex',
+        accessToken: 'stored-access-token',
+        refreshToken: 'stored-refresh-token',
+        accountId: 'account-1',
+        primaryToken: 'stored-access-token'
+      }
+    });
+
+    const result = service.restoreStoredOmpOAuthCredentials([{
+      id: 'omp-oauth-channel',
+      enabled: true,
+      authMode: 'oauth',
+      authRef: {
+        credentialId: 'stored-omp-credential',
+        providerId: 'openai-codex',
+        accountId: 'account-1'
+      }
+    }]);
+
+    expect(result).toEqual({ restored: ['stored-omp-credential'], warnings: [] });
+    expect(applyOAuthCredentialMock).toHaveBeenCalledWith('omp', expect.objectContaining({
+      providerId: 'openai-codex',
+      accessToken: 'stored-access-token',
+      refreshToken: 'stored-refresh-token',
+      accountId: 'account-1'
+    }));
+  });
+
 });
 describe('oauth credential usage lookup', () => {
   test('returns error when stored credential has no usable token', async () => {
@@ -526,6 +567,67 @@ describe('oauth credential usage lookup', () => {
       accessToken: 'fresh-access-token',
       refreshToken: 'rotated-refresh-token',
       accountId: 'fresh-account-1'
+    }));
+  });
+
+  test('reimports a refreshed OMP OAuth token into the native auth broker', async () => {
+    decodeJwtPayloadMock.mockImplementation((token) => token === 'fresh-omp-access-token'
+      ? { 'https://api.openai.com/auth': { chatgpt_account_id: 'fresh-omp-account-1' } }
+      : {});
+    const requests = mockHttpsResponses([
+      {
+        statusCode: 200,
+        body: JSON.stringify({
+          access_token: 'fresh-omp-access-token',
+          refresh_token: 'rotated-omp-refresh-token',
+          expires_in: 3600
+        })
+      },
+      {
+        statusCode: 200,
+        body: JSON.stringify({
+          rate_limit: {
+            primary_window: { used_percent: 20 },
+            secondary_window: { used_percent: 40 }
+          }
+        })
+      }
+    ]);
+    writeCredential('omp', {
+      id: 'expired-omp-credential',
+      tool: 'omp',
+      providerId: 'openai-codex',
+      accountId: 'old-omp-account-1',
+      accountEmail: 'dev@example.com',
+      identityKey: 'old-omp-account-1',
+      expiresAt: Date.now() - 1000,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      fingerprint: 'omp:expired',
+      secrets: {
+        providerId: 'openai-codex',
+        accessToken: 'expired-omp-access-token',
+        refreshToken: 'omp-refresh-token',
+        accountId: 'old-omp-account-1',
+        primaryToken: 'expired-omp-access-token'
+      }
+    });
+
+    const result = await service.fetchCredentialUsage('omp', 'expired-omp-credential');
+
+    expect(result.quota).toMatchObject({
+      primary: { remainingPercent: 80 },
+      secondary: { remainingPercent: 60 }
+    });
+    expect(requests[0].options.path).toBe('/oauth/token');
+    expect(requests[1].options.path).toBe('/backend-api/wham/usage');
+    expect(applyOAuthCredentialMock).toHaveBeenCalledWith('omp', expect.objectContaining({
+      providerId: 'openai-codex',
+      accessToken: 'fresh-omp-access-token',
+      refreshToken: 'rotated-omp-refresh-token',
+      accountId: 'fresh-omp-account-1',
+      accountEmail: 'dev@example.com',
+      identityKey: 'old-omp-account-1'
     }));
   });
 

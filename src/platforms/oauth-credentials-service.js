@@ -7,7 +7,8 @@ const {
   SUPPORTED_TOOLS,
   fingerprintFor,
   readAllNativeOAuth,
-  updateCodexOAuthTokens
+  updateCodexOAuthTokens,
+  applyOAuthCredential
 } = require('./native-oauth-adapters');
 const { maskToken } = require('../server/services/oauth-utils');
 
@@ -316,6 +317,70 @@ function syncLocalCredential(tool) {
   };
 }
 
+function restoreStoredOmpOAuthCredentials(channels = []) {
+  const oauthChannels = (Array.isArray(channels) ? channels : [])
+    .filter(channel => channel?.enabled !== false && channel?.authMode === 'oauth');
+  if (oauthChannels.length === 0) return { restored: [], warnings: [] };
+
+  const store = readStore();
+  const toolStore = getToolStore(store, 'omp');
+  const nativeCredentials = readAllNativeOAuth('omp');
+  const restored = [];
+  const warnings = [];
+  const seenCredentialIds = new Set();
+
+  for (const channel of oauthChannels) {
+    const ref = channel.authRef || {};
+    const stored = toolStore.credentials.find((entry) => {
+      if (ref.credentialId && entry.id === ref.credentialId) return true;
+      if (ref.providerId && entry.providerId !== ref.providerId) return false;
+      if (ref.accountId && entry.accountId === ref.accountId) return true;
+      if (ref.accountEmail && entry.accountEmail === ref.accountEmail) return true;
+      return !ref.credentialId && !ref.accountId && !ref.accountEmail && !ref.providerId;
+    });
+    if (!stored || seenCredentialIds.has(stored.id)) continue;
+    seenCredentialIds.add(stored.id);
+
+    const accessToken = stored.secrets?.accessToken || stored.secrets?.primaryToken || '';
+    if (!accessToken) {
+      warnings.push(`OMP OAuth credential ${stored.id} has no access token.`);
+      continue;
+    }
+    const expiresAt = Number(stored.expiresAt || stored.secrets?.expiresAt || 0);
+    if (expiresAt > 0 && expiresAt <= Date.now()) {
+      warnings.push(`OMP OAuth credential ${stored.id} is expired and was not restored.`);
+      continue;
+    }
+
+    const alreadyNative = nativeCredentials.some((native) => (
+      native.providerId === stored.providerId
+      && ((!stored.accountId && !stored.accountEmail)
+        || (stored.accountId && native.accountId === stored.accountId)
+        || (stored.accountEmail && native.accountEmail === stored.accountEmail))
+    ));
+    if (alreadyNative) continue;
+
+    try {
+      applyOAuthCredential('omp', {
+        providerId: stored.providerId || stored.secrets?.providerId,
+        credentialType: stored.secrets?.credentialType || 'oauth',
+        accessToken,
+        refreshToken: stored.secrets?.refreshToken || '',
+        expiresAt: expiresAt || null,
+        accountId: stored.accountId || stored.secrets?.accountId || '',
+        accountEmail: stored.accountEmail || stored.secrets?.accountEmail || '',
+        identityKey: stored.identityKey || stored.secrets?.identityKey || stored.accountId || '',
+        primaryToken: accessToken
+      });
+      restored.push(stored.id);
+    } catch (error) {
+      warnings.push(`OMP OAuth credential ${stored.id} restore failed: ${error.message}`);
+    }
+  }
+
+  return { restored, warnings };
+}
+
 
 function findStoredCredential(tool, credentialId) {
   const store = readStore();
@@ -526,6 +591,24 @@ async function refreshCodexCredential(entry) {
         });
       } catch {
         // The credential store is sufficient for quota lookup; native sync is best-effort.
+      }
+    }
+
+    if (entry.tool === 'omp' && typeof applyOAuthCredential === 'function') {
+      try {
+        applyOAuthCredential('omp', {
+          providerId: stored.providerId || stored.secrets.providerId,
+          credentialType: stored.secrets.credentialType || 'oauth',
+          accessToken,
+          refreshToken: nextRefreshToken,
+          expiresAt,
+          accountId,
+          accountEmail: stored.accountEmail || stored.secrets.accountEmail || '',
+          identityKey: stored.identityKey || stored.secrets.identityKey || accountId,
+          primaryToken: accessToken
+        });
+      } catch {
+        // Quota lookup can still use the refreshed app credential if native sync is unavailable.
       }
     }
 
@@ -789,6 +872,7 @@ async function fetchCredentialUsage(tool, credentialId) {
 module.exports = {
   SUPPORTED_TOOLS,
   syncLocalCredential,
+  restoreStoredOmpOAuthCredentials,
   normalizeOAuthQuota,
   fetchCredentialUsage,
   extractCodexAccountId,
