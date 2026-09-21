@@ -1,7 +1,6 @@
 import axios from 'axios'
 
 export const API_TIMEOUT_MS = 30000
-export const SPEED_TEST_API_TIMEOUT_MS = 180000
 
 export const client = axios.create({
   baseURL: '/api',

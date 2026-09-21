@@ -429,7 +429,11 @@ function getAvailableConfigs(options = {}) {
       const { commands } = service.listCommands();
       for (const command of commands || []) {
         if (command.scope !== 'user') continue;
-        const detail = typeof service.getCommand === 'function' ? (service.getCommand(command.name, 'user', null, command.namespace) || command) : command;
+        const detail = typeof service.getCommandByPath === 'function' && command.path
+          ? (service.getCommandByPath(command.path, 'user') || command)
+          : (typeof service.getCommand === 'function'
+            ? (service.getCommand(command.name, 'user', null, command.namespace) || command)
+            : command);
         const normalizedCommand = { name: command.name, namespace: command.namespace, description: command.description, allowedTools: command.allowedTools, argumentHint: command.argumentHint, body: detail.body };
         commandsByPlatform[platform] = commandsByPlatform[platform] || [];
         commandsByPlatform[platform].push(normalizedCommand);

@@ -739,24 +739,33 @@ function getCatalogMetadata({
       ))
       : [])
   ]
-    .map(value => String(value || '').trim().toLowerCase())
-    .filter(Boolean);
+    .map(value => String(value || '').trim())
+    .filter(Boolean)
+    .filter((value, index, values) => values.findIndex(item => item.toLowerCase() === value.toLowerCase()) === index);
   const normalizedProviderKey = String(providerKey || '').trim().toLowerCase();
 
   const allEntries = Object.entries(MODEL_METADATA)
     .filter(([, metadata]) => Array.isArray(metadata.toolTypes) && metadata.toolTypes.includes('omp'))
     .map(([id, metadata]) => ({ ...structuredClone(metadata), id }));
 
-  const matchesRequestedId = entry => requestedIds.length > 0 && requestedIds.some(requested => (
-    requested === entry.id.toLowerCase()
-      || requested === String(entry.sourceId || '').toLowerCase()
-      || requested === entry.id.split('/').pop().toLowerCase()
-  ));
+  const findRequestedEntry = requestedId => allEntries.find(entry => {
+    const normalizedRequestedId = requestedId.toLowerCase();
+    return normalizedRequestedId === entry.id.toLowerCase()
+      || normalizedRequestedId === String(entry.sourceId || '').toLowerCase()
+      || normalizedRequestedId === entry.id.split('/').pop().toLowerCase();
+  });
   const matchesProvider = entry => (
     String(entry.provider || '').toLowerCase() === normalizedProviderKey
     || String(entry.sourceId || '').toLowerCase().startsWith(`${normalizedProviderKey}/`)
   );
-  const requestedEntries = requestedIds.length > 0 ? allEntries.filter(matchesRequestedId) : [];
+  const requestedEntries = requestedIds.length > 0
+    ? requestedIds
+      .map(requestedId => {
+        const entry = findRequestedEntry(requestedId);
+        return entry ? { ...entry, id: requestedId } : null;
+      })
+      .filter(Boolean)
+    : [];
   const providerEntries = normalizedProviderKey ? allEntries.filter(matchesProvider) : [];
   const entries = requestedIds.length > 0 ? requestedEntries : providerEntries;
 

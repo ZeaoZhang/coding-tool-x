@@ -415,6 +415,30 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
     expect(runtime.getDriver('dsh', 'nativeLogs')).toEqual(expect.objectContaining({ platform: 'dsh', capability: 'nativeLogs' }));
   });
 
+  test('uses the manifest-declared native snapshot for config export and import', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    fs.mkdirSync(tempHome, { recursive: true });
+    fs.writeFileSync(paths.settings, 'providers:\n  primary:\n    model: deepseek\n', 'utf8');
+    fs.writeFileSync(paths.patch, 'profiles: {}\n', 'utf8');
+
+    const manifest = require('../../../src/platforms/manifests/dsh.json');
+    const registry = createPlatformRegistry({
+      builtIns: [{ ...manifest, paths: { home: tempHome } }],
+      userFile: { platforms: [] }
+    });
+    const runtime = createPlatformRuntime({ registry, driverRegistry: getDriverRegistry() });
+    const driver = runtime.getDriver('dsh', 'nativeConfig');
+    const snapshot = driver.exportSnapshot();
+
+    expect(snapshot.settings.content).toContain('deepseek');
+    expect(snapshot.patch.content).toContain('profiles');
+
+    fs.writeFileSync(paths.settings, 'providers: {}\n', 'utf8');
+    expect(driver.importSnapshot(snapshot)).toEqual(expect.objectContaining({ imported: 2, failed: 0 }));
+    expect(fs.readFileSync(paths.settings, 'utf8')).toContain('deepseek');
+  });
+
   test('routes the shared Skills and Plugins services through the DSH Driver', async () => {
     tempHome = makeTempHome();
     const paths = dshPaths(tempHome);

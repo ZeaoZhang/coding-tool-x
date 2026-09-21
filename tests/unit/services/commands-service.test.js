@@ -193,6 +193,21 @@ describe('CommandsService local command management', () => {
     expect(() => service.createCommand({ name: 'review', scope: 'user' })).toThrow(/已存在/);
   });
 
+  test('reads existing commands by path without revalidating legacy filenames', () => {
+    const { CommandsService } = require('../../../src/platforms/commands-service');
+    const service = new CommandsService('claude');
+    const filePath = path.join(service.userCommandsDir, 'review notes.md');
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, '---\ndescription: Legacy command\n---\nReview this', 'utf8');
+
+    expect(service.getCommandByPath('review notes.md', 'user')).toMatchObject({
+      name: 'review notes',
+      description: 'Legacy command',
+      body: 'Review this',
+      path: 'review notes.md'
+    });
+  });
+
   test('rejects unsafe namespaces in service-level file operations', () => {
     const { CommandsService } = require('../../../src/platforms/commands-service');
     const service = new CommandsService('claude');

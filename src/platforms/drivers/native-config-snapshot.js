@@ -83,17 +83,43 @@ function writeEntry(spec, entry, overwrite) {
   return 'success';
 }
 
-function createNativeSnapshotMethods(specs, { platform, runtime } = {}) {
+function resolveSnapshotPath(spec, { pathContext, paths, manifest } = {}) {
+  const rawPath = typeof spec?.path === 'string' ? spec.path.trim() : '';
+  if (!rawPath) return null;
+
+  const nativePaths = pathContext?.native || paths || {};
+  if (typeof nativePaths[rawPath] === 'string' && nativePaths[rawPath].trim()) {
+    return nativePaths[rawPath];
+  }
+
+  const home = pathContext?.home || nativePaths.home || manifest?.paths?.home || process.cwd();
+  const expanded = rawPath.replace(/\{home\}/g, home);
+  return path.isAbsolute(expanded) ? path.normalize(expanded) : path.resolve(home, expanded);
+}
+
+function resolveNativeSnapshotSpecs(declarations, context = {}) {
+  return Object.fromEntries(Object.entries(declarations || {})
+    .map(([key, spec]) => [key, {
+      ...spec,
+      path: resolveSnapshotPath(spec, context)
+    }])
+    .filter(([, spec]) => spec.path));
+}
+
+function createNativeSnapshotMethods(specs, { platform, runtime, manifest, pathContext, paths } = {}) {
+  const resolvedSpecs = Object.keys(specs || {}).length > 0
+    ? specs
+    : resolveNativeSnapshotSpecs(manifest?.nativeConfigSnapshot, { manifest, pathContext, paths });
   const methods = {
     exportSnapshot() {
-      return Object.fromEntries(Object.entries(specs || {})
+      return Object.fromEntries(Object.entries(resolvedSpecs || {})
         .map(([key, spec]) => [key, readEntry(spec)])
         .filter(([, entry]) => entry));
     },
     importSnapshot(snapshot = {}, { overwrite = true } = {}) {
       const result = { success: 0, imported: 0, skipped: 0, failed: 0 };
       for (const [key, entry] of Object.entries(snapshot || {})) {
-        const status = writeEntry(specs[key], entry, overwrite);
+        const status = writeEntry(resolvedSpecs[key], entry, overwrite);
         if (status === 'success') {
           result.success += 1;
           result.imported += 1;
@@ -122,4 +148,4 @@ function createNativeSnapshotMethods(specs, { platform, runtime } = {}) {
   return methods;
 }
 
-module.exports = { createNativeSnapshotMethods };
+module.exports = { createNativeSnapshotMethods, resolveNativeSnapshotSpecs };

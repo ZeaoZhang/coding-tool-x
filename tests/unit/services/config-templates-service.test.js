@@ -178,6 +178,15 @@ beforeEach(() => {
         listCommands() {
           return { commands: commandListByPlatform[this.platform] || commandList };
         }
+        getCommand(name) {
+          if (/[^a-zA-Z0-9_-]/.test(name)) {
+            throw new Error('命令名只能包含字母、数字、横杠和下划线');
+          }
+          return null;
+        }
+        getCommandByPath() {
+          return null;
+        }
       }
     }
   };
@@ -441,6 +450,18 @@ describe('config-templates-service persistence and discovery', () => {
         isBuiltin: true
       }
     ]);
+  });
+
+  test('does not fail when an existing command has an invalid filename', () => {
+    commandListByPlatform.claude = [{
+      scope: 'user',
+      name: 'review notes',
+      path: 'review notes.md',
+      description: 'Legacy command',
+      body: 'Review this'
+    }];
+
+    expect(() => templatesService.getAvailableConfigs()).not.toThrow();
   });
 });
 

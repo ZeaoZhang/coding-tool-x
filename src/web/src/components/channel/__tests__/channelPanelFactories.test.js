@@ -88,6 +88,7 @@ describe('channel panel model catalogs', () => {
     createOpenCodeChannel.mockReset().mockResolvedValue({ id: 'created-opencode' })
     updateOmpChannel.mockReset().mockResolvedValue({ id: 'updated' })
   })
+
   it('keeps array channel responses from the platform API', async () => {
     const cases = [
       ['claude', fetchClaudeChannels],

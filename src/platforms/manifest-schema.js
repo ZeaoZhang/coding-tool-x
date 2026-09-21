@@ -11,6 +11,7 @@ const DRIVER_IDS = new Set([
   'generic-openai-compatible',
   'generic-mcp',
   'generic-prompt',
+  'generic-native-config',
   'legacy:claude',
   'legacy:codex',
   'legacy:gemini',
@@ -80,7 +81,7 @@ const CAPABILITY_OPERATIONS = Object.freeze({
     'updateSkill',
     'deleteSkill'
   ]),
-  channels: new Set(['applyToSettings', 'bestForRestore', 'catalogMetadata', 'create', 'current', 'enabled', 'getAuth', 'getAuthQuota', 'list', 'models', 'order', 'poolStatus', 'probeModels', 'remove', 'resetHealth', 'speedTest', 'speedTestAll', 'sync', 'syncLocalAuth', 'update']),
+  channels: new Set(['applyToSettings', 'bestForRestore', 'catalogMetadata', 'create', 'current', 'enabled', 'getAuth', 'getAuthQuota', 'list', 'models', 'order', 'poolStatus', 'probeModels', 'remove', 'resetHealth', 'speedTest', 'sync', 'syncLocalAuth', 'update']),
   health: new Set(['healthCheck']),
   hooks: new Set(['getHooks', 'saveHooks', 'testHooks']),
   projects: new Set(['createProject', 'deleteProject', 'listProjects', 'saveProjectOrder']),
@@ -198,6 +199,19 @@ const schema = {
     sessionMapping: { type: 'object', additionalProperties: { type: 'string' } },
     sessionGlob: { type: 'string', minLength: 1 },
     resourceMappings: { type: 'object', additionalProperties: { type: 'string' } },
+    nativeConfigSnapshot: {
+      type: 'object',
+      additionalProperties: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['path', 'format'],
+        properties: {
+          path: { type: 'string', minLength: 1 },
+          format: { enum: ['text', 'json', 'yaml', 'directory'] },
+          mode: { type: 'integer', minimum: 0, maximum: 511 }
+        }
+      }
+    },
     projectResources: {
       type: 'object',
       additionalProperties: false,
@@ -333,6 +347,17 @@ function validateProjectResources(manifest, errors) {
   }
 }
 
+function validateNativeConfigSnapshot(manifest, errors) {
+  for (const [key, spec] of Object.entries(manifest?.nativeConfigSnapshot || {})) {
+    if (!isSafeRelativePath(spec?.path)) {
+      errors.push({
+        instancePath: `/nativeConfigSnapshot/${key}/path`,
+        message: 'must be a safe relative path or a declared native path name'
+      });
+    }
+  }
+}
+
 function validateApiRoutes(manifest, errors) {
   const api = manifest?.api;
   if (!api?.routes) return;
@@ -395,7 +420,8 @@ function validateManifest(manifest) {
     'generic-filesystem': new Set(['resourceSync']),
     'generic-openai-compatible': new Set(['channels']),
     'generic-mcp': new Set(['mcp']),
-    'generic-prompt': new Set(['prompts'])
+    'generic-prompt': new Set(['prompts']),
+    'generic-native-config': new Set(['nativeConfig'])
   };
 
   for (const [capability, driver] of Object.entries(manifest && manifest.capabilities || {})) {
@@ -424,6 +450,13 @@ function validateManifest(manifest) {
     }
   }
 
+  if (manifest?.capabilities?.nativeConfig === 'generic-native-config' && !manifest.nativeConfigSnapshot) {
+    errors.push({
+      instancePath: '/nativeConfigSnapshot',
+      message: 'generic-native-config requires nativeConfigSnapshot declarations'
+    });
+  }
+  validateNativeConfigSnapshot(manifest, errors);
   validateApiRoutes(manifest, errors);
   return { valid: errors.length === 0, errors };
 }

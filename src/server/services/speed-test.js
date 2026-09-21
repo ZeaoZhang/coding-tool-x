@@ -38,47 +38,6 @@ function sanitizeTimeout(timeout) {
   return Math.min(Math.max(ms, MIN_TIMEOUT), MAX_TIMEOUT);
 }
 
-/**
- * 规范化批量测速并发度（默认小并发）
- */
-function sanitizeBatchConcurrency(concurrency, defaultValue = 2) {
-  const value = Number(concurrency);
-  if (!Number.isFinite(value) || value <= 0) {
-    return defaultValue;
-  }
-  return Math.min(Math.max(Math.round(value), 1), 5);
-}
-
-/**
- * 按并发限制执行异步任务，保持结果顺序与输入一致
- */
-async function runWithConcurrencyLimit(items, concurrency, taskFn) {
-  const list = Array.isArray(items) ? items : [];
-  if (list.length === 0) return [];
-
-  const limit = sanitizeBatchConcurrency(concurrency);
-  const results = new Array(list.length);
-  let cursor = 0;
-
-  async function worker() {
-    while (true) {
-      const currentIndex = cursor;
-      cursor += 1;
-      if (currentIndex >= list.length) {
-        return;
-      }
-      results[currentIndex] = await taskFn(list[currentIndex], currentIndex);
-    }
-  }
-
-  const workers = [];
-  const workerCount = Math.min(limit, list.length);
-  for (let i = 0; i < workerCount; i += 1) {
-    workers.push(worker());
-  }
-  await Promise.all(workers);
-  return results;
-}
 
 function normalizeNonEmptyString(value) {
   if (typeof value !== 'string') return null;
@@ -768,34 +727,6 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
   return primaryResult;
 }
 
-/**
- * 批量测试多个渠道
- * @param {Array} channels - 渠道列表
- * @param {number} timeout - 超时时间
- * @param {string} channelType - 渠道类型：'claude' | 'codex' | 'gemini'
- * @returns {Promise<Array>} 测试结果列表
- */
-async function testMultipleChannels(channels, timeout = DEFAULT_TIMEOUT, channelType = 'claude', concurrency = 2) {
-  const results = await runWithConcurrencyLimit(
-    channels,
-    concurrency,
-    channel => testChannelSpeed(channel, timeout, channelType)
-  );
-
-  // 按延迟排序（成功的在前，按延迟升序）
-  results.sort((a, b) => {
-    if (a.success && !b.success) return -1;
-    if (!a.success && b.success) return 1;
-    if (a.success && b.success) {
-      const aLatency = (a.latency === null || a.latency === undefined) ? Infinity : a.latency;
-      const bLatency = (b.latency === null || b.latency === undefined) ? Infinity : b.latency;
-      return aLatency - bLatency;
-    }
-    return 0;
-  });
-
-  return results;
-}
 
 /**
  * 获取缓存的测试结果
@@ -834,10 +765,7 @@ function getLatencyLevel(latency) {
 
 module.exports = {
   testChannelSpeed,
-  testMultipleChannels,
   getCachedResult,
   clearCache,
   getLatencyLevel,
-  sanitizeBatchConcurrency,
-  runWithConcurrencyLimit
 };

@@ -45,11 +45,14 @@ const { EffectiveControlService } = require('./effective-control-service');
 const { SkillArtifactStore } = require('./skill-artifact-store');
 const { SkillFormatAdapter } = require('./skill-format-adapters');
 const { SkillProjectionService } = require('./skill-projection-service');
+const { readTextFileLimited, truncateUtf8 } = require('./bounded-content');
 
 const SUPPORTED_REPO_PROVIDERS = ['github', 'gitlab', 'local'];
 const DEFAULT_GITHUB_HOST = 'https://github.com';
 const DEFAULT_GITLAB_HOST = 'https://gitlab.com';
 const CACHE_TTL = 5 * 60 * 1000;
+const MAX_SKILL_DETAIL_BYTES = 128 * 1024;
+const MAX_PREPARED_SKILL_CACHE_ENTRIES = 32;
 
 function sanitizeRefreshError(value) {
   return String(value || '')
@@ -392,7 +395,16 @@ class SkillService {
       invocation: skill.invocation || null,
       ...(skill.whenToUse ? { whenToUse: skill.whenToUse } : {}),
       ...(skill.metadata ? { metadata: skill.metadata } : {}),
-      ...(includeContent && skill.content !== undefined ? { content: skill.content } : {})
+      ...(includeContent && skill.content !== undefined
+        ? (() => {
+          const bounded = truncateUtf8(skill.content, MAX_SKILL_DETAIL_BYTES);
+          return {
+            content: bounded.text,
+            contentBytes: bounded.bytes,
+            contentTruncated: bounded.truncated
+          };
+        })()
+        : {})
     };
   }
 
@@ -534,7 +546,11 @@ class SkillService {
       return value.map(skill => ({ ...skill }));
     }
     const entry = { value, cachedAt: Date.now(), generation };
+    this._preparedSkillsCache.delete(cacheKey);
     this._preparedSkillsCache.set(cacheKey, entry);
+    while (this._preparedSkillsCache.size > MAX_PREPARED_SKILL_CACHE_ENTRIES) {
+      this._preparedSkillsCache.delete(this._preparedSkillsCache.keys().next().value);
+    }
     if (cacheKey === 'user:') {
       this.skillsCache = value;
       this.cacheTime = entry.cachedAt;
@@ -3663,7 +3679,8 @@ ${content}
       if (!fs.existsSync(skillFile) || fs.lstatSync(skillFile).isSymbolicLink()) {
         throw new Error('Skill detail contains an unavailable or symlinked SKILL.md');
       }
-      const content = fs.readFileSync(skillFile, 'utf8');
+      const boundedContent = readTextFileLimited(skillFile, MAX_SKILL_DETAIL_BYTES);
+      const content = boundedContent.text;
       const parsed = this.parseSkillMd(content);
       const bodyMatch = content.match(/^---\s*\n[\s\S]*?\n---\s*\n([\s\S]*)$/);
       const body = bodyMatch ? bodyMatch[1].trim() : content;
@@ -3676,6 +3693,8 @@ ${content}
         description: parsed.description || metadata.description || '',
         content: body,
         fullContent: content,
+        contentBytes: boundedContent.bytes,
+        contentTruncated: boundedContent.truncated,
         installed: enabled,
         enabled,
         cached: metadata.cached !== false,
@@ -3881,5 +3900,6 @@ ${content}
 module.exports = {
   SkillService,
   DEFAULT_REPOS: DEFAULT_REPOS_BY_PLATFORM.claude,
-  DEFAULT_REPOS_BY_PLATFORM
+  DEFAULT_REPOS_BY_PLATFORM,
+  MAX_SKILL_DETAIL_BYTES
 };

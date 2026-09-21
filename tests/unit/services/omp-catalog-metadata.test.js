@@ -45,6 +45,17 @@ describe('OMP offline catalog metadata', () => {
     expect(result.models[0].id).toBe('gpt-5.5')
   });
 
+  test('preserves the user-entered upstream id when matching a catalog model by suffix', () => {
+    const result = channels.getCatalogMetadata({
+      providerKey: 'deepseek',
+      models: [{ id: 'deepseek-v4-pro' }]
+    });
+
+    expect(result.models).toHaveLength(1);
+    expect(result.models[0].id).toBe('deepseek-v4-pro');
+    expect(result.models[0].sourceId).toBe('deepseek/deepseek-v4-pro');
+  });
+
   test('does not fall back to the complete catalog for unknown providers', () => {
     const result = channels.getCatalogMetadata({ providerKey: 'siliconflow' });
 

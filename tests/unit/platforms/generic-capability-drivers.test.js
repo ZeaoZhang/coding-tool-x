@@ -6,14 +6,63 @@ const path = require('path');
 const os = require('os');
 const { createGenericMcpDriver } = require('../../../src/platforms/drivers/generic-mcp');
 const { createGenericPromptDriver } = require('../../../src/platforms/drivers/generic-prompt');
+const { createPlatformRuntime } = require('../../../src/platforms/runtime');
+const { createPlatformRegistry } = require('../../../src/platforms/registry');
+const { getDriverRegistry } = require('../../../src/platforms/driver-registry');
 
 test('default registry registers fixed MCP and prompt drivers', () => {
   const { getDriverRegistry } = require('../../../src/platforms/driver-registry');
   const registry = getDriverRegistry();
   expect(registry.has('generic-mcp')).toBe(true);
   expect(registry.has('generic-prompt')).toBe(true);
+  expect(registry.has('generic-native-config')).toBe(true);
   expect(typeof registry.create('generic-mcp', { platform: 'demo', capability: 'mcp' }).read).toBe('function');
   expect(typeof registry.create('generic-prompt', { platform: 'demo', capability: 'prompts' }).write).toBe('function');
+});
+
+test('exports and imports a new CLI native config from Manifest declarations', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'generic-native-config-'));
+  const configPath = path.join(root, 'config.json');
+  const settingsPath = path.join(root, 'settings.txt');
+  const manifest = {
+    key: 'demo-cli',
+    label: 'Demo CLI',
+    command: 'demo',
+    paths: {
+      home: root,
+      config: '{home}/config.json',
+      settings: '{home}/settings.txt'
+    },
+    nativeConfigSnapshot: {
+      config: { path: 'config', format: 'json' },
+      settings: { path: 'settings', format: 'text' }
+    },
+    capabilities: { nativeConfig: 'generic-native-config' }
+  };
+  const registry = createPlatformRegistry({
+    builtIns: [],
+    userFile: { platforms: [manifest] }
+  });
+  const runtime = createPlatformRuntime({ registry, driverRegistry: getDriverRegistry() });
+
+  try {
+    fs.writeFileSync(configPath, JSON.stringify({ endpoint: 'https://demo.test', enabled: true }), 'utf8');
+    fs.writeFileSync(settingsPath, 'profile=default\n', 'utf8');
+
+    const driver = runtime.getDriver('demo-cli', 'nativeConfig');
+    const snapshot = driver.exportSnapshot();
+
+    expect(snapshot.config.content).toEqual({ endpoint: 'https://demo.test', enabled: true });
+    expect(snapshot.settings.content).toBe('profile=default\n');
+
+    fs.writeFileSync(configPath, '{}', 'utf8');
+    fs.writeFileSync(settingsPath, 'profile=changed\n', 'utf8');
+    expect(driver.importSnapshot(snapshot)).toEqual({ success: 2, imported: 2, skipped: 0, failed: 0 });
+    expect(JSON.parse(fs.readFileSync(configPath, 'utf8'))).toEqual({ endpoint: 'https://demo.test', enabled: true });
+    expect(fs.readFileSync(settingsPath, 'utf8')).toBe('profile=default\n');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 describe('generic capability system aliases', () => {

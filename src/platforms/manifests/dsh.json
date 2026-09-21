@@ -255,14 +255,6 @@
       },
       {
         "method": "POST",
-        "path": "/channels/speed-test-all",
-        "capability": "channels",
-        "operation": "speedTestAll",
-        "request": "default",
-        "response": "default"
-      },
-      {
-        "method": "POST",
         "path": "/channels/probe-models",
         "capability": "channels",
         "operation": "probeModels",
@@ -530,7 +522,7 @@
   "capabilities": {
     "projects": "dsh-projects",
     "sessions": "dsh-sessions",
-    "nativeConfig": "dsh-native-config",
+    "nativeConfig": "generic-native-config",
     "api": "dsh-api",
     "channels": "dsh-channels",
     "proxy": "dsh-proxy",
@@ -538,5 +530,10 @@
     "nativeLogs": "dsh-native-logs",
     "mcp": "dsh-api",
     "prompts": "dsh-api"
+  },
+  "nativeConfigSnapshot": {
+    "settings": { "path": "settings", "format": "text", "mode": 384 },
+    "credentials": { "path": "credentials", "format": "text", "mode": 384 },
+    "patch": { "path": "patch", "format": "text", "mode": 384 }
   }
 }

@@ -600,6 +600,34 @@ class CommandsService {
     return { ...detail, name: safeName, namespace: safeNamespace || null, scope, path: relativePath };
   }
 
+  /**
+   * Read an existing command by its scanned relative path.
+   * Existing files may predate the current command-name rules, so reading
+   * them must not re-validate the filename as if it were a new command.
+   */
+  getCommandByPath(commandPath, scope = 'user', projectPath = null) {
+    const baseDir = this._getBaseDir(scope, projectPath);
+    const relativePath = normalizeSafeRelativePath(commandPath, 'command path');
+    const extension = getCommandFileExtension(this.platform);
+    if (!relativePath.toLowerCase().endsWith(extension)) {
+      throw new Error('Invalid command path');
+    }
+
+    const detail = this._getLocalIndex(scope, projectPath)?.getSync(relativePath);
+    if (!detail) return null;
+
+    const name = path.posix.basename(relativePath, extension);
+    const namespace = path.posix.dirname(relativePath);
+    return {
+      ...detail,
+      name,
+      namespace: namespace === '.' ? null : namespace,
+      scope,
+      path: relativePath,
+      fullPath: path.join(baseDir, relativePath)
+    };
+  }
+
   /** 创建命令 */
   createCommand({ name, scope, projectPath, namespace, description, allowedTools, argumentHint, agent, model, subtask, body }) {
     const safeName = normalizeCommandName(name);
