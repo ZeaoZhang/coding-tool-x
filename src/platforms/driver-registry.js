@@ -47,6 +47,7 @@ function getDriverRegistry() {
         'generic-openai-compatible': createGenericOpenAICompatibleDriver,
         'generic-mcp': createGenericMcpDriver,
         'generic-prompt': createGenericPromptDriver,
+        'generic-native-config': require('./drivers/generic-native-config').createDriver,
         'opencode-conversion': require('./drivers/opencode/conversion').createDriver,
         'claude-health': require('./drivers/claude/health').createDriver,
         'dsh-api': require('./drivers/dsh/api-operations').createDriver,

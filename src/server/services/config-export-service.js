@@ -1,6 +1,6 @@
 /**
  * 配置导出/导入服务
- * 支持配置模板、频道配置的导出与导入
+ * 支持配置模板、频道配置及按平台 Manifest 声明的原生配置快照导出与导入
  */
 
 const fs = require('fs');
@@ -517,7 +517,7 @@ function buildExportReadme(exportData) {
 - 插件 (Plugins)
 - MCP 服务器配置
 - OAuth 凭证管理池
-- 各平台原生配置（Claude / Codex / Gemini / OpenCode / OMP）
+- 各平台原生配置（由平台 Manifest 的 nativeConfigSnapshot 声明决定）
 - UI 配置（主题、面板显示、排序等）
 - Prompts 预设
 - 安全配置

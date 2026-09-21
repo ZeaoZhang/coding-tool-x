@@ -57,7 +57,7 @@
 - 所有扫描到的 Skill 默认登记为 `managed=true`；`managed` 不等于已启用
 - OMP 可将提示词同步为原生 prompt templates；MCP/Skill activation、trust 和 secret reference 由同一有效控制面管理
 - 支持 Claude、Codex、Gemini、OpenCode 的 OAuth 凭证池管理与回写原生配置；OMP auth 通过原生配置导入导出保留
-- 支持 ZIP / JSON 配置导入导出
+- 支持 ZIP / JSON 配置导入导出；原生配置快照由平台 Manifest 声明，新增 CLI 无需修改导入导出服务
 
 ### 工作区与运维
 
@@ -79,7 +79,7 @@
 | 能力 | Claude | Codex | Gemini | OpenCode | OMP |
 | --- | --- | --- | --- | --- | --- |
 | 项目 / 会话查看 | 支持 | 支持 | 支持 | 支持 | 支持 |
-| 渠道 / 代理管理 | 支持 | 支持 | 支持 | 支持 | 支持，含余额显示与批量测速 |
+| 渠道 / 代理管理 | 支持 | 支持 | 支持 | 支持 | 支持，含余额显示与单渠道测速 |
 | Prompts 预设同步 | 支持 | 支持 | 支持 | 支持 | 支持，写入 OMP prompt templates |
 | Skills 管理 | 支持 | 支持 | 支持 | 支持 | 原生支持 |
 | Commands 管理 | 支持 | 支持 | 支持 | 支持 | 映射为 OMP commands |
@@ -347,6 +347,9 @@ ctx omp start
   - 配置: `~/.config/opencode`
   - 数据: `~/.local/share/opencode`
 - OMP: `${OMP_CODING_AGENT_DIR:-~/.omp/agent}`（`OMP_PROFILE` 会落到 `~/.omp/profiles/<name>/agent`）
+- DSH: `${DSH_HOME:-~/.dsh}`
+
+原生配置导入导出使用平台 Manifest 的 `nativeConfigSnapshot` 声明文件路径和格式；使用 `generic-native-config` 后，新增 CLI 只需补充 Manifest 配置即可接入统一的 ZIP / JSON 导入导出流程。
 
 ## 开发
 

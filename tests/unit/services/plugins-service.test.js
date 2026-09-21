@@ -462,6 +462,25 @@ describe('PluginsService market cache and repository management', () => {
     expect(fetchFile).not.toHaveBeenCalled();
   });
 
+  test('README detail reads are bounded for oversized local files', async () => {
+    const { PluginsService, MAX_PLUGIN_DETAIL_BYTES } = loadModule();
+    const svc = new PluginsService('claude');
+    const pluginDir = path.join(testDir, 'oversized-plugin');
+    fs.mkdirSync(pluginDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(pluginDir, 'README.md'),
+      `# Oversized README\n\n${'x'.repeat(MAX_PLUGIN_DETAIL_BYTES * 8)}`,
+      'utf8'
+    );
+
+    const readme = await svc.getPluginReadme({
+      name: 'oversized-plugin',
+      installPath: pluginDir
+    });
+
+    expect(Buffer.byteLength(readme)).toBeLessThanOrEqual(MAX_PLUGIN_DETAIL_BYTES);
+  });
+
   test('plugin list DTO removes legacy content and README bodies', () => {
     const { PluginsService } = loadModule();
     const svc = new PluginsService('claude');
@@ -975,6 +994,17 @@ describe('PluginsService OpenCode helpers', () => {
       })
     ]);
   });
+
+  test('bounds plugin list cache entries across project contexts', () => {
+    const { PluginsService, MAX_PLUGIN_LIST_CACHE_ENTRIES } = loadModule();
+    const svc = new PluginsService('opencode');
+
+    for (let index = 0; index < MAX_PLUGIN_LIST_CACHE_ENTRIES + 8; index += 1) {
+      svc.listPlugins({ cwd: path.join(testDir, `project-${index}`), scope: 'project' });
+    }
+
+    expect(svc._pluginListCache.size).toBeLessThanOrEqual(MAX_PLUGIN_LIST_CACHE_ENTRIES);
+  });
 });
 
 describe('PluginsService OMP native plugin CLI', () => {
@@ -1406,9 +1436,13 @@ describe('PluginsService Claude native plugin integration', () => {
       localPath: repoRoot,
       marketplace: 'toggle-market'
     });
+    const readSpy = vi.spyOn(fs, 'readFileSync');
     const result = svc.togglePlugin('toggle-demo', false);
+    svc.togglePlugin('toggle-demo', true);
+    svc.togglePlugin('toggle-demo', false);
 
     expect(result).toEqual(expect.objectContaining({ success: true, enabled: false }));
+    expect(readSpy.mock.calls.filter(([filePath]) => filePath === svc.claudeInstalledFile)).toHaveLength(1);
     expect(JSON.parse(fs.readFileSync(path.join(testDir, 'settings.json'), 'utf8')).enabledPlugins['toggle-demo@toggle-market']).toBe(false);
     expect(svc.listPlugins().plugins[0]).toEqual(expect.objectContaining({
       name: 'toggle-demo',

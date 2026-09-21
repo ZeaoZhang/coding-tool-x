@@ -734,6 +734,25 @@ describe('SkillService.getInstalledSkills', () => {
 });
 
 describe('SkillService.getSkillDetail', () => {
+  it('bounds oversized local detail content before returning it', async () => {
+    const { SkillService, MAX_SKILL_DETAIL_BYTES } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('claude');
+    const skillDir = path.join(svc.installDir, 'oversized-detail-skill');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, 'SKILL.md'),
+      `---\nname: Oversized Detail\ndescription: bounded\n---\n${'x'.repeat(MAX_SKILL_DETAIL_BYTES * 8)}`,
+      'utf-8'
+    );
+
+    const detail = await svc.getSkillDetail('oversized-detail-skill');
+
+    expect(detail.contentTruncated).toBe(true);
+    expect(detail.contentBytes).toBeGreaterThan(MAX_SKILL_DETAIL_BYTES);
+    expect(Buffer.byteLength(detail.content)).toBeLessThanOrEqual(MAX_SKILL_DETAIL_BYTES);
+    expect(Buffer.byteLength(detail.fullContent)).toBeLessThanOrEqual(MAX_SKILL_DETAIL_BYTES);
+  });
+
   it('returns absolute paths for installed skills', async () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
     const svc = new SkillService('claude');

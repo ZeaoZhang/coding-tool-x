@@ -36,6 +36,7 @@ const {
   normalizeSafeRelativePath,
   resolveInsideRoot
 } = require('../../shared/config-artifact-paths');
+const { readTextFileLimited, truncateUtf8 } = require('./bounded-content');
 
 const CLAUDE_PLUGINS_DIR = NATIVE_PATHS.claude.plugins
   || path.join(NATIVE_PATHS.claude.dir || path.dirname(NATIVE_PATHS.claude.settings), 'plugins');
@@ -49,6 +50,13 @@ const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
 const REPO_SOURCE_META_FILE = '.cc-tool-plugin-source.json';
 const SUPPORTED_REPO_PROVIDERS = ['github', 'gitlab', 'local'];
 const PLUGIN_LIST_TTL_MS = 1000;
+const MAX_PLUGIN_DETAIL_BYTES = 128 * 1024;
+const MAX_PLUGIN_MANIFEST_BYTES = 256 * 1024;
+const MAX_PLUGIN_STATE_BYTES = 4 * 1024 * 1024;
+const MAX_PLUGIN_LIST_CACHE_ENTRIES = 32;
+const MAX_MARKET_CACHE_ENTRIES = 32;
+const MAX_MARKET_README_CACHE_ENTRIES = 32;
+const MAX_MARKET_CACHE_FILE_BYTES = 8 * 1024 * 1024;
 const DEFAULT_GITHUB_HOST = 'https://github.com';
 const DEFAULT_GITLAB_HOST = 'https://gitlab.com';
 const DEFAULT_REPOS_BY_PLATFORM = {
@@ -522,6 +530,7 @@ class PluginsService {
     this._marketReadmeCache = new Map();
     this._marketReadmeCacheLoaded = false;
     this._lastFetchedRepoTrees = new Map();
+    this._claudeInstalledPluginIndex = null;
     this.ompNativeAdapter = this.platform === 'omp'
       ? new OmpNativePluginAdapter({ pathContext: this.pathContext })
       : null;
@@ -540,6 +549,47 @@ class PluginsService {
     } catch (_) {
       return value;
     }
+  }
+
+  _rememberPluginList(key, value, cachedAt = Date.now()) {
+    this._pluginListCache.delete(key);
+    this._pluginListCache.set(key, {
+      value: this._clone(value),
+      cachedAt,
+      generation: this._pluginListGeneration
+    });
+    while (this._pluginListCache.size > MAX_PLUGIN_LIST_CACHE_ENTRIES) {
+      this._pluginListCache.delete(this._pluginListCache.keys().next().value);
+    }
+  }
+
+  _rememberMarketPlugins(key, plugins, fetchedAt, reposFingerprint) {
+    this._marketCacheByKey.delete(key);
+    this._marketCacheByKey.set(key, { plugins, fetchedAt, reposFingerprint });
+    while (this._marketCacheByKey.size > MAX_MARKET_CACHE_ENTRIES) {
+      this._marketCacheByKey.delete(this._marketCacheByKey.keys().next().value);
+    }
+  }
+
+  _setMarketReadme(key, value) {
+    if (typeof value !== 'string') return '';
+    const bounded = truncateUtf8(value, MAX_PLUGIN_DETAIL_BYTES);
+    this._marketReadmeCache.delete(key);
+    this._marketReadmeCache.set(key, bounded.text);
+    while (this._marketReadmeCache.size > MAX_MARKET_README_CACHE_ENTRIES) {
+      this._marketReadmeCache.delete(this._marketReadmeCache.keys().next().value);
+    }
+    return bounded.text;
+  }
+
+  _loadMarketReadmes(readmes = {}) {
+    this._marketReadmeCache.clear();
+    for (const [key, value] of Object.entries(readmes || {})) {
+      this._setMarketReadme(key, value);
+      if (this._marketReadmeCache.size >= MAX_MARKET_README_CACHE_ENTRIES) break;
+    }
+    this._marketReadmeCacheLoaded = true;
+    return this._marketReadmeCache;
   }
 
   _invalidatePluginList(options = null) {
@@ -751,7 +801,9 @@ class PluginsService {
   loadMarketCacheEnvelope() {
     try {
       if (!fs.existsSync(this.marketCachePath)) return null;
-      const data = JSON.parse(fs.readFileSync(this.marketCachePath, 'utf-8'));
+      const boundedCache = readTextFileLimited(this.marketCachePath, MAX_MARKET_CACHE_FILE_BYTES);
+      if (boundedCache.truncated) return null;
+      const data = JSON.parse(boundedCache.text);
       if (Array.isArray(data)) {
         return { plugins: data, fetchedAt: 0, reposFingerprint: null, readmes: {} };
       }
@@ -793,20 +845,25 @@ class PluginsService {
   _loadMarketReadmeCache() {
     if (this._marketReadmeCacheLoaded) return this._marketReadmeCache;
     const envelope = this.loadMarketCacheEnvelope();
-    this._marketReadmeCache = new Map(Object.entries(envelope?.readmes || {}));
-    this._marketReadmeCacheLoaded = true;
-    return this._marketReadmeCache;
+    return this._loadMarketReadmes(envelope?.readmes || {});
   }
 
   saveMarketCacheToFile(plugins, fetchedAt = Date.now(), reposFingerprint = null, readmes = null) {
     try {
       this._ensureDir(path.dirname(this.marketCachePath));
+      const readmeSource = readmes || Object.fromEntries(this._loadMarketReadmeCache());
+      const boundedReadmes = {};
+      for (const [key, value] of Object.entries(readmeSource || {})) {
+        if (Object.keys(boundedReadmes).length >= MAX_MARKET_README_CACHE_ENTRIES) break;
+        if (typeof value !== 'string') continue;
+        boundedReadmes[key] = truncateUtf8(value, MAX_PLUGIN_DETAIL_BYTES).text;
+      }
       const payload = {
         fetchedAt,
         time: fetchedAt,
         reposFingerprint,
         plugins,
-        readmes: readmes || Object.fromEntries(this._loadMarketReadmeCache())
+        readmes: boundedReadmes
       };
       const tempPath = `${this.marketCachePath}.tmp-${process.pid}-${Date.now()}`;
       try {
@@ -881,6 +938,25 @@ class PluginsService {
     return (Array.isArray(plugins) ? plugins : []).map(plugin => this.sanitizePluginListItem(plugin));
   }
 
+  sanitizePluginDetail(plugin = {}) {
+    const sanitized = { ...plugin };
+    for (const key of Object.keys(sanitized)) {
+      const normalizedKey = key.toLowerCase();
+      if (
+        normalizedKey === 'content'
+        || normalizedKey === 'fullcontent'
+        || normalizedKey === 'manifest'
+        || normalizedKey === 'rawmanifest'
+        || normalizedKey === 'files'
+        || normalizedKey === 'filecontents'
+        || (normalizedKey.includes('readme') && normalizedKey !== 'readmeurl')
+      ) {
+        delete sanitized[key];
+      }
+    }
+    return sanitized;
+  }
+
   _ensureDir(dirPath) {
     if (!fs.existsSync(dirPath)) {
       fs.mkdirSync(dirPath, { recursive: true });
@@ -931,7 +1007,7 @@ class PluginsService {
         { allowHiddenSegments: true }
       );
       if (!fs.existsSync(cachedPath)) return null;
-      return fs.readFileSync(cachedPath, 'utf8');
+      return readTextFileLimited(cachedPath, MAX_PLUGIN_DETAIL_BYTES).text;
     } catch {
       return null;
     }
@@ -1137,7 +1213,7 @@ class PluginsService {
   _readFirstMarkdownParagraph(filePath) {
     if (!fs.existsSync(filePath)) return '';
     try {
-      const content = fs.readFileSync(filePath, 'utf8');
+      const content = readTextFileLimited(filePath, MAX_PLUGIN_DETAIL_BYTES).text;
       const lines = content
         .split(/\r?\n/)
         .map(line => line.trim())
@@ -1207,7 +1283,9 @@ class PluginsService {
       const manifestPath = path.join(rootDir, candidate);
       if (!fs.existsSync(manifestPath)) continue;
       try {
-        return JSON.parse(stripJsonComments(fs.readFileSync(manifestPath, 'utf8')));
+        const bounded = readTextFileLimited(manifestPath, MAX_PLUGIN_MANIFEST_BYTES);
+        if (bounded.truncated) continue;
+        return JSON.parse(stripJsonComments(bounded.text));
       } catch {
         // try next candidate
       }
@@ -1252,6 +1330,32 @@ class PluginsService {
       console.error('[PluginsService] Failed to read Claude settings:', err.message);
       return { filePath, settings: {} };
     }
+  }
+
+  _readClaudeInstalledPluginIndex() {
+    if (!fs.existsSync(this.claudeInstalledFile)) return [];
+    try {
+      const stat = fs.statSync(this.claudeInstalledFile);
+      const signature = `${stat.size}:${stat.mtimeMs}`;
+      if (this._claudeInstalledPluginIndex?.signature === signature) {
+        return this._claudeInstalledPluginIndex.entries;
+      }
+      const boundedState = readTextFileLimited(this.claudeInstalledFile, MAX_PLUGIN_STATE_BYTES);
+      if (boundedState.truncated) return [];
+      const data = JSON.parse(boundedState.text);
+      const entries = Object.keys(data.plugins || {}).map(key => {
+        const parsed = splitPluginMarketplaceKey(key);
+        return { key, name: parsed.name, marketplace: parsed.marketplace || '' };
+      });
+      this._claudeInstalledPluginIndex = { signature, entries };
+      return entries;
+    } catch {
+      return [];
+    }
+  }
+
+  _clearClaudeInstalledPluginIndex() {
+    this._claudeInstalledPluginIndex = null;
   }
 
   _writeClaudeSettings(settings) {
@@ -1455,6 +1559,7 @@ class PluginsService {
       ...(installData.repoSourceMeta || {})
     }];
     fs.writeFileSync(this.claudeInstalledFile, JSON.stringify(nativeData, null, 2), 'utf8');
+    this._clearClaudeInstalledPluginIndex();
     this._invalidatePluginList();
     this._setClaudePluginEnabled(name, marketplace, true);
   }
@@ -1533,11 +1638,7 @@ class PluginsService {
     }
 
     const value = this._listPluginsUncached(options);
-    this._pluginListCache.set(key, {
-      value: this._clone(value),
-      cachedAt: now,
-      generation: this._pluginListGeneration
-    });
+    this._rememberPluginList(key, value, now);
     return this._clone(value);
   }
 
@@ -1675,15 +1776,12 @@ class PluginsService {
               let repoId = install.repoId || '';
 
               if (install.installPath && fs.existsSync(install.installPath)) {
-                const manifestPath = path.join(install.installPath, 'plugin.json');
-                if (fs.existsSync(manifestPath)) {
-                  try {
-                    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-                    description = manifest.description || '';
-                  } catch (err) {
-                    // Ignore parse errors
-                  }
-                }
+                const manifest = this._readLocalManifest(install.installPath, [
+                  'plugin.json',
+                  '.claude-plugin/plugin.json',
+                  'package.json'
+                ]);
+                description = manifest?.description || '';
 
                 const repoSourceMeta = this.readRepoSourceMeta(install.installPath) || {};
                 repoUrl = repoUrl || repoSourceMeta.repoUrl || '';
@@ -1762,9 +1860,10 @@ class PluginsService {
    */
   getPlugin(name, options = {}) {
     if (this._isDsh()) {
-      return this.listPlugins(options).plugins.find(plugin => (
+      const plugin = this.listPlugins(options).plugins.find(plugin => (
         plugin.key === name || plugin.pluginId === name || plugin.name === name
-      )) || null;
+      ));
+      return plugin ? this.sanitizePluginDetail(plugin) : null;
     }
     if (this._isCodex()) {
       const plugin = this.listPlugins().plugins.find(p => p.name === name || `${p.name}@${p.marketplace}` === name);
@@ -1785,7 +1884,7 @@ class PluginsService {
     if (this._isOpenCode()) {
       const plugin = this.listPlugins().plugins.find(p => p.name === name || p.directory === name);
       if (!plugin) return null;
-      return plugin;
+      return this.sanitizePluginDetail(plugin);
     }
 
     if (this._isOmp()) {
@@ -1793,7 +1892,7 @@ class PluginsService {
         p.pluginId === name || p.id === name || p.name === name
       );
       if (!plugin) return null;
-      return plugin;
+      return this.sanitizePluginDetail(plugin);
     }
 
     const plugin = getPlugin(name);
@@ -1806,16 +1905,12 @@ class PluginsService {
 
     let manifest = null;
     if (fs.existsSync(manifestPath)) {
-      try {
-        manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-      } catch (err) {
-        // Ignore parse errors
-      }
+      manifest = this._readLocalManifest(pluginDir, ['plugin.json']);
     }
 
     return {
       name,
-      ...plugin,
+      ...this.sanitizePluginDetail(plugin),
       description: manifest?.description || '',
       author: manifest?.author || '',
       commands: manifest?.commands || [],
@@ -2374,6 +2469,7 @@ class PluginsService {
               delete data.plugins[key];
             }
             fs.writeFileSync(this.claudeInstalledFile, JSON.stringify(data, null, 2), 'utf8');
+            this._clearClaudeInstalledPluginIndex();
             this._invalidatePluginList();
             removed = true;
           }
@@ -2457,22 +2553,12 @@ class PluginsService {
 
     // Claude: store enabled state in CTX registry
     // First check if plugin exists in native installed_plugins.json
-    let pluginExists = false;
     const baseName = name.split('/').pop();
-    if (fs.existsSync(this.claudeInstalledFile)) {
-      try {
-        const data = JSON.parse(fs.readFileSync(this.claudeInstalledFile, 'utf8'));
-        if (data.plugins) {
-          for (const key of Object.keys(data.plugins)) {
-            const { name: pluginName } = splitPluginMarketplaceKey(key);
-            if (pluginName === name || key === name || pluginName === baseName) {
-              pluginExists = true;
-              break;
-            }
-          }
-        }
-      } catch (e) { /* ignore */ }
-    }
+    const installedEntries = this._readClaudeInstalledPluginIndex();
+    const installedMatch = installedEntries.find(entry => (
+      entry.name === name || entry.key === name || entry.name === baseName
+    ));
+    let pluginExists = Boolean(installedMatch);
 
     // Also check legacy registry
     const legacyPlugin = getPlugin(name);
@@ -2494,20 +2580,7 @@ class PluginsService {
     } catch (e) {
       console.warn('[PluginsService] Failed to update plugin registry:', e.message);
     }
-    if (fs.existsSync(this.claudeInstalledFile)) {
-      try {
-        const data = JSON.parse(fs.readFileSync(this.claudeInstalledFile, 'utf8'));
-        for (const key of Object.keys(data.plugins || {})) {
-          const parsed = splitPluginMarketplaceKey(key);
-          if (parsed.name === name || key === name || parsed.name === baseName) {
-            matchedMarketplace = parsed.marketplace || '';
-            break;
-          }
-        }
-      } catch {
-        // ignore
-      }
-    }
+    matchedMarketplace = installedMatch?.marketplace || '';
     this._setClaudePluginEnabled(baseName || name, matchedMarketplace, enabled);
 
     return {
@@ -3309,7 +3382,7 @@ class PluginsService {
           : readmeCandidates.map(candidate => path.join(plugin.installPath, candidate));
         for (const candidatePath of localCandidates) {
           if (fs.existsSync(candidatePath)) {
-            return fs.readFileSync(candidatePath, 'utf8');
+            return readTextFileLimited(candidatePath, MAX_PLUGIN_DETAIL_BYTES).text;
           }
         }
       }
@@ -3361,7 +3434,7 @@ class PluginsService {
       for (const candidate of readmeCandidates) {
         const cachedReadme = this._readCachedRepoFile(repo, candidate, { scope, cwd });
         if (cachedReadme !== null) {
-          if (cacheRemote) readmeCache.set(this._pluginReadmeCacheKey(plugin), cachedReadme);
+          if (cacheRemote) this._setMarketReadme(this._pluginReadmeCacheKey(plugin), cachedReadme);
           return cachedReadme;
         }
       }
@@ -3371,10 +3444,11 @@ class PluginsService {
       for (const candidate of readmeCandidates) {
         try {
           const readme = await this.fetchRepoFileContent(repo, candidate);
+          const boundedReadme = truncateUtf8(readme, MAX_PLUGIN_DETAIL_BYTES).text;
           if (cacheRemote && typeof readme === 'string') {
-            readmeCache.set(this._pluginReadmeCacheKey(plugin), readme);
+            this._setMarketReadme(this._pluginReadmeCacheKey(plugin), boundedReadme);
           }
-          return readme;
+          return boundedReadme;
         } catch {
           // try next candidate
         }
@@ -3706,16 +3780,16 @@ class PluginsService {
     const disk = this.loadMarketCacheEnvelope();
     if (!forceRefresh && Array.isArray(disk?.plugins)) {
       const diskPlugins = this.prepareMarketPlugins(disk.plugins);
-      this._marketCacheByKey.set(key, {
-        plugins: diskPlugins,
-        fetchedAt: disk.fetchedAt,
-        reposFingerprint: disk.reposFingerprint || reposFingerprint
-      });
+      this._rememberMarketPlugins(
+        key,
+        diskPlugins,
+        disk.fetchedAt,
+        disk.reposFingerprint || reposFingerprint
+      );
       this._marketCache = diskPlugins;
       this._marketFetchedAt = disk.fetchedAt;
       this._marketRepoFingerprint = disk.reposFingerprint || reposFingerprint;
-      this._marketReadmeCache = new Map(Object.entries(disk.readmes || {}));
-      this._marketReadmeCacheLoaded = true;
+      this._loadMarketReadmes(disk.readmes || {});
       return this._clone(diskPlugins);
     }
 
@@ -3729,11 +3803,7 @@ class PluginsService {
         this._marketCache = Array.isArray(plugins) ? plugins : [];
         this._marketFetchedAt = this._marketLastUsedStale ? 0 : Date.now();
         this._marketRepoFingerprint = reposFingerprint;
-        this._marketCacheByKey.set(key, {
-          plugins: this._marketCache,
-          fetchedAt: this._marketFetchedAt,
-          reposFingerprint
-        });
+        this._rememberMarketPlugins(key, this._marketCache, this._marketFetchedAt, reposFingerprint);
         if (!this._marketLastUsedStale) {
           this.saveMarketCacheToFile(this._marketCache, this._marketFetchedAt, reposFingerprint);
         }
@@ -3809,15 +3879,15 @@ class PluginsService {
         const previousPlugins = this.prepareMarketPlugins(previousEnvelope.plugins);
         this._marketCache = previousPlugins;
         this._marketCacheByKey.clear();
-        this._marketCacheByKey.set(this._marketKey(refreshOptions), {
-          plugins: previousPlugins,
-          fetchedAt: previousEnvelope.fetchedAt || 0,
-          reposFingerprint: previousEnvelope.reposFingerprint || null
-        });
+        this._rememberMarketPlugins(
+          this._marketKey(refreshOptions),
+          previousPlugins,
+          previousEnvelope.fetchedAt || 0,
+          previousEnvelope.reposFingerprint || null
+        );
         this._marketFetchedAt = previousEnvelope.fetchedAt || 0;
         this._marketRepoFingerprint = previousEnvelope.reposFingerprint || null;
-        this._marketReadmeCache = new Map(Object.entries(previousEnvelope.readmes || {}));
-        this._marketReadmeCacheLoaded = true;
+        this._loadMarketReadmes(previousEnvelope.readmes || {});
         this.saveMarketCacheToFile(
           previousEnvelope.plugins,
           previousEnvelope.fetchedAt,
@@ -4033,4 +4103,11 @@ class PluginsService {
   }
 }
 
-module.exports = { PluginsService };
+module.exports = {
+  PluginsService,
+  MAX_PLUGIN_DETAIL_BYTES,
+  MAX_PLUGIN_MANIFEST_BYTES,
+  MAX_PLUGIN_LIST_CACHE_ENTRIES,
+  MAX_MARKET_CACHE_ENTRIES,
+  MAX_MARKET_README_CACHE_ENTRIES
+};

@@ -149,24 +149,6 @@ function createDriver(context = {}) {
         { authSourceType: 'dsh' }
       );
     }),
-    speedTestAll: request => withAsyncResult(request, 'speedTestAll', async () => {
-      const { testMultipleChannels } = require('../../../server/services/speed-test');
-      const body = bodyOf(request);
-      const channels = implementation.getServiceInstance().getEnabledChannels();
-      const groups = new Map();
-      for (const channel of channels) {
-        const type = channelTypeForSpeed(channel);
-        const group = groups.get(type) || [];
-        group.push(channel);
-        groups.set(type, group);
-      }
-      const groupedResults = await Promise.all([...groups.entries()].map(([type, group]) => (
-        testMultipleChannels(group, body.timeout, type, body.concurrency)
-      )));
-      const resultById = new Map(groupedResults.flat().map(result => [result.channelId, result]));
-      const results = channels.map(channel => resultById.get(channel.id)).filter(Boolean);
-      return { results };
-    }),
     saveOrder: request => withResult(request, 'order', () => {
       const body = bodyOf(request);
       implementation.getServiceInstance().saveChannelOrder(body.order || body.ids || []);

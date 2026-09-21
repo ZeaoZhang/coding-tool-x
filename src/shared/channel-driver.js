@@ -202,6 +202,22 @@ function createChannelDriver({
       return failed(platform, capability, operation, error);
     }
   };
+  driver.speedTest = async (request = {}) => {
+    const operation = 'speedTest';
+    const channelId = request?.params?.channelId || request?.channelId;
+    const body = request?.body && typeof request.body === 'object' ? request.body : request;
+    if (!channelId) return invalid(platform, capability, operation, new Error('Channel id is required'));
+    try {
+      const channel = await findChannelById(channelId);
+      if (!channel) return invalid(platform, capability, operation, new Error(`Channel not found: ${channelId}`));
+      const { testChannelSpeed } = require('../server/services/speed-test');
+      const channelType = resolveModelListType(platform, channel, modelListType);
+      const data = await testChannelSpeed(channel, body?.timeout, channelType, { authSourceType: platform });
+      return ok(platform, capability, operation, data);
+    } catch (error) {
+      return failed(platform, capability, operation, error);
+    }
+  };
   driver.list = (...args) => call('list', listMethod, args, sanitizeChannels);
   driver.getEnabled = (...args) => call('getEnabled', 'getEnabledChannels', args, channels => sanitizeChannels(channels).channels);
   driver.create = (input, ...rest) => {

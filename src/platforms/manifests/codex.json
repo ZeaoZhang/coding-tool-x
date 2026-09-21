@@ -350,14 +350,6 @@
       },
       {
         "method": "POST",
-        "path": "/channels/speed-test-all",
-        "capability": "channels",
-        "operation": "speedTestAll",
-        "request": "default",
-        "response": "default"
-      },
-      {
-        "method": "POST",
         "path": "/channels/probe-models",
         "capability": "channels",
         "operation": "probeModels",

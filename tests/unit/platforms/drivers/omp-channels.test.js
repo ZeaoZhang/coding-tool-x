@@ -1,4 +1,5 @@
 'use strict';
+
 const { createDriver } = require('../../../../src/platforms/drivers/omp/channels');
 
 describe('OMP channels Driver', () => {
@@ -33,4 +34,5 @@ describe('OMP channels Driver', () => {
     });
     expect(getCatalogMetadata).toHaveBeenCalledWith({ providerKey: 'deepseek' });
   });
+
 });

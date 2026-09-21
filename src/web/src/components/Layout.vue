@@ -219,9 +219,6 @@
     <!-- Prompts Drawer -->
     <PromptsDrawer v-if="isDrawerLoaded('prompts')" v-model:visible="showPromptsDrawer" />
 
-    <!-- Speed Test Drawer -->
-    <SpeedTestDrawer v-if="isDrawerLoaded('speed-test')" v-model:visible="showSpeedTestDrawer" />
-
     <!-- OpenCode Gateway Convert Drawer -->
     <GatewayConvertDrawer
       v-if="currentChannel === 'opencode' && isDrawerLoaded('gateway')"
@@ -449,7 +446,6 @@ const ChatHistoryDrawer = defineAsyncComponent(() => import('./ChatHistoryDrawer
 const SettingsDrawer = defineAsyncComponent(() => import('./SettingsDrawer.vue'))
 const McpDrawer = defineAsyncComponent(() => import('./McpDrawer.vue'))
 const PromptsDrawer = defineAsyncComponent(() => import('./PromptsDrawer.vue'))
-const SpeedTestDrawer = defineAsyncComponent(() => import('./SpeedTestDrawer.vue'))
 const GatewayConvertDrawer = defineAsyncComponent(() => import('./GatewayConvertDrawer.vue'))
 const SkillsDrawer = defineAsyncComponent(() => import('./SkillsDrawer.vue'))
 const CommandsDrawer = defineAsyncComponent(() => import('./CommandsDrawer.vue'))
@@ -481,7 +477,6 @@ const APP_NAME = 'coding-tool-x'
 const moreMenuOptions = [
   { label: '配置模板', key: 'config-templates' },
   { label: '配置导入/导出', key: 'config-export' },
-  { label: '渠道速度测试', key: 'speed-test' },
   { type: 'divider', key: 'divider-1' },
   { label: '使用帮助', key: 'help' },
   { label: 'GitHub 仓库', key: 'github' }
@@ -509,7 +504,6 @@ const showFavoritesDrawer = ref(false)
 const showSettingsDrawer = ref(false)
 const showMcpDrawer = ref(false)
 const showPromptsDrawer = ref(false)
-const showSpeedTestDrawer = ref(false)
 const showGatewayConvertDrawer = ref(false)
 const showHelpModal = ref(false)
 const showWorkspaceDrawer = ref(false)
@@ -725,10 +719,6 @@ function openPromptsDrawer() {
   openDrawer('prompts', showPromptsDrawer)
 }
 
-function openSpeedTestDrawer() {
-  openDrawer('speed-test', showSpeedTestDrawer)
-}
-
 function openWorkspaceDrawer() {
   openDrawer('workspace', showWorkspaceDrawer)
 }
@@ -748,10 +738,6 @@ function handleMoreMenuSelect(key) {
   }
   if (key === 'config-export') {
     openConfigExportDrawer()
-    return
-  }
-  if (key === 'speed-test') {
-    openSpeedTestDrawer()
     return
   }
   if (key === 'help') {

@@ -17,6 +17,43 @@ test('accepts a valid generic platform manifest', () => {
   expect(result.errors).toEqual([]);
 });
 
+test('accepts declarative native config snapshots for a generic CLI', () => {
+  const result = validateManifest({
+    key: 'demo-cli',
+    label: 'Demo CLI',
+    command: 'demo',
+    paths: { home: '~/.demo', config: '{home}/config.json' },
+    nativeConfigSnapshot: {
+      config: { path: 'config', format: 'json', mode: 384 }
+    },
+    capabilities: { nativeConfig: 'generic-native-config' }
+  });
+
+  expect(result.valid).toBe(true);
+  expect(result.errors).toEqual([]);
+});
+
+test('requires declarations and safe paths for generic native config snapshots', () => {
+  expect(validateManifest({
+    key: 'demo-cli',
+    label: 'Demo CLI',
+    command: 'demo',
+    capabilities: { nativeConfig: 'generic-native-config' }
+  }).valid).toBe(false);
+
+  const result = validateManifest({
+    key: 'demo-cli',
+    label: 'Demo CLI',
+    command: 'demo',
+    nativeConfigSnapshot: {
+      config: { path: '../config.json', format: 'json' }
+    },
+    capabilities: {}
+  });
+  expect(result.valid).toBe(false);
+  expect(normalizeManifestError(result.errors)).toContain('safe relative path');
+});
+
 test('accepts sessionGlob but still rejects unknown manifest fields', () => {
   const withGlob = validateManifest({
     key: 'demo-cli',
@@ -60,7 +97,8 @@ test('rejects generic drivers assigned to incompatible capabilities', () => {
   const cases = [
     ['sessions', 'generic-filesystem'],
     ['resourceSync', 'generic-jsonl'],
-    ['proxy', 'generic-openai-compatible']
+    ['proxy', 'generic-openai-compatible'],
+    ['mcp', 'generic-native-config']
   ];
   for (const [capability, driver] of cases) {
     const result = validateManifest({ key: `bad-${capability}`, label: 'Bad', command: 'bad', capabilities: { [capability]: driver } });
