@@ -201,6 +201,15 @@ function makeChannel(id, overrides = {}) {
   });
 
 describe('managed provider activation lifecycle', () => {
+  it('removes only managed provider entries when all static channels are disabled', () => {
+    seedChannels([makeChannel('channel-a')]);
+
+    service.disableAllChannels();
+
+    expect(JSON.parse(fs.readFileSync(channelsPath, 'utf8')).channels[0].enabled).toBe(false);
+    expect(removeManagedOmpProviders).toHaveBeenCalledTimes(1);
+  });
+
   it('persists managed mode intent independently from ctx provider files', () => {
     expect(service.isManagedOmpModeEnabled()).toBe(false);
 
@@ -249,7 +258,7 @@ describe('managed provider activation lifecycle', () => {
         model: 'new-model',
         models: [{ id: 'new-model' }]
       })
-    ], {});
+    ], { knownProviderIds: ['ctx-channel-a', 'ctx-channel-b'] });
     expect(removeManagedOmpProviders).not.toHaveBeenCalled();
   });
 
@@ -268,7 +277,7 @@ describe('managed provider activation lifecycle', () => {
         providerApi: 'openai-codex-responses',
         gatewaySourceType: 'codex'
       })
-    ], {});
+    ], { knownProviderIds: ['ctx-edge'] });
   });
 
   it('accepts the empty balance token sent with synced OAuth channels', () => {
@@ -333,7 +342,8 @@ describe('managed provider activation lifecycle', () => {
           port: 20092,
           secret: 'gateway-secret'
         },
-        activeChannelId: 'channel-a'
+        activeChannelId: 'channel-a',
+        knownProviderIds: ['ctx-channel-a']
       }
     );
   });
@@ -364,7 +374,7 @@ describe('managed provider activation lifecycle', () => {
 
     expect(writeManagedOmpProviders).toHaveBeenCalledWith([
       expect.objectContaining({ id: 'channel-a' })
-    ], {});
+    ], { knownProviderIds: ['ctx-channel-a'] });
     expect(removeManagedOmpProviders).not.toHaveBeenCalled();
   });
   it('keeps the persisted gateway secret after managed mode is disabled', () => {

@@ -117,7 +117,7 @@ describe('channels service Claude settings integration', () => {
       proxyUrl: 'http://proxy.internal:8080'
     });
 
-    expect(clearNativeOAuthMock).toHaveBeenCalledWith('claude');
+    expect(clearNativeOAuthMock).not.toHaveBeenCalled();
     expect(readJson(settingsPath)).toEqual({
       env: {
         ANTHROPIC_BASE_URL: 'https://claude.example.com',
@@ -461,5 +461,15 @@ describe('channels service Claude settings integration', () => {
       { id: 'oauth-disabled', authMode: 'oauth', enabled: false },
       { id: 'oauth-enabled', authMode: 'oauth', enabled: true }
     ])).toEqual(['oauth-enabled']);
+  });
+
+  test('clears managed native channel settings when all static channels are disabled', () => {
+    const channel = channelsService.createChannel('Primary', 'https://primary.example', 'key-primary');
+    clearClaudeChannelConfigMock.mockClear();
+
+    channelsService.disableAllChannels();
+
+    expect(channelsService.getAllChannels()[0].enabled).toBe(false);
+    expect(clearClaudeChannelConfigMock).toHaveBeenCalledWith([channel.proxyUrl]);
   });
 });

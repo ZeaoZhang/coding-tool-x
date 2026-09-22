@@ -282,6 +282,10 @@ function updateChannel(channelId, updates) {
   if (!isProxyRunning) {
     if (oldChannel.enabled === false && merged.enabled !== false) {
       syncManagedChannelConfig(data.channels, merged);
+    } else if (oldChannel.enabled !== false && merged.enabled === false) {
+      const activeChannel = resolveCurrentManagedChannel(data.channels);
+      if (activeChannel) syncManagedChannelConfig(data.channels, activeChannel);
+      else clearManagedChannelConfig();
     } else {
       const activeChannel = resolveCurrentManagedChannel(data.channels);
       if (merged.enabled !== false && activeChannel?.id === merged.id) {
@@ -487,9 +491,11 @@ async function getEffectiveApiKey(channel) {
 }
 
 function disableAllChannels() {
+  const proxyRunning = getOpenCodeProxyRunning();
   const data = loadChannels();
   data.channels.forEach(ch => { ch.enabled = false; });
   saveChannels(data);
+  if (!proxyRunning) clearManagedChannelConfig();
 }
 
 function getCurrentOpenCodeProviderId(config = {}) {

@@ -4,11 +4,12 @@ const fs = require('fs');
 const path = require('path');
 const { getPlatformStatePath: resolveStatePath } = require('../../../config/paths');
 const BaseChannelService = require('../../../shared/base-channel-service');
+const { writeYamlFile } = require('../../../utils/native-config-patcher');
 const {
   resolvePaths,
   readYamlFile,
   writeAtomic,
-  dumpYaml,
+  DSH_YAML_SOURCE_TAGS,
   isObject
 } = require('./common');
 
@@ -202,7 +203,7 @@ class DshChannelService extends BaseChannelService {
   }
 
   _activeChannel(channels = []) {
-    return channels.find(channel => channel.enabled !== false) || channels[0] || null;
+    return channels.find(channel => channel.enabled !== false) || null;
   }
 
   _onAfterCreate(channel) {
@@ -217,9 +218,8 @@ class DshChannelService extends BaseChannelService {
       this._removeNativeProvider(oldChannel.providerKey);
     }
     const active = this._activeChannel(allChannels);
-    if (active?.id === nextChannel.id || (oldChannel.enabled !== false && nextChannel.enabled === false)) {
-      if (active) this._applyToNativeSettings(active);
-    }
+    if (active) this._applyToNativeSettings(active);
+    else this._removeNativeProvider(nextChannel.providerKey);
   }
 
   _onAfterDelete(channel, allChannels) {
@@ -234,7 +234,11 @@ class DshChannelService extends BaseChannelService {
   }
 
   _writeNativeSettings(settings) {
-    writeAtomic(this.nativePaths.settings, dumpYaml(settings), 0o600);
+    writeYamlFile(this.nativePaths.settings, settings, {
+      atomic: true,
+      mode: 0o600,
+      customTags: DSH_YAML_SOURCE_TAGS
+    });
   }
 
   _removeNativeProvider(providerKey) {
@@ -246,6 +250,15 @@ class DshChannelService extends BaseChannelService {
     if (!Object.prototype.hasOwnProperty.call(providers, key)) return;
     delete providers[key];
     settings['llm-pi-ai'] = { ...llm, providers };
+    const selected = isObject(settings['agent-default-model'])
+      ? { ...settings['agent-default-model'] }
+      : null;
+    if (selected?.provider === key) {
+      delete selected.provider;
+      delete selected.model;
+      if (Object.keys(selected).length > 0) settings['agent-default-model'] = selected;
+      else delete settings['agent-default-model'];
+    }
     this._writeNativeSettings(settings);
   }
 
@@ -255,7 +268,11 @@ class DshChannelService extends BaseChannelService {
     if (!isObject(credentials.refs)) credentials.refs = {};
     credentials.refs[channel.apiKeyEnv] = channel.apiKey || '';
     if (!isObject(credentials.records)) credentials.records = {};
-    writeAtomic(this.nativePaths.credentials, dumpYaml(credentials), 0o600);
+    writeYamlFile(this.nativePaths.credentials, credentials, {
+      atomic: true,
+      mode: 0o600,
+      customTags: DSH_YAML_SOURCE_TAGS
+    });
   }
 
   _providerEntry(channel, baseUrl = channel.baseUrl, models = channel.models) {
@@ -273,7 +290,10 @@ class DshChannelService extends BaseChannelService {
     const settings = this._nativeSettings();
     const llm = isObject(settings['llm-pi-ai']) ? { ...settings['llm-pi-ai'] } : {};
     const providers = isObject(llm.providers) ? { ...llm.providers } : {};
-    providers[channel.providerKey] = this._providerEntry(channel);
+    providers[channel.providerKey] = {
+      ...(isObject(providers[channel.providerKey]) ? providers[channel.providerKey] : {}),
+      ...this._providerEntry(channel)
+    };
     settings['llm-pi-ai'] = { ...llm, providers };
     settings['agent-default-model'] = {
       ...(isObject(settings['agent-default-model']) ? settings['agent-default-model'] : {}),

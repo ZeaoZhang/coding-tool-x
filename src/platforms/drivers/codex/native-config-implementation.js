@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const toml = require('toml');
-const tomlStringify = require('@iarna/toml').stringify;
+const { writeTomlFile } = require('../../../utils/native-config-patcher');
 const { NATIVE_PATHS } = require('../../../config/paths');
 const { syncCodexUserEnvironment } = require('./env-manager');
 const DEFAULT_NATIVE_PATHS = NATIVE_PATHS.codex;
@@ -83,53 +83,10 @@ function readConfig() {
   }
 }
 
-// 将配置对象转换为 TOML 字符串
-function configToToml(config) {
-  let content = `# Codex Configuration
-# Managed by Coding-Tool (Proxy Mode)
-
-`;
-
-  // 写入顶级字段
-  for (const [key, value] of Object.entries(config)) {
-    if (key === 'model_providers') continue; // 稍后处理
-    if (typeof value === 'string') {
-      content += `${key} = "${value}"\n`;
-    } else if (typeof value === 'boolean') {
-      content += `${key} = ${value}\n`;
-    } else if (typeof value === 'number') {
-      content += `${key} = ${value}\n`;
-    }
-  }
-
-  content += '\n';
-
-  // 写入 model_providers
-  if (config.model_providers) {
-    for (const [providerKey, providerConfig] of Object.entries(config.model_providers)) {
-      content += `[model_providers.${providerKey}]\n`;
-      for (const [key, value] of Object.entries(providerConfig)) {
-        if (typeof value === 'string') {
-          content += `${key} = "${value}"\n`;
-        } else if (typeof value === 'boolean') {
-          content += `${key} = ${value}\n`;
-        } else if (typeof value === 'number') {
-          content += `${key} = ${value}\n`;
-        }
-      }
-      content += '\n';
-    }
-  }
-
-  return content;
-}
-
 // 写入 config.toml
 function writeConfig(config) {
   try {
-    const safeConfig = JSON.parse(JSON.stringify(config || {}));
-    const content = tomlStringify(safeConfig);
-    fs.writeFileSync(getConfigPath(), content, 'utf8');
+    writeTomlFile(getConfigPath(), config || {}, { atomic: true });
   } catch (err) {
     throw new Error('Failed to write config.toml: ' + err.message);
   }
@@ -254,12 +211,7 @@ function setProxyConfig(proxyPort) {
     }
 
     // 读取当前配置（不存在时使用空配置）
-    let config;
-    try {
-      config = readConfig();
-    } catch (err) {
-      config = {};
-    }
+    const config = configExists() ? readConfig() : {};
 
     // 设置 model_provider 为 proxy
     config.model_provider = 'cc-proxy';

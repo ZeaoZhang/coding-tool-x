@@ -3,8 +3,9 @@ const path = require('path');
 const BaseChannelService = require('../../../shared/base-channel-service');
 const { isProxyConfig } = require('./native-config-implementation');
 const { PATHS, NATIVE_PATHS } = require('../../../config/paths');
-const { clearNativeOAuth, readNativeOAuth, clearClaudeChannelConfig } = require('../../native-oauth-adapters');
+const { readNativeOAuth, clearClaudeChannelConfig } = require('../../native-oauth-adapters');
 const { isWindowsLikePlatform } = require('../../../utils/home-dir');
+const { updateJsoncFile } = require('../../../utils/native-config-patcher');
 const { normalizeGatewaySourceType } = require('../../../shared/proxy-utils');
 const {
   createSkippedResult,
@@ -96,62 +97,46 @@ function buildApiKeyHelperCommand(value) {
 
 // ── Claude 原生设置写入 ──
 
-function updateClaudeSettingsWithModelConfig(channel) {
-  clearNativeOAuth('claude');
+function updateClaudeSettingsWithModelConfig(channel, managedChannels = []) {
   const settingsPath = getClaudeSettingsPath();
-  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-
-  let settings = {};
-  if (fs.existsSync(settingsPath)) {
-    settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-  }
-
-  if (!settings.env) {
-    settings.env = {};
-  }
-
   const { baseUrl, apiKey, modelConfig, presetId, proxyUrl } = channel;
+  const managedProxyUrls = new Set([
+    ...managedChannels.map(item => item?.proxyUrl),
+    ...service.loadChannels().channels.map(item => item?.proxyUrl)
+  ].map(value => String(value || '').trim()).filter(Boolean));
+  updateJsoncFile(settingsPath, (settings) => {
+    if (!settings.env || typeof settings.env !== 'object' || Array.isArray(settings.env)) settings.env = {};
+    settings.env.ANTHROPIC_BASE_URL = baseUrl;
+    settings.env.ANTHROPIC_API_KEY = apiKey;
+    delete settings.env.ANTHROPIC_AUTH_TOKEN;
+    delete settings.env.CLAUDE_CODE_OAUTH_TOKEN;
 
-  settings.env.ANTHROPIC_BASE_URL = baseUrl;
-  settings.env.ANTHROPIC_API_KEY = apiKey;
-  delete settings.env.ANTHROPIC_AUTH_TOKEN;
-  delete settings.env.CLAUDE_CODE_OAUTH_TOKEN;
-
-  if (presetId && presetId !== 'official' && modelConfig) {
-    if (modelConfig.model) {
-      settings.env.ANTHROPIC_MODEL = modelConfig.model;
+    const modelKeys = {
+      ANTHROPIC_MODEL: modelConfig?.model,
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: modelConfig?.haikuModel,
+      ANTHROPIC_DEFAULT_SONNET_MODEL: modelConfig?.sonnetModel,
+      ANTHROPIC_DEFAULT_OPUS_MODEL: modelConfig?.opusModel
+    };
+    if (presetId && presetId !== 'official' && modelConfig) {
+      Object.entries(modelKeys).forEach(([key, value]) => {
+        if (value) settings.env[key] = value;
+        else delete settings.env[key];
+      });
+    } else {
+      Object.keys(modelKeys).forEach(key => delete settings.env[key]);
     }
-    if (modelConfig.haikuModel) {
-      settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = modelConfig.haikuModel;
-    }
-    if (modelConfig.sonnetModel) {
-      settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL = modelConfig.sonnetModel;
-    }
-    if (modelConfig.opusModel) {
-      settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL = modelConfig.opusModel;
-    }
-  } else {
-    delete settings.env.ANTHROPIC_MODEL;
-    delete settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
-    delete settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
-    delete settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
-  }
 
-  if (proxyUrl) {
-    settings.env.HTTPS_PROXY = proxyUrl;
-    settings.env.HTTP_PROXY = proxyUrl;
-  } else {
-    delete settings.env.HTTPS_PROXY;
-    delete settings.env.HTTP_PROXY;
-    delete settings.env.NO_PROXY;
-  }
-
-  if (settings.env && Object.keys(settings.env).length === 0) {
-    delete settings.env;
-  }
-
-  settings.apiKeyHelper = buildApiKeyHelperCommand(apiKey);
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+    if (proxyUrl) {
+      settings.env.HTTPS_PROXY = proxyUrl;
+      settings.env.HTTP_PROXY = proxyUrl;
+    } else {
+      ['HTTPS_PROXY', 'HTTP_PROXY'].forEach((key) => {
+        if (managedProxyUrls.has(String(settings.env[key] || '').trim())) delete settings.env[key];
+      });
+    }
+    if (Object.keys(settings.env).length === 0) delete settings.env;
+    settings.apiKeyHelper = buildApiKeyHelperCommand(apiKey);
+  });
 }
 
 function createClaudeOAuthError(message, code, statusCode) {
@@ -213,35 +198,20 @@ function validateClaudeOAuthMutation(channel, operation) {
 
 function updateClaudeSettings(baseUrl, apiKey) {
   const settingsPath = getClaudeSettingsPath();
-  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-
-  let settings = {};
-  if (fs.existsSync(settingsPath)) {
-    settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-  }
-
-  if (!settings.env) {
-    settings.env = {};
-  }
-
-  const useAuthToken = settings.env.ANTHROPIC_AUTH_TOKEN !== undefined;
-  const useApiKey = settings.env.ANTHROPIC_API_KEY !== undefined;
-
-  settings.env.ANTHROPIC_BASE_URL = baseUrl;
-
-  if (useAuthToken || (!useAuthToken && !useApiKey)) {
-    settings.env.ANTHROPIC_AUTH_TOKEN = apiKey;
-    delete settings.env.ANTHROPIC_API_KEY;
-  } else {
-    settings.env.ANTHROPIC_API_KEY = apiKey;
-  }
-
-  if (settings.env && Object.keys(settings.env).length === 0) {
-    delete settings.env;
-  }
-
-  settings.apiKeyHelper = buildApiKeyHelperCommand(apiKey);
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+  updateJsoncFile(settingsPath, (settings) => {
+    if (!settings.env || typeof settings.env !== 'object' || Array.isArray(settings.env)) settings.env = {};
+    const useAuthToken = settings.env.ANTHROPIC_AUTH_TOKEN !== undefined;
+    const useApiKey = settings.env.ANTHROPIC_API_KEY !== undefined;
+    settings.env.ANTHROPIC_BASE_URL = baseUrl;
+    if (useAuthToken || (!useAuthToken && !useApiKey)) {
+      settings.env.ANTHROPIC_AUTH_TOKEN = apiKey;
+      delete settings.env.ANTHROPIC_API_KEY;
+    } else {
+      settings.env.ANTHROPIC_API_KEY = apiKey;
+    }
+    if (Object.keys(settings.env).length === 0) delete settings.env;
+    settings.apiKeyHelper = buildApiKeyHelperCommand(apiKey);
+  });
 }
 
 function resolveCurrentManagedChannel(channels = []) {
@@ -334,9 +304,9 @@ class ClaudeChannelService extends BaseChannelService {
     this._cacheInitialized = true;
   }
 
-  _onAfterCreate(channel, _allChannels) {
+  _onAfterCreate(channel, allChannels) {
     if (!isClaudeProxyRunning() && channel.enabled !== false && !isOpenAiCompatibleGateway(channel)) {
-      this._applyToNativeSettings(channel);
+      this._applyToNativeSettings(channel, allChannels);
     }
   }
 
@@ -347,7 +317,7 @@ class ClaudeChannelService extends BaseChannelService {
 
     if (oldChannel.enabled === false && nextChannel.enabled !== false) {
       if (!isOpenAiCompatibleGateway(nextChannel)) {
-        this._applyToNativeSettings(nextChannel);
+        this._applyToNativeSettings(nextChannel, [...allChannels, oldChannel]);
       }
       return;
     }
@@ -358,19 +328,38 @@ class ClaudeChannelService extends BaseChannelService {
       && activeChannel?.id === nextChannel.id
       && !isOpenAiCompatibleGateway(nextChannel)
     ) {
-      this._applyToNativeSettings(nextChannel);
+      this._applyToNativeSettings(nextChannel, [...allChannels, oldChannel]);
+      return;
+    }
+    if (oldChannel.enabled !== false && nextChannel.enabled === false) {
+      if (activeChannel && !isOpenAiCompatibleGateway(activeChannel)) {
+        this._applyToNativeSettings(activeChannel, [...allChannels, oldChannel]);
+      } else if (!activeChannel) {
+        clearClaudeChannelConfig([...allChannels, oldChannel].map(item => item?.proxyUrl));
+      }
     }
   }
 
-  _onAfterDelete(_channel, allChannels) {
+  _onAfterDelete(channel, allChannels) {
     if (isClaudeProxyRunning()) {
       return;
     }
 
     const activeChannel = resolveCurrentManagedChannel(allChannels);
     if (activeChannel && !isOpenAiCompatibleGateway(activeChannel)) {
-      this._applyToNativeSettings(activeChannel);
+      this._applyToNativeSettings(activeChannel, [...allChannels, channel]);
+    } else if (!activeChannel) {
+      clearClaudeChannelConfig([...allChannels, channel].map(item => item?.proxyUrl));
     }
+  }
+
+  disableAllChannels() {
+    const channels = this.loadChannels().channels;
+    const result = super.disableAllChannels();
+    if (!isClaudeProxyRunning()) {
+      clearClaudeChannelConfig(channels.map(item => item?.proxyUrl));
+    }
+    return result;
   }
 
   applyChannelToSettings(channelId) {
@@ -388,12 +377,12 @@ class ClaudeChannelService extends BaseChannelService {
     return super.applyChannelToSettings(channelId);
   }
 
-  _applyToNativeSettings(channel) {
+  _applyToNativeSettings(channel, managedChannels = []) {
     if (channel.authMode === 'oauth') {
       applyNativeClaudeOAuth(channel);
       return;
     }
-    updateClaudeSettingsWithModelConfig(channel);
+    updateClaudeSettingsWithModelConfig(channel, managedChannels);
   }
 
   getEffectiveApiKey(channel) {

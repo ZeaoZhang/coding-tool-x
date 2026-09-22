@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { NATIVE_PATHS } = require('../../../config/paths');
+const { readJsoncFile, writeJsoncFile, updateEnvFile } = require('../../../utils/native-config-patcher');
 const DEFAULT_NATIVE_PATHS = NATIVE_PATHS.gemini;
 let nativePaths = DEFAULT_NATIVE_PATHS;
 
@@ -64,25 +65,14 @@ function readEnv() {
   }
 }
 
-// 将环境对象转换为 .env 字符串
-function envToString(env) {
-  let content = '';
-  for (const [key, value] of Object.entries(env)) {
-    content += `${key}=${value}\n`;
-  }
-  return content;
-}
-
 // 写入 .env
 function writeEnv(env) {
   try {
-    const content = envToString(env);
-    fs.writeFileSync(getEnvPath(), content, 'utf8');
-
-    // 设置文件权限为 600 (仅所有者可读写)
-    if (process.platform !== 'win32') {
-      fs.chmodSync(getEnvPath(), 0o600);
-    }
+    const managedKeys = ['GOOGLE_GEMINI_BASE_URL', 'GEMINI_API_KEY', 'GEMINI_MODEL'];
+    updateEnvFile(getEnvPath(), Object.fromEntries(managedKeys.map(key => [
+      key,
+      Object.prototype.hasOwnProperty.call(env || {}, key) ? env[key] : undefined
+    ])), { atomic: true, mode: 0o600 });
   } catch (err) {
     throw new Error('Failed to write .env: ' + err.message);
   }
@@ -94,8 +84,7 @@ function readSettings() {
     if (!settingsExists()) {
       return {};
     }
-    const content = fs.readFileSync(getSettingsPath(), 'utf8');
-    return JSON.parse(content);
+    return readJsoncFile(getSettingsPath());
   } catch (err) {
     throw new Error('Failed to read settings.json: ' + err.message);
   }
@@ -104,8 +93,7 @@ function readSettings() {
 // 写入 settings.json
 function writeSettings(settings) {
   try {
-    const content = JSON.stringify(settings, null, 2);
-    fs.writeFileSync(getSettingsPath(), content, 'utf8');
+    writeJsoncFile(getSettingsPath(), settings);
   } catch (err) {
     throw new Error('Failed to write settings.json: ' + err.message);
   }

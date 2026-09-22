@@ -3,8 +3,9 @@ const path = require('path');
 const crypto = require('crypto');
 const { PATHS, NATIVE_PATHS } = require('../../../config/paths');
 const { resolveChannelWebsiteUrl } = require('../../../config/channel-preset-websites');
-const { clearNativeOAuth, readNativeOAuth, clearGeminiChannelConfig } = require('../../native-oauth-adapters');
+const { readNativeOAuth, clearGeminiChannelConfig } = require('../../native-oauth-adapters');
 const { normalizeGatewaySourceType } = require('../../../shared/proxy-utils');
+const { readJsoncFile, updateJsoncFile, updateEnvFile } = require('../../../utils/native-config-patcher');
 const {
   createSkippedResult,
   isLocalProxyBaseUrl,
@@ -84,12 +85,16 @@ function applyNativeGeminiOAuth(channel) {
   clearGeminiChannelConfig();
 
   const settingsPath = configuredNative.settings;
-  const settings = readGeminiSettings();
-  settings.security = settings.security || {};
-  settings.security.auth = settings.security.auth || {};
-  settings.security.auth.selectedType = 'oauth-personal';
-  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+  updateJsoncFile(settingsPath, (settings) => {
+    settings.security = settings.security && typeof settings.security === 'object' && !Array.isArray(settings.security)
+      ? settings.security
+      : {};
+    settings.security.auth = settings.security.auth && typeof settings.security.auth === 'object'
+      && !Array.isArray(settings.security.auth)
+      ? settings.security.auth
+      : {};
+    settings.security.auth.selectedType = 'oauth-personal';
+  });
   console.log(`[Gemini Channels] Applied native OAuth channel ${channel.name}`);
   return channel;
 }
@@ -168,14 +173,11 @@ function readExistingGeminiEnv() {
 
 function writeGeminiEnv(env = {}) {
   const envPath = path.join(getGeminiDir(), '.env');
-  const content = Object.entries(env)
-    .map(([key, value]) => `${key}=${value}`)
-    .join('\n');
-
-  fs.writeFileSync(envPath, content ? `${content}\n` : '', 'utf8');
-  if (process.platform !== 'win32') {
-    fs.chmodSync(envPath, 0o600);
-  }
+  const managedKeys = ['GOOGLE_GEMINI_BASE_URL', 'GEMINI_API_KEY', 'GEMINI_MODEL'];
+  updateEnvFile(envPath, Object.fromEntries(managedKeys.map(key => [
+    key,
+    Object.prototype.hasOwnProperty.call(env, key) ? env[key] : undefined
+  ])), { atomic: true, mode: 0o600 });
 }
 
 // 检查是否在代理模式
@@ -515,8 +517,6 @@ function applyChannelToSettings(channelId, channels = null) {
     return applyNativeGeminiOAuth(channel);
   }
 
-  clearNativeOAuth('gemini');
-
   const geminiDir = getGeminiDir();
 
   if (!fs.existsSync(geminiDir)) {
@@ -532,22 +532,16 @@ function applyChannelToSettings(channelId, channels = null) {
 
   // 确保 settings.json 存在并配置正确的认证模式
   const settingsPath = path.join(geminiDir, 'settings.json');
-  let settings = {};
-
-  if (fs.existsSync(settingsPath)) {
-    try {
-      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-    } catch (err) {
-      console.warn('[Gemini Channels] Failed to read settings.json, creating new');
-    }
-  }
-
-  // 设置认证模式为 gemini-api-key（第三方 API）
-  settings.security = settings.security || {};
-  settings.security.auth = settings.security.auth || {};
-  settings.security.auth.selectedType = 'gemini-api-key';
-
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+  updateJsoncFile(settingsPath, (settings) => {
+    settings.security = settings.security && typeof settings.security === 'object' && !Array.isArray(settings.security)
+      ? settings.security
+      : {};
+    settings.security.auth = settings.security.auth && typeof settings.security.auth === 'object'
+      && !Array.isArray(settings.security.auth)
+      ? settings.security.auth
+      : {};
+    settings.security.auth.selectedType = 'gemini-api-key';
+  });
 
   console.log(`[Gemini Channels] Applied channel ${channel.name} to .env`);
   return channel;
@@ -600,6 +594,17 @@ function writeGeminiConfigForMultiChannel(allChannels) {
     delete env.GEMINI_API_KEY;
     delete env.GEMINI_MODEL;
     writeGeminiEnv(env);
+    const settingsPath = path.join(geminiDir, 'settings.json');
+    if (fs.existsSync(settingsPath)) {
+      updateJsoncFile(settingsPath, (settings) => {
+        const auth = settings.security?.auth;
+        if (auth?.selectedType === 'gemini-api-key') {
+          delete auth.selectedType;
+          if (Object.keys(auth).length === 0) delete settings.security.auth;
+          if (Object.keys(settings.security).length === 0) delete settings.security;
+        }
+      });
+    }
     return;
   }
 
@@ -611,22 +616,13 @@ function writeGeminiConfigForMultiChannel(allChannels) {
 
   // 确保 settings.json 存在并配置正确的认证模式
   const settingsPath = path.join(geminiDir, 'settings.json');
-  let settings = {};
-
-  if (fs.existsSync(settingsPath)) {
-    try {
-      settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-    } catch (err) {
-      console.warn('[Gemini Channels] Failed to read settings.json, creating new');
-    }
-  }
-
-  // 设置认证模式为 gemini-api-key（第三方 API）
-  settings.security = settings.security || {};
-  settings.security.auth = settings.security.auth || {};
-  settings.security.auth.selectedType = 'gemini-api-key';
-
-  fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+  updateJsoncFile(settingsPath, (settings) => {
+    settings.security = settings.security && typeof settings.security === 'object' ? settings.security : {};
+    settings.security.auth = settings.security.auth && typeof settings.security.auth === 'object'
+      ? settings.security.auth
+      : {};
+    settings.security.auth.selectedType = 'gemini-api-key';
+  });
 }
 
 // 获取所有启用的渠道（供调度器使用）
@@ -682,7 +678,7 @@ function disableAllChannels() {
   data.channels.forEach(ch => { ch.enabled = false; });
   saveChannels(data);
   if (!getGeminiProxyState().running) {
-    clearGeminiChannelConfig();
+    writeGeminiConfigForMultiChannel(data.channels);
   }
 }
 
@@ -691,11 +687,7 @@ function readGeminiSettings() {
   if (!settingsPath || !fs.existsSync(settingsPath)) {
     return {};
   }
-  try {
-    return JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-  } catch {
-    return {};
-  }
+  return readJsoncFile(settingsPath);
 }
 
 function normalizeGeminiChannel(channel = {}) {

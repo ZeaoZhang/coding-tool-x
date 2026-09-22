@@ -431,10 +431,10 @@ describe('applyChannelToSettings', () => {
     }));
   });
 
-  it('calls clearNativeOAuth with "gemini"', () => {
+  it('preserves native OAuth credentials when applying an API-key channel', () => {
     const ch = service.createChannel('Zeta', 'https://z.com', 'kz');
     service.applyChannelToSettings(ch.id);
-    expect(clearNativeOAuth).toHaveBeenCalledWith('gemini');
+    expect(clearNativeOAuth).not.toHaveBeenCalled();
   });
 });
 
