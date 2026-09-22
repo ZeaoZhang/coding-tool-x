@@ -428,6 +428,17 @@ describe('applyChannelToSettings', () => {
       id: ch.id
     }));
   });
+
+  it('clears only managed native settings when all static channels are disabled', () => {
+    const channel = service.createChannel('Primary', 'https://primary.example/v1', 'key-primary');
+    clearManagedChannelConfig.mockClear();
+
+    service.disableAllChannels();
+
+    expect(JSON.parse(fs.readFileSync(channelsFile, 'utf8')).channels[0].enabled).toBe(false);
+    expect(clearManagedChannelConfig).toHaveBeenCalledTimes(1);
+    expect(setChannelConfig).toHaveBeenCalledWith(expect.objectContaining({ id: channel.id }));
+  });
 });
 
 // ─── getChannels ──────────────────────────────────────────────────────────────

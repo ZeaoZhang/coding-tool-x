@@ -1,6 +1,6 @@
 {
   "name": "coding-tool-x",
-  "version": "3.8.9",
+  "version": "3.8.10",
   "description": "Vibe Coding 增强工作助手 - 智能会话管理、动态渠道切换、全局搜索、实时监控",
   "main": "src/index.js",
   "bin": {
@@ -69,13 +69,15 @@
     "https-proxy-agent": "^7.0.6",
     "inquirer": "^8.2.7",
     "js-yaml": "^4.3.1",
+    "jsonc-parser": "^3.3.1",
     "open": "^8.4.2",
     "ora": "^5.4.1",
     "pm2": "^7.0.3",
     "rxjs": "^7.8.2",
     "semver": "^7.6.0",
     "toml": "^5.0.0",
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "yaml": "^2.9.1"
   },
   "overrides": {
     "basic-ftp": "^6.2.0",

@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const yaml = require('js-yaml');
+const { writeYamlFile } = require('../../../utils/native-config-patcher');
 const ompConfig = require('./config');
 const { prepareManagedOmpChannels } = require('./gateway-routing');
 const { MODEL_METADATA, MODEL_ALIASES } = require('../../../config/model-metadata');
@@ -409,13 +410,7 @@ function readModelsConfig(filePath = getOmpPaths().modelsYml) {
 }
 
 function writeModelsConfig(config, filePath = getOmpPaths().modelsYml) {
-  ensureOmpDir(path.dirname(filePath));
-  const doc = yaml.dump(config || { providers: {} }, {
-    lineWidth: 120,
-    noRefs: true,
-    sortKeys: false
-  });
-  writeFileAtomic(filePath, doc);
+  writeYamlFile(filePath, config || { providers: {} }, { atomic: true });
 }
 
 function getOmpSettingsPath(paths = getOmpPaths()) {
@@ -447,13 +442,7 @@ function readOmpSettingsConfig(filePath = getOmpSettingsPath()) {
 }
 
 function writeOmpSettingsConfig(config, filePath = getOmpSettingsPath()) {
-  ensureOmpDir(path.dirname(filePath));
-  const doc = yaml.dump(config || {}, {
-    lineWidth: 120,
-    noRefs: true,
-    sortKeys: false
-  });
-  writeFileAtomic(filePath, doc);
+  writeYamlFile(filePath, config || {}, { atomic: true });
 }
 
 function getModelsBackupPrefix(filePath) {
@@ -669,9 +658,10 @@ function removeLegacyManagedExtension(paths = getOmpPaths()) {
   }
 }
 
-function pruneManagedProviders(providers = {}) {
+function pruneManagedProviders(providers = {}, knownProviderIds = null) {
+  const keep = knownProviderIds instanceof Set ? knownProviderIds : null;
   Object.keys(providers).forEach((providerId) => {
-    if (isManagedProviderId(providerId)) {
+    if (isManagedProviderId(providerId) && (!keep || !keep.has(providerId))) {
       delete providers[providerId];
     }
   });
@@ -684,7 +674,10 @@ function buildManagedModelsConfig(channels = [], baseConfig = readModelsConfig()
       ...(baseConfig.providers || {})
     }
   };
-  pruneManagedProviders(next.providers);
+  const knownProviderIds = Array.isArray(options.knownProviderIds)
+    ? new Set(options.knownProviderIds)
+    : new Set((channels || []).map(getManagedProviderId));
+  pruneManagedProviders(next.providers, knownProviderIds);
 
   channels
     .filter(channel => channel && channel.enabled !== false && channel.baseUrl)

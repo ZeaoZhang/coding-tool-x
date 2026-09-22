@@ -23,6 +23,12 @@ const DSH_YAML_SCHEMA = yaml.DEFAULT_SCHEMA.extend([
   })
 ]);
 
+const DSH_YAML_SOURCE_TAGS = [{
+  tag: 'tag:yaml.org,2002:js',
+  resolve: value => `!!js ${value}`,
+  stringify: item => String(item.value).replace(/^!!js\s*/, '')
+}];
+
 function clone(value) {
   if (value === undefined) return undefined;
   return JSON.parse(JSON.stringify(value));
@@ -548,6 +554,7 @@ module.exports = {
   resolvePaths,
   isObject,
   readYamlFile,
+  DSH_YAML_SOURCE_TAGS,
   readJsonFile,
   fileRevision,
   writeAtomic,

@@ -26,6 +26,7 @@ const {
 const { createApiRequestLogger } = require('./services/request-logger');
 const { inspectWebBuildState, ensureWebDistReady } = require('./services/web-build');
 const { ensureHttpsCredentials } = require('./services/https-cert');
+const { scheduleSessionHistoryMaintenance } = require('./services/session-history-maintenance');
 const notificationHooks = require('../platforms/notification-hooks');
 const {
   prepareNativeCliLogObserver,
@@ -323,6 +324,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
     server.once('listening', onListening);
     server.once('error', onError);
   });
+  scheduleSessionHistoryMaintenance(PATHS.sessionHistoryIndex);
 
   console.log(`\n[START] Coding-Tool Web UI running at:`);
   const protocol = useHttps ? 'https' : 'http';

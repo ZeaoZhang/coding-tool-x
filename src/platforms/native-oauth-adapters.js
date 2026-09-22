@@ -4,7 +4,7 @@ const os = require('os');
 const crypto = require('crypto');
 const { execFileSync, spawnSync } = require('child_process');
 const toml = require('toml');
-const tomlStringify = require('@iarna/toml').stringify;
+const { writeTomlFile } = require('../utils/native-config-patcher');
 const pathsModule = require('../config/paths');
 const DEFAULT_NATIVE_PATHS = pathsModule.NATIVE_PATHS;
 const DEFAULT_PATHS = pathsModule.PATHS;
@@ -185,29 +185,29 @@ function clearClaudeOAuth() {
   ensureDir(path.dirname(NATIVE_PATHS.claude.settings));
   claudeSettingsManager.writeSettings(settings);
 }
-function clearClaudeChannelConfig() {
-  let settings = {};
-  try {
-    settings = claudeSettingsManager.settingsExists()
-      ? claudeSettingsManager.readSettings()
-      : {};
-  } catch {
-    settings = {};
+function clearClaudeChannelConfig(managedProxyUrls = []) {
+  if (!claudeSettingsManager.settingsExists()) return;
+  const settings = claudeSettingsManager.readSettings();
+  if (settings.env && typeof settings.env === 'object' && !Array.isArray(settings.env)) {
+    [
+      'ANTHROPIC_BASE_URL',
+      'ANTHROPIC_API_KEY',
+      'ANTHROPIC_AUTH_TOKEN',
+      'CLAUDE_CODE_OAUTH_TOKEN',
+      'ANTHROPIC_MODEL',
+      'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+      'ANTHROPIC_DEFAULT_SONNET_MODEL',
+      'ANTHROPIC_DEFAULT_OPUS_MODEL'
+    ].forEach((key) => {
+      delete settings.env[key];
+    });
+    const managedProxies = new Set((Array.isArray(managedProxyUrls) ? managedProxyUrls : [])
+      .map(value => String(value || '').trim()).filter(Boolean));
+    ['HTTP_PROXY', 'HTTPS_PROXY'].forEach((key) => {
+      if (managedProxies.has(String(settings.env[key] || '').trim())) delete settings.env[key];
+    });
+    if (Object.keys(settings.env).length === 0) delete settings.env;
   }
-
-  settings.env = settings.env || {};
-  [
-    'ANTHROPIC_BASE_URL',
-    'ANTHROPIC_API_KEY',
-    'ANTHROPIC_AUTH_TOKEN',
-    'CLAUDE_CODE_OAUTH_TOKEN',
-    'ANTHROPIC_MODEL',
-    'ANTHROPIC_DEFAULT_HAIKU_MODEL',
-    'ANTHROPIC_DEFAULT_SONNET_MODEL',
-    'ANTHROPIC_DEFAULT_OPUS_MODEL'
-  ].forEach((key) => {
-    delete settings.env[key];
-  });
   delete settings.apiKeyHelper;
   ensureDir(path.dirname(NATIVE_PATHS.claude.settings));
   claudeSettingsManager.writeSettings(settings);
@@ -444,16 +444,16 @@ function removeCodexChannelEnvVars() {
 }
 
 function clearCodexChannelConfig() {
-  removeCodexChannelEnvVars();
-
   const configPath = NATIVE_PATHS.codex.config;
+  if (!fs.existsSync(configPath)) {
+    removeCodexChannelEnvVars();
+    return;
+  }
   let config = {};
-  if (fs.existsSync(configPath)) {
-    try {
-      config = toml.parse(fs.readFileSync(configPath, 'utf8'));
-    } catch {
-      config = {};
-    }
+  try {
+    config = toml.parse(fs.readFileSync(configPath, 'utf8'));
+  } catch (error) {
+    throw new Error(`Failed to parse existing Codex config.toml: ${error.message}`);
   }
 
   const managedProviderKeys = new Set(['cc-proxy']);
@@ -478,8 +478,8 @@ function clearCodexChannelConfig() {
     }
   }
 
-  ensureDir(path.dirname(configPath));
-  fs.writeFileSync(configPath, tomlStringify(config), 'utf8');
+  writeTomlFile(configPath, config, { atomic: true });
+  removeCodexChannelEnvVars();
 }
 
 function applyCodexOAuth(credential) {

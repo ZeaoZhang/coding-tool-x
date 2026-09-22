@@ -2263,6 +2263,7 @@ const channelPanelFactories = {
         : (result.source?.name || 'Models.dev')
       form.modelMetadataStatus = `已读取 ${result.models?.length || 0} 个模型（${sourceName} 离线快照）${warningCount ? `，${warningCount} 条兼容提示` : ''}`
     },
+    testFn: testOmpChannelSpeed,
     api: {
       fetch: async () => {
         const data = await getOmpChannels()

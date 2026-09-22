@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { readJsoncFile, writeJsoncFile } = require('../../../utils/native-config-patcher');
 const { NATIVE_PATHS } = require('../../../config/paths');
 const { resolveModelMetadata } = require('../../../config/model-metadata');
 const { resolveModelPricing } = require('../../../server/utils/pricing');
@@ -61,79 +62,18 @@ function selectConfigPath() {
   return CONFIG_PATHS.opencode;
 }
 
-function stripJsonComments(input) {
-  let result = '';
-  let inString = false;
-  let stringChar = '';
-  let i = 0;
-
-  while (i < input.length) {
-    const ch = input[i];
-    const next = input[i + 1];
-
-    if (inString) {
-      result += ch;
-      if (ch === '\\') {
-        if (next) {
-          result += next;
-          i += 2;
-          continue;
-        }
-      } else if (ch === stringChar) {
-        inString = false;
-      }
-      i += 1;
-      continue;
-    }
-
-    if (ch === '"' || ch === '\'') {
-      inString = true;
-      stringChar = ch;
-      result += ch;
-      i += 1;
-      continue;
-    }
-
-    if (ch === '/' && next === '/') {
-      i += 2;
-      while (i < input.length && input[i] !== '\n') i += 1;
-      continue;
-    }
-
-    if (ch === '/' && next === '*') {
-      i += 2;
-      while (i < input.length - 1 && !(input[i] === '*' && input[i + 1] === '/')) i += 1;
-      i += 2;
-      continue;
-    }
-
-    result += ch;
-    i += 1;
-  }
-
-  return result;
-}
-
 function readConfig(filePath) {
   if (!fs.existsSync(filePath)) return {};
 
-  const raw = fs.readFileSync(filePath, 'utf8');
-  if (!raw.trim()) return {};
-
   try {
-    if (filePath.endsWith('.jsonc')) {
-      return JSON.parse(stripJsonComments(raw));
-    }
-    return JSON.parse(raw);
+    return readJsoncFile(filePath);
   } catch (err) {
     throw new Error(`Failed to parse ${path.basename(filePath)}: ${err.message}`);
   }
 }
 
 function writeConfig(filePath, config) {
-  ensureConfigDir();
-  const content = JSON.stringify(config, null, 2);
-  fs.writeFileSync(filePath, content, 'utf8');
+  writeJsoncFile(filePath, config);
 }
 
 function normalizeOpenCodeModel(modelId, providerId) {
@@ -520,7 +460,6 @@ function setProxyConfig(proxyPort, options = {}) {
 
 function setChannelConfig(channel = {}) {
   const filePath = selectConfigPath();
-  backupConfig(filePath);
 
   const current = readConfig(filePath);
   const next = (current && typeof current === 'object') ? current : {};
@@ -528,9 +467,6 @@ function setChannelConfig(channel = {}) {
   if (!next.provider || typeof next.provider !== 'object') {
     next.provider = {};
   }
-
-  const removedProviderKeys = clearManagedProviders(next);
-  clearManagedModelRef(next, removedProviderKeys);
 
   const baseProviderKey = sanitizeProviderKey(channel.providerKey || channel.name || 'ctx-channel');
   let providerKey = baseProviderKey;

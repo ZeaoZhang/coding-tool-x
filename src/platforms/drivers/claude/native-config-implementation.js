@@ -1,6 +1,7 @@
 const fs = require('fs');
 const { NATIVE_PATHS } = require('../../../config/paths');
 const { isWindowsLikePlatform } = require('../../../utils/home-dir');
+const { readJsoncFile, writeJsoncFile } = require('../../../utils/native-config-patcher');
 const DEFAULT_NATIVE_PATHS = NATIVE_PATHS.claude;
 let nativePaths = DEFAULT_NATIVE_PATHS;
 
@@ -40,8 +41,7 @@ function hasBackup() {
 // 读取配置文件
 function readSettings() {
   try {
-    const content = fs.readFileSync(getSettingsPath(), 'utf8');
-    return JSON.parse(content);
+    return readJsoncFile(getSettingsPath());
   } catch (err) {
     throw new Error('Failed to read settings.json: ' + err.message);
   }
@@ -50,8 +50,7 @@ function readSettings() {
 // 写入配置文件
 function writeSettings(settings) {
   try {
-    const content = JSON.stringify(settings, null, 2);
-    fs.writeFileSync(getSettingsPath(), content, 'utf8');
+    writeJsoncFile(getSettingsPath(), settings);
   } catch (err) {
     throw new Error('Failed to write settings.json: ' + err.message);
   }

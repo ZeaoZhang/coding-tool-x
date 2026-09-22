@@ -446,7 +446,7 @@ describe('codex-channels managed env sync', () => {
     });
   });
 
-  test('applyChannelToSettings prunes only managed providers and preserves external providers', () => {
+  test('applyChannelToSettings preserves other channel and external provider configs', () => {
     const channelA = service.createChannel(
       'Primary',
       'provider-a',
@@ -481,8 +481,12 @@ describe('codex-channels managed env sync', () => {
     expect(config.model_providers['provider-a']).toEqual(expect.objectContaining({
       base_url: 'https://api-a.example.com/v1'
     }));
-    expect(config.model_providers['provider-b']).toBeUndefined();
-    expect(config.model_providers['cc-proxy']).toBeUndefined();
+    expect(config.model_providers['provider-b']).toEqual(expect.objectContaining({
+      base_url: 'https://old-b.example.com/v1'
+    }));
+    expect(config.model_providers['cc-proxy']).toEqual(expect.objectContaining({
+      base_url: 'http://127.0.0.1:9999/v1'
+    }));
     expect(config.model_providers['external-provider']).toEqual(expect.objectContaining({
       base_url: 'https://external.example.com/v1'
     }));

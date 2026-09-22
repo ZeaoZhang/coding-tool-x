@@ -2,8 +2,8 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const toml = require('toml');
-const tomlStringify = require('@iarna/toml').stringify;
 const { PATHS } = require('../../../config/paths');
+const { writeTomlFile } = require('../../../utils/native-config-patcher');
 const { getCodexDir } = require('./config');
 const { isProxyConfig, readConfig } = require('./native-config-implementation');
 const { syncCodexUserEnvironment } = require('./env-manager');
@@ -175,21 +175,24 @@ function syncAllChannelEnvVars() {
   }
 }
 
-function writeAnnotatedCodexConfig(configPath, config, comments = []) {
-  let tomlContent = tomlStringify(config);
-  if (comments.length > 0) {
-    tomlContent = comments.join('\n') + '\n\n' + tomlContent;
-  }
-  fs.writeFileSync(configPath, tomlContent, 'utf8');
+function writeAnnotatedCodexConfig(configPath, config) {
+  writeTomlFile(configPath, config, { atomic: true });
 }
 
-function pruneManagedProviders(existingProviders, currentProviderKey, allChannels) {
-  const knownKeys = new Set(allChannels.map(ch => ch.providerKey).filter(Boolean));
-  for (const key of Object.keys(existingProviders)) {
-    if (key === 'cc-proxy' || (key !== currentProviderKey && knownKeys.has(key))) {
-      delete existingProviders[key];
-    }
+function mergeCodexProviderConfig(existing = {}, channel = {}) {
+  const provider = {
+    ...existing,
+    name: channel.name,
+    base_url: channel.baseUrl,
+    wire_api: channel.wireApi || 'responses',
+    env_key: CODEX_MANAGED_ENV_KEY,
+    requires_openai_auth: channelRequiresOpenaiAuth(channel)
+  };
+  delete provider.query_params;
+  if (channel.queryParams && Object.keys(channel.queryParams).length > 0) {
+    provider.query_params = channel.queryParams;
   }
+  return provider;
 }
 
 function writeCodexConfigForMultiChannel(channels) {
@@ -201,8 +204,7 @@ function writeCodexConfigForMultiChannel(channels) {
     try {
       config = toml.parse(fs.readFileSync(configPath, 'utf8'));
     } catch (err) {
-      console.warn('[Codex Channels] Failed to parse existing config.toml:', err.message);
-      config = {};
+      throw new Error(`Failed to parse existing config.toml: ${err.message}`);
     }
   }
 
@@ -229,26 +231,17 @@ function writeCodexConfigForMultiChannel(channels) {
     config.model_provider = primary.providerKey;
 
     for (const ch of enabledChannels) {
-      config.model_providers[ch.providerKey] = {
-        name: ch.name,
-        base_url: ch.baseUrl,
-        wire_api: ch.wireApi || 'responses',
-        env_key: CODEX_MANAGED_ENV_KEY,
-        requires_openai_auth: channelRequiresOpenaiAuth(ch)
-      };
-      if (ch.queryParams && Object.keys(ch.queryParams).length > 0) {
-        config.model_providers[ch.providerKey].query_params = ch.queryParams;
-      }
+      config.model_providers[ch.providerKey] = mergeCodexProviderConfig(
+        config.model_providers[ch.providerKey],
+        ch
+      );
     }
   } else {
     clearManagedCodexConfig();
     return;
   }
 
-  writeAnnotatedCodexConfig(configPath, config, [
-    '# Codex Configuration',
-    '# Managed by Coding-Tool (multi-channel)'
-  ]);
+  writeAnnotatedCodexConfig(configPath, config);
 }
 
 // ── CodexChannelService ──
@@ -315,6 +308,12 @@ class CodexChannelService extends BaseChannelService {
         this._applyToNativeSettings(_next);
         return;
       }
+      if (_old.enabled !== false && _next.enabled === false) {
+        const activeChannel = resolveCurrentManagedChannel(allChannels);
+        if (activeChannel) this._applyToNativeSettings(activeChannel);
+        else clearManagedCodexConfig();
+        return;
+      }
       const activeChannel = resolveCurrentManagedChannel(allChannels);
       if (_next.enabled !== false && activeChannel?.id === _next.id) {
         this._applyToNativeSettings(_next);
@@ -347,7 +346,7 @@ class CodexChannelService extends BaseChannelService {
       try {
         config = toml.parse(fs.readFileSync(configPath, 'utf8'));
       } catch (err) {
-        config = {};
+        throw new Error(`Failed to parse existing config.toml: ${err.message}`);
       }
     }
 
@@ -356,26 +355,12 @@ class CodexChannelService extends BaseChannelService {
     if (!config.model_providers || typeof config.model_providers !== 'object') {
       config.model_providers = {};
     }
-    const data = this.loadChannels();
-    pruneManagedProviders(config.model_providers, channel.providerKey, data.channels);
+    config.model_providers[channel.providerKey] = mergeCodexProviderConfig(
+      config.model_providers[channel.providerKey],
+      channel
+    );
 
-    config.model_providers[channel.providerKey] = {
-      name: channel.name,
-      base_url: channel.baseUrl,
-      wire_api: channel.wireApi || 'responses',
-      env_key: CODEX_MANAGED_ENV_KEY,
-      requires_openai_auth: channelRequiresOpenaiAuth(channel)
-    };
-
-    if (channel.queryParams && Object.keys(channel.queryParams).length > 0) {
-      config.model_providers[channel.providerKey].query_params = channel.queryParams;
-    }
-
-    writeAnnotatedCodexConfig(configPath, config, [
-      '# Codex Configuration',
-      '# Managed by Coding-Tool',
-      `# Current provider: ${channel.name}`
-    ]);
+    writeAnnotatedCodexConfig(configPath, config);
     console.log(`[Codex Channels] Applied channel ${channel.name} to config.toml`);
     syncAllChannelEnvVars();
   }

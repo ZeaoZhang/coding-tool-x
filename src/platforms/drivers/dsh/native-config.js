@@ -1,7 +1,8 @@
 'use strict';
 
 const fs = require('fs');
-const { resolvePaths, readYamlFile, writeAtomic, dumpYaml, mergeSettings, fileRevision, credentialMetadata, redactSecrets, listProfiles, listProfilePlugins, listProfileMcp, listProfilePrompts } = require('./common');
+const { writeYamlFile } = require('../../../utils/native-config-patcher');
+const { resolvePaths, readYamlFile, mergeSettings, fileRevision, credentialMetadata, redactSecrets, listProfiles, listProfilePlugins, listProfileMcp, listProfilePrompts, DSH_YAML_SOURCE_TAGS } = require('./common');
 const { resolveSkillRoots } = require('./resources');
 
 function createDriver(context = {}) {
@@ -35,7 +36,11 @@ function createDriver(context = {}) {
       }
       const current = readYamlFile(paths.settings, {});
       const next = mergeSettings(current, body.namespace, body.patch, body.replace === true);
-      writeAtomic(paths.settings, dumpYaml(next), 0o600);
+      writeYamlFile(paths.settings, next, {
+        atomic: true,
+        mode: 0o600,
+        customTags: DSH_YAML_SOURCE_TAGS
+      });
       return this.getConfig();
     },
     getConfigCapabilities() {
