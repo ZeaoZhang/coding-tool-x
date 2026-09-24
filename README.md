@@ -7,7 +7,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 [![GitHub issues](https://img.shields.io/github/issues/ZeaoZhang/coding-tool-x?style=flat-square)](https://github.com/ZeaoZhang/coding-tool-x/issues)
 
-![coding-tool-x 首页预览](docs/home.png)
+## 界面预览
+
+| 首页 | Token 用量统计 |
+| --- | --- |
+| ![coding-tool-x 首页](docs/home.png) | ![coding-tool-x Token 用量统计](docs/analytics.png) |
 
 `coding-tool-x` 将常用的 Coding CLI 管理功能放在一个本地 Web UI 和 `ctx` 命令行入口中。它支持 Claude Code、Codex CLI、Gemini CLI、OpenCode、OMP 和 DSH；各平台的具体功能取决于其内置 Manifest 和实际可用能力。
 
