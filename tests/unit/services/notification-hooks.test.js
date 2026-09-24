@@ -439,7 +439,7 @@ describe('validateFeishuWebhookUrl', () => {
 });
 
 describe('remote notification providers', () => {
-  test('normalizes all GA-style remote provider types', () => {
+  test('normalizes all supported remote provider types', () => {
     const result = normalizeRemoteNotificationsConfig({
       providers: [
         { type: 'wechatBot', config: { tokenFile: '~/.wxbot/token.json', targetUserId: 'wx-user' } },

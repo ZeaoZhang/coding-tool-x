@@ -20,7 +20,7 @@ const PROVIDER_METADATA = Object.freeze({
     label: '微信',
     legacyName: '微信 Bot',
     description: '使用个人微信 iLink token 发送通知',
-    hint: '首次 token 可由 GA 微信扫码生成；也可以直接填写 token。',
+    hint: '填写 iLink Token，或提供 token.json 路径。',
     defaults: Object.freeze({ tokenFile: '~/.wxbot/token.json', botToken: '', targetUserId: '', contextToken: '' }),
     fields: Object.freeze([
       Object.freeze({ key: 'tokenFile', label: 'token.json 路径', type: 'input', placeholder: '~/.wxbot/token.json', wide: true }),
@@ -33,7 +33,7 @@ const PROVIDER_METADATA = Object.freeze({
     label: 'QQ',
     legacyName: 'QQ Bot',
     description: '通过 OneBot / NapCat / go-cqhttp 兼容 HTTP 接口发送通知',
-    hint: 'GA 当前构建已移除 QQ 前端，这里按 OneBot 兼容桥接入。',
+    hint: '通过 OneBot 兼容服务发送通知。',
     defaults: Object.freeze({ endpoint: 'http://127.0.0.1:3000', accessToken: '', targetType: 'private', targetId: '' }),
     fields: Object.freeze([
       Object.freeze({ key: 'endpoint', label: 'OneBot HTTP 地址', type: 'input', placeholder: 'http://127.0.0.1:3000', wide: true }),
@@ -59,7 +59,7 @@ const PROVIDER_METADATA = Object.freeze({
     label: '企业微信',
     legacyName: '企业微信 Bot',
     description: '通过企业微信群机器人 Webhook 发送通知',
-    hint: '当前通知发送使用企业微信群机器人 Webhook；GA 的 bot_id / secret 长连接模式不适合单向通知。',
+    hint: '填写企业微信群机器人的 Webhook URL。',
     defaults: Object.freeze({ webhookUrl: '' }),
     fields: Object.freeze([
       Object.freeze({ key: 'webhookUrl', label: 'Webhook URL', type: 'input', placeholder: '企业微信群机器人 Webhook URL', wide: true })
@@ -68,13 +68,13 @@ const PROVIDER_METADATA = Object.freeze({
   dingtalkBot: Object.freeze({
     label: '钉钉',
     legacyName: '钉钉 Bot',
-    description: '支持钉钉自定义机器人 Webhook 和 GA 同款 App 模式',
+    description: '支持钉钉自定义机器人 Webhook 和应用模式',
     hint: 'App 模式需要 App Key / App Secret，并填写用户 ID 或群会话 ID。',
     defaults: Object.freeze({ mode: 'webhook', webhookUrl: '', clientId: '', clientSecret: '', targetType: 'group', targetId: '' }),
     fields: Object.freeze([
       Object.freeze({ key: 'mode', label: '接入模式', type: 'select', options: Object.freeze([
         Object.freeze({ label: 'Webhook', value: 'webhook' }),
-        Object.freeze({ label: 'GA App 模式', value: 'app' })
+        Object.freeze({ label: '应用模式', value: 'app' })
       ]) }),
       Object.freeze({ key: 'clientId', label: 'App Key', type: 'input', placeholder: 'Client ID', visibleWhen: Object.freeze({ key: 'mode', equals: 'app' }) }),
       Object.freeze({ key: 'clientSecret', label: 'App Secret', type: 'secret', placeholder: 'Secret', visibleWhen: Object.freeze({ key: 'mode', equals: 'app' }) }),

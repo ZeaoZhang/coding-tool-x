@@ -46,9 +46,11 @@ function normalizeSpeedTestModels(value) {
 }
 
 function getModelPlatformEntries(catalog = getPlatformCatalog()) {
-  return catalog.list({ capability: 'channels' }).map(manifest => ({
+  return catalog.list({ capability: 'channels', enabledOnly: false }).map(manifest => ({
     key: manifest.key,
-    catalogKey: manifest.modelConfig?.catalogKey || manifest.key
+    label: manifest.label || manifest.title || manifest.key,
+    catalogKey: manifest.modelConfig?.catalogKey || manifest.key,
+    models: getModelIdsByToolType(manifest.modelConfig?.catalogKey || manifest.key)
   }));
 }
 
@@ -96,9 +98,7 @@ function handleGetModelSettings(req, res) {
     const catalog = getPlatformCatalog();
     const platformEntries = getModelPlatformEntries(catalog);
     const defaultSpeedTestModels = resolveDefaultSpeedTestModels(config, catalog);
-    const toolModels = Object.fromEntries(
-      platformEntries.map(({ key, catalogKey }) => [key, getModelIdsByToolType(catalogKey)])
-    );
+    const toolModels = Object.fromEntries(platformEntries.map(({ key, models }) => [key, models]));
 
     // Build merged table: built-in + user overrides
     const merged = {};
@@ -128,6 +128,7 @@ function handleGetModelSettings(req, res) {
       builtinModelIds: Object.keys(MODEL_METADATA),
       lastUpdated: METADATA_LAST_UPDATED,
       metadataSource: METADATA_SOURCE,
+      modelPlatforms: platformEntries,
       toolModels,
       defaultSpeedTestModels
     });

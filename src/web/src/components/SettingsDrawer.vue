@@ -828,7 +828,6 @@
                           v-model:value="defaultSpeedTestModels[tool.key]"
                           :options="speedTestModelOptions[tool.key]"
                           :placeholder="`选择或输入${tool.label}默认测速模型`"
-                          :disabled="(speedTestModelOptions[tool.key] || []).length === 0"
                           size="small"
                           filterable
                           tag
@@ -1599,18 +1598,26 @@ const modelMetaOverrides = ref({})
 const modelMetaEdits = ref({})
 const modelMetaSearch = ref('')
 const modelMetaFilter = ref('all')
+const modelPlatformConfigs = ref([])
 const showAddModelMetaModal = ref(false)
 const newModelMetaForm = ref(createDefaultNewModelMeta())
 const builtInModelIds = ref(new Set())
 const defaultSpeedTestModels = ref({})
 const originalDefaultSpeedTestModels = ref({})
-const speedTestToolRows = computed(() => Object.keys(defaultSpeedTestModels.value).map(key => {
-  const platform = typeof platformStore.get === 'function' ? platformStore.get(key) : null
-  return {
-    key,
-    label: platform?.label || platform?.title || key
+const speedTestToolRows = computed(() => {
+  if (modelPlatformConfigs.value.length > 0) {
+    return modelPlatformConfigs.value.map(platform => ({
+      key: platform.key,
+      label: platform.label || platform.key,
+      models: Array.isArray(platform.models) ? platform.models : []
+    }))
   }
-}))
+
+  return Object.keys(defaultSpeedTestModels.value).map(key => {
+    const platform = typeof platformStore.get === 'function' ? platformStore.get(key) : null
+    return { key, label: platform?.label || platform?.title || key, models: [] }
+  })
+})
 
 const expandedModels = ref(new Set())
 const toggleModelExpand = (modelId) => {
@@ -1744,24 +1751,13 @@ function getModelProviderTypesById(meta = {}) {
 }
 
 const speedTestModelOptions = computed(() => {
-  const grouped = Object.fromEntries(speedTestToolRows.value.map(tool => [tool.key, []]))
-
-  for (const [modelId, meta] of Object.entries(modelMetaTable.value || {})) {
-    if (!meta || typeof meta !== 'object' || !meta.limit || !meta.pricing) continue
-    const providers = getModelProviderTypesById(meta)
-    const fallbackProvider = providers.length > 0 ? '' : getModelProviderById(modelId, meta)
-    for (const provider of providers.length > 0 ? providers : [fallbackProvider]) {
-      if (!provider || !grouped[provider]) continue
-      grouped[provider].push({
-        label: modelId,
-        value: modelId
-      })
-    }
-  }
-
-  for (const key of Object.keys(grouped)) {
-    grouped[key].sort((a, b) => a.label.localeCompare(b.label))
-  }
+  const grouped = Object.fromEntries(speedTestToolRows.value.map(tool => [
+    tool.key,
+    [...new Set(tool.models)].sort((a, b) => a.localeCompare(b)).map(modelId => ({
+      label: modelId,
+      value: modelId
+    }))
+  ]))
 
   for (const tool of speedTestToolRows.value) {
     const currentModel = String(defaultSpeedTestModels.value[tool.key] || '').trim()
@@ -1833,6 +1829,9 @@ async function loadModelMetadata() {
     modelMetaTable.value = data.models && typeof data.models === 'object' && !Array.isArray(data.models)
       ? data.models
       : {}
+    modelPlatformConfigs.value = Array.isArray(data.modelPlatforms)
+      ? data.modelPlatforms.filter(platform => platform && typeof platform.key === 'string' && platform.key.trim())
+      : []
     const rawOverrides = data.overrides ?? data.modelMetadataOverrides
     const overrides = rawOverrides && typeof rawOverrides === 'object' && !Array.isArray(rawOverrides)
       ? rawOverrides
@@ -1843,7 +1842,10 @@ async function loadModelMetadata() {
       : Object.keys(modelMetaTable.value)
     builtInModelIds.value = new Set(builtinIds.filter(modelId => typeof modelId === 'string' && modelId.trim()))
     defaultSpeedTestModels.value = Object.fromEntries(
-      Object.entries(data.defaultSpeedTestModels || {}).filter(([, value]) => typeof value === 'string' && value.trim())
+      Object.entries(data.defaultSpeedTestModels || {}).map(([key, value]) => [
+        key,
+        typeof value === 'string' ? value.trim() : ''
+      ])
     )
     normalizeDefaultSpeedTestModelSelection()
     originalDefaultSpeedTestModels.value = { ...defaultSpeedTestModels.value }
