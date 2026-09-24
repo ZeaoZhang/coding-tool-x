@@ -29,6 +29,7 @@
           :show-apply-button="config.showApplyButton"
           :channel-type="config.type"
           :test-fn="config.testFn"
+          :auth-check-fn="channelId => inspectOAuthChannelAuth(config.type, channelId)"
           :toggling="!!state.toggling[element.id]"
           @toggle-collapse="actions.toggleCollapse(element.id)"
           @apply="actions.handleApplyToSettings(element)"
@@ -291,7 +292,7 @@ import useChannelManager from '../../composables/useChannelManager'
 import { resolveErrorMessage } from '../../utils/error-message'
 import { useChannelScheduler } from '../../composables/useChannelScheduler'
 import { createGenericChannelPanel } from './commonChannelSchema'
-import { getPlatformChannels, createPlatformChannel, updatePlatformChannel, deletePlatformChannel } from '../../api/channels'
+import { getPlatformChannels, createPlatformChannel, updatePlatformChannel, deletePlatformChannel, inspectOAuthChannelAuth } from '../../api/channels'
 import { usePlatformStore } from '../../stores/platforms'
 
 const props = defineProps({

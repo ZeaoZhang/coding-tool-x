@@ -6,6 +6,8 @@ import { useGlobalStore } from '../stores/global'
 import { resolveErrorMessage } from '../utils/error-message'
 
 const BALANCE_LOAD_DELAY_MS = 5000
+// OAuth rolling windows can change while a channel stays open, so refresh them periodically.
+const BALANCE_POLL_INTERVAL_MS = 60_000
 const UI_CONFIG_TTL = 60000
 const CHANNEL_META_REFRESH_DELAYS_MS = [1500, 3000, 5000, 8000]
 
@@ -63,6 +65,7 @@ export default function useChannelManager(config) {
   const globalStore = useGlobalStore()
   let healthRefreshTimer = null
   let balanceLoadTimer = null
+  let balancePollTimer = null
   let balanceRetryTimer = null
   let balanceIdleCallbackId = null
   let balanceLoadPromise = null
@@ -244,6 +247,7 @@ export default function useChannelManager(config) {
       } finally {
         state.balanceLoading = false
         balanceLoadPromise = null
+        scheduleChannelBalancePoll()
       }
     })()
     return balanceLoadPromise
@@ -266,6 +270,41 @@ export default function useChannelManager(config) {
       clearTimeout(balanceRetryTimer)
       balanceRetryTimer = null
     }
+    if (balancePollTimer) {
+      clearTimeout(balancePollTimer)
+      balancePollTimer = null
+    }
+  }
+
+  function scheduleChannelBalancePoll() {
+    if (balancePollTimer) {
+      clearTimeout(balancePollTimer)
+      balancePollTimer = null
+    }
+    if (!state.showChannelBalance || !isDocumentVisible()) return
+
+    balancePollTimer = setTimeout(() => {
+      balancePollTimer = null
+      if (isDocumentVisible()) {
+        refreshOAuthChannelBalances().finally(scheduleChannelBalancePoll)
+      }
+    }, BALANCE_POLL_INTERVAL_MS)
+  }
+
+  async function refreshOAuthChannelBalances() {
+    const oauthChannels = state.channels.filter(channel => (
+      channel?.enabled !== false && channel?.authMode === 'oauth' && channel.id
+    ))
+    await Promise.all(oauthChannels.map(async channel => {
+      try {
+        const response = await refreshChannelBalance(config.type, channel.id)
+        if (response?.enabled && response.balance) {
+          state.balances[channel.id] = response.balance
+        }
+      } catch {
+        // Keep the last known quota and try again on the next visible poll.
+      }
+    }))
   }
 
   function scheduleChannelBalanceLoad() {

@@ -82,6 +82,101 @@ export async function fetchChannelAuthQuota(tool, channelId, refresh = false) {
   return response.data
 }
 
+function matchesChannelAuthCandidate(channel, candidate, candidates) {
+  const ref = channel?.authRef || {}
+  const candidateRef = candidate?.authRef || {}
+  if (ref.credentialId && candidateRef.credentialId && ref.credentialId === candidateRef.credentialId) return true
+  if ((ref.accountId || ref.identityKey) && (candidateRef.accountId || candidateRef.identityKey)) {
+    const sameProvider = !ref.providerId || !candidateRef.providerId || ref.providerId === candidateRef.providerId
+    if (sameProvider && (ref.accountId || ref.identityKey) === (candidateRef.accountId || candidateRef.identityKey)) return true
+  }
+  if (ref.accountEmail && candidateRef.accountEmail && ref.accountEmail === candidateRef.accountEmail) return true
+
+  const hasReference = Boolean(ref.credentialId || ref.providerId || ref.accountId || ref.identityKey || ref.accountEmail)
+  const providerId = ref.providerId || channel?.oauthProviderId || channel?.providerKey || ''
+  const sameProviderCandidates = providerId
+    ? candidates.filter(item => (item?.authRef?.providerId || item?.providerId) === providerId)
+    : []
+  if (sameProviderCandidates.length === 1 && sameProviderCandidates[0] === candidate) return true
+  return !hasReference && candidates.length === 1 && candidates[0] === candidate
+}
+
+function normalizeAuthExpiry(value) {
+  if (value == null || value === '') return null
+  const numeric = typeof value === 'number' || /^\d+$/.test(String(value)) ? Number(value) : NaN
+  const date = Number.isFinite(numeric)
+    ? new Date(numeric < 1e12 ? numeric * 1000 : numeric)
+    : new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date.toISOString()
+}
+
+export async function inspectOAuthChannelAuth(platform, channelId) {
+  const snapshot = await getChannelAuth(platform, channelId)
+  const channel = snapshot?.channel
+  if (!channel || channel.authMode !== 'oauth') {
+    return {
+      status: 'missing',
+      level: 'failed',
+      title: '未找到 OAuth 渠道',
+      checkedAt: new Date().toISOString()
+    }
+  }
+
+  const candidates = Array.isArray(snapshot.candidates) ? snapshot.candidates : []
+  const candidate = candidates.find(item => matchesChannelAuthCandidate(channel, item, candidates))
+  if (!candidate) {
+    return {
+      status: 'missing',
+      level: 'failed',
+      title: '未找到匹配的本地 OAuth 凭证',
+      warning: (snapshot.warnings || []).join(' '),
+      checkedAt: new Date().toISOString()
+    }
+  }
+
+  let quota
+  try {
+    quota = await fetchChannelAuthQuota(platform, channelId, true)
+  } catch (error) {
+    quota = {
+      status: 'unavailable',
+      warning: error?.response?.data?.error || error?.message || '在线授权检查失败'
+    }
+  }
+  let latestSnapshot = null
+  if (quota.status === 'available') {
+    try {
+      latestSnapshot = await getChannelAuth(platform, channelId)
+    } catch {
+      // The live quota check is authoritative if a follow-up local scan fails.
+    }
+  }
+  const latestCandidates = Array.isArray(latestSnapshot?.candidates) ? latestSnapshot.candidates : []
+  const latestCandidate = latestCandidates.find(item => matchesChannelAuthCandidate(channel, item, latestCandidates))
+  const expiry = normalizeAuthExpiry(latestCandidate?.expiresAt || candidate.expiresAt)
+  const isExpired = expiry && new Date(expiry).getTime() <= Date.now()
+  const quotaStatus = ['available', 'unauthorized', 'unsupported'].includes(quota.status)
+    ? quota.status
+    : 'unavailable'
+  const status = isExpired && quotaStatus !== 'available' ? 'expired' : quotaStatus
+  const statusDetails = {
+    available: { level: 'success', title: 'OAuth 授权可用' },
+    unauthorized: { level: 'failed', title: 'OAuth 授权已失效或过期' },
+    expired: { level: 'failed', title: 'Token 已过期' },
+    unsupported: { level: 'warning', title: '凭证已找到，暂时无法在线验证' },
+    unavailable: { level: 'warning', title: '凭证已找到，暂时无法验证' }
+  }
+  const details = statusDetails[status] || statusDetails.unavailable
+  return {
+    status,
+    ...details,
+    account: candidate.accountEmail || candidate.authRef?.accountEmail || '',
+    expiresAt: expiry,
+    warning: quota.warning || quota.error || '',
+    checkedAt: quota.checkedAt || new Date().toISOString()
+  }
+}
+
 // Claude channels
 export async function getChannels() {
   const response = await client.get('/channels')

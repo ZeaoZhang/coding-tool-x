@@ -14,6 +14,7 @@ const {
 } = require('./snapshot-cache');
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const OAUTH_QUOTA_CACHE_TTL_MS = 60 * 1000;
 const REQUEST_TIMEOUT_MS = 8000;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const QUOTA_UNIT = 500000;
@@ -122,6 +123,10 @@ function resolveBalanceToken(channel = {}) {
 
 function isOAuthChannel(channel = {}) {
   return channel?.authMode === 'oauth';
+}
+
+function getBalanceCacheTtlMs(channel = {}) {
+  return isOAuthChannel(channel) ? OAUTH_QUOTA_CACHE_TTL_MS : CACHE_TTL_MS;
 }
 
 function resolveOAuthCacheIdentity(channel = {}) {
@@ -1581,6 +1586,7 @@ function makeFallbackBalanceSnapshot(currentTime = Date.now()) {
 async function refreshChannelBalanceSnapshot(source, channel, options = {}) {
   const force = options.force === true;
   const currentTime = options.now || Date.now();
+  const cacheTtlMs = getBalanceCacheTtlMs(channel);
   const key = buildCacheKey(source, channel);
   const cached = balanceCache.get(key);
 
@@ -1598,7 +1604,7 @@ async function refreshChannelBalanceSnapshot(source, channel, options = {}) {
       if (snapshot.visible) {
         balanceCache.set(key, {
           snapshot,
-          expiresAt: currentTime + CACHE_TTL_MS
+          expiresAt: currentTime + cacheTtlMs
         });
         return snapshot;
       }
@@ -1613,7 +1619,7 @@ async function refreshChannelBalanceSnapshot(source, channel, options = {}) {
       };
       balanceCache.set(key, {
         snapshot: staleSnapshot,
-        expiresAt: currentTime + CACHE_TTL_MS
+        expiresAt: currentTime + cacheTtlMs
       });
       return staleSnapshot;
     }
@@ -1621,7 +1627,7 @@ async function refreshChannelBalanceSnapshot(source, channel, options = {}) {
     const hiddenSnapshot = makeHiddenSnapshot(source, { updatedAt: nowIso(currentTime) });
     balanceCache.set(key, {
       snapshot: hiddenSnapshot,
-      expiresAt: currentTime + CACHE_TTL_MS
+      expiresAt: currentTime + cacheTtlMs
     });
     return hiddenSnapshot;
   }
@@ -1799,7 +1805,7 @@ async function getChannelBalances(source, options = {}) {
   const currentTime = options.now || Date.now();
   const entries = await mapWithConcurrency(channels, 4, async (channel) => {
     const snapshot = await getSnapshot(buildBalanceSnapshotKey(normalizedSource, channel), {
-      ttlMs: CACHE_TTL_MS,
+      ttlMs: getBalanceCacheTtlMs(channel),
       fallbackValue: makeFallbackBalanceSnapshot(currentTime),
       refresh: () => refreshChannelBalanceSnapshot(normalizedSource, channel, { ...options, force: true, now: Date.now() })
     });

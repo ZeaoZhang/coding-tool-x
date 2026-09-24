@@ -43,9 +43,12 @@
           @click="runTest"
         >
           <template #icon>
-            <n-icon><SpeedometerOutline /></n-icon>
+            <n-icon>
+              <ShieldCheckmarkOutline v-if="isOAuthChannel" />
+              <SpeedometerOutline v-else />
+            </n-icon>
           </template>
-          测速
+          {{ isOAuthChannel ? '检查授权' : '测速' }}
         </n-button>
         <n-button size="tiny" @click="$emit('edit')">
           编辑
@@ -64,16 +67,36 @@
     </div>
 
     <!-- 测试结果展示 -->
-    <div v-if="testResult" class="test-result" :class="testResult.success ? 'success' : 'failed'">
+    <div
+      v-if="testResult"
+      class="test-result"
+      :class="testResult.kind === 'oauth' ? testResult.level : (testResult.success ? 'success' : 'failed')"
+    >
       <div class="test-result-header">
         <span class="test-result-status">
-          <n-icon v-if="testResult.success" color="#18a058"><CheckmarkCircleOutline /></n-icon>
-          <n-icon v-else color="#f56c6c"><CloseCircleOutline /></n-icon>
-          {{ testResult.success ? '测试成功' : '测试失败' }}
+          <template v-if="testResult.kind === 'oauth'">
+            <n-icon v-if="testResult.level === 'success'" color="#18a058"><CheckmarkCircleOutline /></n-icon>
+            <n-icon v-else-if="testResult.level === 'warning'" color="#d99000"><AlertCircleOutline /></n-icon>
+            <n-icon v-else color="#f56c6c"><CloseCircleOutline /></n-icon>
+            {{ testResult.title }}
+          </template>
+          <template v-else>
+            <n-icon v-if="testResult.success" color="#18a058"><CheckmarkCircleOutline /></n-icon>
+            <n-icon v-else color="#f56c6c"><CloseCircleOutline /></n-icon>
+            {{ testResult.success ? '测试成功' : '测试失败' }}
+          </template>
         </span>
         <div class="test-result-info">
-          <span v-if="testResult.latency" class="latency">{{ testResult.latency }}ms</span>
-          <span v-if="testResult.statusCode" class="status-code">HTTP {{ testResult.statusCode }}</span>
+          <template v-if="testResult.kind === 'oauth'">
+            <span v-if="testResult.account" class="status-code">{{ testResult.account }}</span>
+            <span v-if="testResult.expiresAt" class="status-code">Token 到期 {{ formatDateTime(testResult.expiresAt) }}</span>
+            <span v-else class="status-code">Token 有效期未知</span>
+            <span v-if="testResult.checkedAt" class="status-code">检查于 {{ formatDateTime(testResult.checkedAt) }}</span>
+          </template>
+          <template v-else>
+            <span v-if="testResult.latency" class="latency">{{ testResult.latency }}ms</span>
+            <span v-if="testResult.statusCode" class="status-code">HTTP {{ testResult.statusCode }}</span>
+          </template>
         </div>
         <n-button text size="tiny" @click="testResult = null">
           <n-icon><CloseOutline /></n-icon>
@@ -81,6 +104,9 @@
       </div>
       <div v-if="testResult.error" class="test-result-error">
         {{ testResult.error }}
+      </div>
+      <div v-if="testResult.warning" class="test-result-warning">
+        {{ testResult.warning }}
       </div>
     </div>
 
@@ -159,7 +185,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { NButton, NIcon, NTag, NText, NSwitch } from 'naive-ui'
-import { ChevronDownOutline, OpenOutline, SpeedometerOutline, CheckmarkCircleOutline, CloseCircleOutline, CloseOutline } from '@vicons/ionicons5'
+import { ChevronDownOutline, OpenOutline, SpeedometerOutline, ShieldCheckmarkOutline, CheckmarkCircleOutline, AlertCircleOutline, CloseCircleOutline, CloseOutline } from '@vicons/ionicons5'
 
 const props = defineProps({
   channel: {
@@ -198,6 +224,10 @@ const props = defineProps({
     type: Function,
     default: null
   },
+  authCheckFn: {
+    type: Function,
+    default: null
+  },
   toggling: {
     type: Boolean,
     default: false
@@ -208,6 +238,7 @@ const emit = defineEmits(['toggle-collapse', 'apply', 'edit', 'delete', 'toggle-
 
 const testing = ref(false)
 const testResult = ref(null)
+const isOAuthChannel = computed(() => props.channel?.authMode === 'oauth')
 
 const balanceWindows = computed(() => {
   if (!props.balance?.visible || props.balance.kind !== 'oauth-quota') return []
@@ -263,22 +294,27 @@ const balanceTitle = computed(() => {
 })
 
 async function runTest() {
-  if (!props.testFn) return
+  const action = isOAuthChannel.value ? props.authCheckFn : props.testFn
+  if (!action) return
   testing.value = true
   testResult.value = null
   try {
-    const result = await props.testFn(props.channel.id, 20000)
-    testResult.value = result
+    const result = isOAuthChannel.value
+      ? await action(props.channel.id)
+      : await action(props.channel.id, 20000)
+    testResult.value = isOAuthChannel.value ? { ...result, kind: 'oauth' } : result
   } catch (err) {
-    testResult.value = {
-      success: false,
-      error: err.message || '测试失败',
-      latency: null,
-      statusCode: null
-    }
+    testResult.value = isOAuthChannel.value
+      ? { kind: 'oauth', level: 'failed', title: '授权检查失败', error: err.message || '检查失败' }
+      : { success: false, error: err.message || '测试失败', latency: null, statusCode: null }
   } finally {
     testing.value = false
   }
+}
+
+function formatDateTime(value) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString()
 }
 </script>
 
@@ -388,6 +424,11 @@ async function runTest() {
   border-left: 3px solid #f56c6c;
 }
 
+.test-result.warning {
+  background: rgba(217, 144, 0, 0.06);
+  border-left: 3px solid #d99000;
+}
+
 .test-result-header {
   display: flex;
   align-items: center;
@@ -408,6 +449,10 @@ async function runTest() {
 
 .test-result.failed .test-result-status {
   color: #f56c6c;
+}
+
+.test-result.warning .test-result-status {
+  color: #b87900;
 }
 
 .test-result-info {
@@ -440,6 +485,17 @@ async function runTest() {
   border-radius: 4px;
   font-size: 12px;
   color: #f56c6c;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.test-result-warning {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: rgba(217, 144, 0, 0.08);
+  border-radius: 4px;
+  font-size: 12px;
+  color: #9b6800;
   line-height: 1.4;
   word-break: break-word;
 }

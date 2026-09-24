@@ -3,7 +3,7 @@
 const { getChannelAuthAdapter, listChannelAuthPlatforms, safeRef } = require('./channel-auth-registry');
 
 const quotaCache = new Map();
-const QUOTA_TTL_MS = 5 * 60 * 1000;
+const QUOTA_TTL_MS = 60 * 1000;
 
 function getAdapter(platform) {
   const adapter = getChannelAuthAdapter(platform);

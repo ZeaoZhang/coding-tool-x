@@ -71,7 +71,7 @@ function argsFor(capability, operation, context) {
     if (operation === 'update') return [params.channelId, context.body || {}];
     if (operation === 'remove') return [params.channelId];
     if (operation === 'models') return [params.channelId, options];
-    if (operation === 'speedTest') return [context];
+    if (['speedTest', 'getAuth', 'syncLocalAuth', 'getAuthQuota'].includes(operation)) return [context];
     if (operation === 'applyToSettings') return [params.channelId];
     return [context.body || options];
   }
