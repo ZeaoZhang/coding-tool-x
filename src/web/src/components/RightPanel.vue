@@ -27,6 +27,15 @@
           </template>
           Skills 技能
         </n-tooltip>
+        <!-- Agents: 按平台能力声明显示，与 Skills 并列 -->
+        <n-tooltip v-if="agentsChannel" trigger="hover">
+          <template #trigger>
+            <n-button text size="small" class="toolbar-btn" @click="handleShowAgents">
+              <template #icon><n-icon :size="18"><PersonOutline /></n-icon></template>
+            </n-button>
+          </template>
+          Agents 代理
+        </n-tooltip>
         <!-- Plugins: 按平台能力声明显示 -->
         <template v-if="pluginChannel">
           <n-tooltip trigger="hover">
@@ -38,24 +47,14 @@
             Plugins 插件
           </n-tooltip>
         </template>
-        <template v-if="commandsChannel || agentsChannel">
-          <n-tooltip v-if="commandsChannel" trigger="hover">
-            <template #trigger>
-              <n-button text size="small" class="toolbar-btn" @click="handleShowCommands">
-                <template #icon><n-icon :size="18"><TerminalOutline /></n-icon></template>
-              </n-button>
-            </template>
-            Commands 命令
-          </n-tooltip>
-          <n-tooltip v-if="agentsChannel" trigger="hover">
-            <template #trigger>
-              <n-button text size="small" class="toolbar-btn" @click="handleShowAgents">
-                <template #icon><n-icon :size="18"><PersonOutline /></n-icon></template>
-              </n-button>
-            </template>
-            Agents 代理
-          </n-tooltip>
-        </template>
+        <n-tooltip v-if="commandsChannel" trigger="hover">
+          <template #trigger>
+            <n-button text size="small" class="toolbar-btn" @click="handleShowCommands">
+              <template #icon><n-icon :size="18"><TerminalOutline /></n-icon></template>
+            </n-button>
+          </template>
+          Commands 命令
+        </n-tooltip>
         <!-- 通用功能 -->
         <n-tooltip v-if="supportsCapability('sessions')" trigger="hover">
           <template #trigger>

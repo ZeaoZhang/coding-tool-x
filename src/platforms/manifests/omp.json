@@ -45,11 +45,11 @@
   "resourceTypes": {
     "skills": true,
     "commands": true,
-    "agents": false,
+    "agents": true,
     "plugins": true
   },
   "agentCapabilities": {
-    "projectScope": false,
+    "projectScope": true,
     "repoOperations": true
   },
   "skillActivation": {
@@ -73,7 +73,7 @@
       ]
     },
     "agents": {
-      "canonicalRoot": null
+      "canonicalRoot": ".omp/agents"
     },
     "commands": {
       "canonicalRoot": ".omp/commands",

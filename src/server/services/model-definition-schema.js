@@ -3,7 +3,7 @@
 const MODEL_SCHEMA_VERSION = 2;
 const MODEL_METADATA_MODES = ['auto', 'hybrid', 'manual'];
 const THINKING_EFFORT_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh'];
-const THINKING_SELECTOR_LEVELS = [...THINKING_EFFORT_LEVELS, 'off'];
+const THINKING_SELECTOR_LEVELS = [...THINKING_EFFORT_LEVELS, 'max', 'off'];
 const THINKING_MODES = [
   'effort',
   'budget',
@@ -173,7 +173,7 @@ function compactObject(value = {}) {
 
 function splitModelSelector(value = '') {
   const raw = String(value || '').trim();
-  const match = raw.match(/:(minimal|low|medium|high|xhigh|off)$/i);
+  const match = raw.match(/:(minimal|low|medium|high|xhigh|max|off)$/i);
   if (!match) return { modelId: raw, thinkingLevel: null };
   return {
     modelId: raw.slice(0, -match[0].length),

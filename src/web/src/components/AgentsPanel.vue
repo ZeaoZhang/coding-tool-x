@@ -50,6 +50,60 @@
       </div>
     </div>
 
+    <div v-if="currentPlatform === 'omp'" class="omp-model-roles">
+      <div class="omp-model-roles-toolbar">
+        <div class="omp-model-roles-copy">
+          <strong>OMP 模型角色</strong>
+          <span>候选模型只取当前启用渠道。原生 OAuth 渠道读取允许模型列表（未设置时读取已声明模型），并使用 OAuth provider ID 作为前缀；OAuth Auth Gateway 使用该托管渠道的模型配置。思考强度会写入选择器后缀，例如 :high。</span>
+          <span v-if="ompUnavailableRoles.length" class="omp-model-roles-stale">
+            以下角色当前指向未启用渠道模型：{{ ompUnavailableRoles.join('、') }}。请切换到已启用渠道中的模型，或清空对应角色。
+          </span>
+          <div v-if="ompModelRolesLoadError" class="omp-model-roles-error">
+            <span>{{ ompModelRolesLoadError }}</span>
+            <n-button text size="tiny" :disabled="loadingOmpModelRoles" @click="loadOmpModelRoles">重试</n-button>
+          </div>
+        </div>
+        <n-button
+          type="primary"
+          size="small"
+          :loading="savingOmpModelRoles"
+          :disabled="loadingOmpModelRoles || !!ompModelRolesLoadError || savingOmpModelRoles || !ompModelRolesDirty"
+          @click="saveOmpModelRoles"
+        >
+          保存角色配置
+        </n-button>
+      </div>
+      <div class="omp-model-roles-header">
+        <span>角色</span>
+        <span>模型</span>
+        <span>思考强度</span>
+      </div>
+      <div
+        v-for="role in ompModelRoleDefinitions"
+        :key="role.key"
+        class="omp-model-role-row"
+      >
+        <strong>{{ role.key }}</strong>
+        <n-select
+          v-model:value="role.model"
+          :options="ompModelOptions"
+          placeholder="请选择已启用渠道模型"
+          filterable
+          clearable
+          size="small"
+          :disabled="loadingOmpModelRoles || !!ompModelRolesLoadError || savingOmpModelRoles"
+        />
+        <n-select
+          v-model:value="role.thinkingLevel"
+          :options="ompThinkingOptions"
+          placeholder="跟随默认"
+          clearable
+          size="small"
+          :disabled="loadingOmpModelRoles || !!ompModelRolesLoadError || savingOmpModelRoles || !ompModelOptionValues.has(role.model)"
+        />
+      </div>
+    </div>
+
     <!-- 统计栏 -->
     <div class="asset-summary">
       <span class="asset-summary-item">
@@ -167,6 +221,7 @@ import {
   PersonOutline
 } from '@vicons/ionicons5'
 import { getAgents, getAgent, deleteAgent } from '../api/agents'
+import { client } from '../api/client'
 import { listItems, toggleEnabled, togglePlatform, syncAll } from '../api/config-registry'
 import message from '../utils/message'
 import AgentCard from './AgentCard.vue'
@@ -211,10 +266,55 @@ const editingAgent = ref(null)
 const deletingKeys = ref({})
 const registryMap = ref({})
 const togglingKeys = ref({})
+const ompModelRoleDefinitions = ref([])
+const originalOmpModelRoles = ref('')
+const ompModelOptions = ref([])
+const ompUnavailableRoles = ref([])
+const ompModelOptionValues = computed(() => new Set(ompModelOptions.value.map(option => option.value)))
+const loadingOmpModelRoles = ref(false)
+const savingOmpModelRoles = ref(false)
+const ompModelRolesLoadError = ref('')
+const ompModelRolesDirty = computed(() => JSON.stringify(ompModelRolesPayload()) !== originalOmpModelRoles.value)
 let detailRequestId = 0
 const { byCapability } = useEnabledCliPlatforms()
 const managedAgentPlatforms = computed(() => byCapability('agents').map(platform => platform.key))
 const supportsCurrentPlatform = computed(() => managedAgentPlatforms.value.includes(currentPlatform.value))
+
+const OMP_MODEL_ROLE_KEYS = [
+  'default', 'smol', 'slow', 'plan', 'commit', 'vision', 'designer', 'task', 'advisor', 'tiny'
+]
+const OMP_THINKING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+const ompThinkingOptions = OMP_THINKING_LEVELS.map(level => ({ label: level, value: level }))
+
+function ompModelRolesPayload() {
+  return Object.fromEntries(ompModelRoleDefinitions.value.map(role => [role.key, {
+    model: role.model || '',
+    thinkingLevel: role.thinkingLevel || ''
+  }]))
+}
+
+function applyOmpModelRoleSettings(data = {}) {
+  const roles = data.roles && typeof data.roles === 'object' ? data.roles : {}
+  ompModelRoleDefinitions.value = OMP_MODEL_ROLE_KEYS.map(key => ({
+    key,
+    model: typeof roles[key]?.model === 'string' ? roles[key].model : '',
+    thinkingLevel: typeof roles[key]?.thinkingLevel === 'string' ? roles[key].thinkingLevel : ''
+  }))
+  originalOmpModelRoles.value = JSON.stringify(ompModelRolesPayload())
+  ompModelOptions.value = (Array.isArray(data.modelOptions) ? data.modelOptions : [])
+    .filter(value => typeof value === 'string' && value.trim())
+    .map(value => ({ label: value, value }))
+  ompUnavailableRoles.value = data.unavailableRoles && typeof data.unavailableRoles === 'object'
+    ? Object.keys(data.unavailableRoles).filter(key => data.unavailableRoles[key] === true)
+    : []
+}
+
+function getOmpModelRolesErrorMessage(error, fallback) {
+  return error?.data?.error
+    || error?.response?.data?.error
+    || error?.message
+    || fallback
+}
 
 const currentPlatform = computed(() => {
   const requested = String(props.platform || getRoutePlatform(route) || '').trim().toLowerCase()
@@ -224,6 +324,8 @@ const currentPlatform = computed(() => {
 const agentUsageHint = computed(() =>
   currentPlatform.value === 'opencode'
     ? '使用 @agent 或 Task 在 OpenCode 中调用'
+    : currentPlatform.value === 'omp'
+    ? 'OMP Agent 由 task 工具按名称调用；模型可在 Agent 配置中单独指定'
     : currentPlatform.value === 'gemini'
     ? '使用 @agent 调用 Gemini 自定义代理'
     : '使用 Task tool 调用自定义代理'
@@ -400,6 +502,36 @@ async function handleRefresh() {
   await loadAgents()
 }
 
+async function loadOmpModelRoles() {
+  if (currentPlatform.value !== 'omp') return
+  loadingOmpModelRoles.value = true
+  ompModelRolesLoadError.value = ''
+  try {
+    const { data } = await client.get('/settings/omp-model-roles')
+    applyOmpModelRoleSettings(data)
+  } catch (error) {
+    ompModelRolesLoadError.value = `加载 OMP 角色配置失败：${getOmpModelRolesErrorMessage(error, '未知错误')}`
+  } finally {
+    loadingOmpModelRoles.value = false
+  }
+}
+
+async function saveOmpModelRoles() {
+  if (loadingOmpModelRoles.value || savingOmpModelRoles.value || ompModelRolesLoadError.value) return
+  savingOmpModelRoles.value = true
+  try {
+    const { data } = await client.put('/settings/omp-model-roles', {
+      roles: ompModelRolesPayload()
+    })
+    applyOmpModelRoleSettings(data)
+    message.success('OMP 模型角色配置已保存')
+  } catch (error) {
+    message.error(`保存 OMP 角色配置失败：${getOmpModelRolesErrorMessage(error, '未知错误')}`)
+  } finally {
+    savingOmpModelRoles.value = false
+  }
+}
+
 function openCreateModal() {
   editingAgent.value = null
   showCreateModal.value = true
@@ -486,6 +618,7 @@ function handleBack() {
 
 onMounted(() => {
   loadAgents()
+  loadOmpModelRoles()
 })
 
 watch(currentPlatform, () => {
@@ -493,6 +626,7 @@ watch(currentPlatform, () => {
   detailLoading.value = false
   selectedAgent.value = null
   loadAgents()
+  loadOmpModelRoles()
 })
 </script>
 
@@ -503,5 +637,96 @@ watch(currentPlatform, () => {
 
 .action-btn {
   padding: 4px 8px;
+}
+
+.omp-model-roles {
+  margin: 0 14px 12px;
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+
+.omp-model-roles-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+}
+
+.omp-model-roles-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.omp-model-roles-copy strong {
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.omp-model-roles-copy span {
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.omp-model-roles-copy .omp-model-roles-stale {
+  color: var(--n-warning-color, #f0a020);
+}
+
+.omp-model-roles-error {
+  color: var(--n-error-color, #d03050);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.omp-model-roles-error span {
+  color: inherit;
+}
+
+.omp-model-roles-header,
+.omp-model-role-row {
+  display: grid;
+  grid-template-columns: 88px minmax(180px, 1.4fr) minmax(130px, 0.8fr);
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+}
+
+.omp-model-roles-header {
+  color: var(--text-secondary);
+  font-size: 11px;
+  border-top: 1px solid var(--border-primary);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.omp-model-role-row + .omp-model-role-row {
+  border-top: 1px solid var(--border-primary);
+}
+
+.omp-model-role-row strong {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+@media (max-width: 600px) {
+  .omp-model-roles-toolbar {
+    align-items: flex-start;
+  }
+
+  .omp-model-roles-header {
+    display: none;
+  }
+
+  .omp-model-role-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .omp-model-role-row strong {
+    grid-column: 1 / -1;
+  }
 }
 </style>

@@ -138,7 +138,7 @@
             <n-form-item label="可用工具" path="tools">
               <n-input
                 v-model:value="formData.tools"
-                placeholder="Read, Edit, Bash"
+                :placeholder="isOmpPlatform ? 'read, edit, bash（逗号分隔）' : 'Read, Edit, Bash'"
               />
             </n-form-item>
 
@@ -146,7 +146,7 @@
               <n-input
                 v-if="isTextModelPlatform"
                 v-model:value="formData.model"
-                placeholder="gpt-5, claude-sonnet-4, openrouter/model"
+                :placeholder="isOmpPlatform ? '@default、@review 或 provider/model；多个候选用逗号分隔' : 'gpt-5, claude-sonnet-4, openrouter/model'"
               />
               <n-select
                 v-else
@@ -157,8 +157,25 @@
               />
             </n-form-item>
 
+            <div v-if="isOmpPlatform" class="field-grid">
+              <n-form-item label="思考级别" path="thinkingLevel">
+                <n-select
+                  v-model:value="formData.thinkingLevel"
+                  :options="ompThinkingOptions"
+                  placeholder="使用模型默认级别"
+                  clearable
+                />
+              </n-form-item>
+              <n-form-item label="可调用的子 Agent" path="spawns">
+                <n-input
+                  v-model:value="formData.spawns"
+                  placeholder="* 或 reviewer, scout"
+                />
+              </n-form-item>
+            </div>
+
             <div class="field-grid">
-              <n-form-item v-if="props.platform !== 'opencode'" label="权限模式" path="permissionMode">
+              <n-form-item v-if="props.platform !== 'opencode' && !isOmpPlatform" label="权限模式" path="permissionMode">
                 <n-select
                   v-model:value="formData.permissionMode"
                   :options="permissionOptions"
@@ -167,7 +184,7 @@
                 />
               </n-form-item>
 
-              <n-form-item v-if="props.platform !== 'opencode'" label="技能" path="skills">
+              <n-form-item v-if="props.platform !== 'opencode' && !isOmpPlatform" label="技能" path="skills">
                 <n-input
                   v-model:value="formData.skills"
                   placeholder="自动加载的技能，逗号分隔"
@@ -253,14 +270,16 @@ const visible = computed({
 const isEdit = computed(() => !!props.agent)
 const isCodexPlatform = computed(() => props.platform === 'codex')
 const isClaudePlatform = computed(() => props.platform === 'claude')
-const isTextModelPlatform = computed(() => props.platform === 'codex' || props.platform === 'opencode')
+const isOmpPlatform = computed(() => props.platform === 'omp')
+const isTextModelPlatform = computed(() => ['codex', 'opencode', 'omp'].includes(props.platform))
 const modalTitle = computed(() => isEdit.value ? '编辑代理' : '创建代理')
 const currentPlatformLabel = computed(() => {
   const labels = {
     claude: 'Claude Code',
     codex: 'Codex CLI',
     gemini: 'Gemini CLI',
-    opencode: 'OpenCode'
+    opencode: 'OpenCode',
+    omp: 'OMP'
   }
   return labels[props.platform] || 'Claude Code'
 })
@@ -271,6 +290,8 @@ const userScopePath = computed(() =>
     ? '~/.config/opencode/agents/'
     : props.platform === 'gemini'
     ? '~/.gemini/agents/'
+    : props.platform === 'omp'
+    ? '~/.omp/agent/agents/'
     : '~/.claude/agents/'
 )
 const projectScopePath = computed(() =>
@@ -278,6 +299,8 @@ const projectScopePath = computed(() =>
     ? '.opencode/agents/'
     : props.platform === 'gemini'
     ? '.gemini/agents/'
+    : props.platform === 'omp'
+    ? '.omp/agents/'
     : '.claude/agents/'
 )
 const scopeBadgeText = computed(() => formData.value.scope === 'project' ? '项目级' : '用户级')
@@ -306,6 +329,16 @@ const permissionOptions = [
   { label: '严格 (strict)', value: 'strict' }
 ]
 
+const ompThinkingOptions = [
+  { label: 'Off', value: 'off' },
+  { label: 'Minimal', value: 'minimal' },
+  { label: 'Low', value: 'low' },
+  { label: 'Medium', value: 'medium' },
+  { label: 'High', value: 'high' },
+  { label: 'XHigh', value: 'xhigh' },
+  { label: 'Max', value: 'max' }
+]
+
 const configModeOptions = [
   { label: '仅描述', value: 'none' },
   { label: '托管 TOML', value: 'managed' },
@@ -322,6 +355,8 @@ const formData = ref({
   configContent: '',
   tools: '',
   model: '',
+  thinkingLevel: '',
+  spawns: '',
   permissionMode: '',
   skills: '',
   systemPrompt: ''
@@ -385,6 +420,8 @@ watch(() => props.agent, (agent) => {
       configContent: agent.fullContent || '',
       tools: agent.tools || '',
       model: agent.model || '',
+      thinkingLevel: agent.thinkingLevel || '',
+      spawns: agent.spawns || '',
       permissionMode: agent.permissionMode || '',
       skills: agent.skills || '',
       systemPrompt: agent.systemPrompt || ''
@@ -414,6 +451,8 @@ function resetForm() {
     configContent: '',
     tools: '',
     model: '',
+    thinkingLevel: '',
+    spawns: '',
     permissionMode: '',
     skills: '',
     systemPrompt: ''

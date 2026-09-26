@@ -1,13 +1,14 @@
 /**
  * Agents 服务
  *
- * 管理 Claude/Codex/Gemini/OpenCode 自定义代理的 CRUD 操作
+ * 管理 Claude/Codex/Gemini/OpenCode/OMP 自定义代理的 CRUD 操作
  * 支持从 GitHub 仓库扫描和安装代理
  */
 
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const yaml = require('js-yaml');
 const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
 const { RepoScannerBase } = require('../server/services/repo-scanner-base');
@@ -22,7 +23,7 @@ const {
   resolveInsideRoot
 } = require('../shared/config-artifact-paths');
 
-function readAgentMetadata(filePath) {
+function readAgentMetadata(filePath, platform = '') {
   const fd = fs.openSync(filePath, 'r');
   const buffer = Buffer.alloc(8192);
   const chunks = [];
@@ -36,7 +37,7 @@ function readAgentMetadata(filePath) {
       let text = Buffer.concat(chunks).toString('utf8');
       if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
       if (total === bytesRead && !/^\s*---\s*(?:\n|$)/.test(text)) return {};
-      if (/^\s*---\s*\n[\s\S]*?\n\s*---\s*(?:\n|$)/.test(text)) return parseFrontmatter(text).frontmatter;
+      if (/^\s*---\s*\n[\s\S]*?\n\s*---\s*(?:\n|$)/.test(text)) return parseFrontmatter(text, platform).frontmatter;
     }
     return {};
   } finally {
@@ -86,6 +87,12 @@ const PLATFORM_CONFIG = {
     userAgentsDir: GEMINI_AGENTS_DIR,
     projectAgentsDir: (projectPath) => path.join(projectPath, '.gemini', 'agents'),
     repoType: 'gemini-agents',
+    capabilities: { projectScope: true, repoOperations: true }
+  },
+  omp: {
+    userAgentsDir: path.join(NATIVE_PATHS.omp.dir, 'agents'),
+    projectAgentsDir: (projectPath) => path.join(projectPath, '.omp', 'agents'),
+    repoType: 'agents',
     capabilities: { projectScope: true, repoOperations: true }
   }
 };
@@ -350,7 +357,7 @@ function readCodexAgentConfigFile(configFilePath) {
 /**
  * 解析 YAML frontmatter
  */
-function parseFrontmatter(content) {
+function parseFrontmatter(content, platform = '') {
 
   const result = {
     frontmatter: {},
@@ -368,6 +375,18 @@ function parseFrontmatter(content) {
 
   const frontmatterText = match[1];
   result.body = match[2].trim();
+
+  if (platform === 'omp') {
+    try {
+      const parsed = yaml.load(frontmatterText);
+      if (isPlainObject(parsed)) {
+        result.frontmatter = parsed;
+        return result;
+      }
+    } catch {
+      // Fall back to the basic parser for OMP's supported shorthand values.
+    }
+  }
 
   // 简单解析 YAML（支持基本字段）
   const lines = frontmatterText.split('\n');
@@ -421,6 +440,19 @@ function readCodexTomlMetadata(filePath) {
  */
 function generateFrontmatter(data, platform = 'claude') {
   const lines = ['---'];
+
+  if (platform === 'omp') {
+    const frontmatter = {};
+    if (data.name) frontmatter.name = data.name;
+    if (data.description) frontmatter.description = data.description;
+    if (data.tools) frontmatter.tools = data.tools;
+    if (data.model) frontmatter.model = data.model;
+    if (data.thinkingLevel) frontmatter['thinking-level'] = data.thinkingLevel;
+    if (data.spawns) frontmatter.spawns = data.spawns;
+    lines.push(yaml.dump(frontmatter, { lineWidth: 120, noRefs: true, sortKeys: false }).trimEnd());
+    lines.push('---');
+    return lines.join('\n');
+  }
 
   // Claude 下写入 name，OpenCode 以文件名作为 agent id
   if (platform !== 'opencode' && data.name) {
@@ -481,8 +513,10 @@ function scanAgentsDir(dir, basePath, scope) {
             path: relativePath,
             fullPath,
             description: frontmatter.description || '',
-            tools: frontmatter.tools || '',
-            model: frontmatter.model || '',
+            tools: Array.isArray(frontmatter.tools) ? frontmatter.tools.join(', ') : (frontmatter.tools || ''),
+            model: Array.isArray(frontmatter.model) ? frontmatter.model.join(', ') : (frontmatter.model || ''),
+            thinkingLevel: frontmatter.thinkingLevel || frontmatter['thinking-level'] || '',
+            spawns: Array.isArray(frontmatter.spawns) ? frontmatter.spawns.join(', ') : (frontmatter.spawns || ''),
             permissionMode: frontmatter.permissionMode || '',
             skills: frontmatter.skills || '',
             systemPrompt: body,
@@ -687,14 +721,14 @@ class AgentsService {
       this._localIndexes.set(key, new LocalResourceIndex({ key, roots: [root],
         scanFile: (descriptor) => {
           if (!descriptor.fullPath.endsWith('.md') || descriptor.relativePath.includes(path.sep)) return null;
-          const frontmatter = readAgentMetadata(descriptor.fullPath);
+          const frontmatter = readAgentMetadata(descriptor.fullPath, this.platform);
           const fileName = path.basename(descriptor.relativePath, '.md');
-          return { name: frontmatter.name || fileName, fileName, scope, path: descriptor.relativePath, fullPath: descriptor.fullPath, description: frontmatter.description || '', tools: frontmatter.tools || '', model: frontmatter.model || '', permissionMode: frontmatter.permissionMode || '', skills: frontmatter.skills || '', updatedAt: descriptor.stat.mtime.getTime() };
+          return { name: frontmatter.name || fileName, fileName, scope, path: descriptor.relativePath, fullPath: descriptor.fullPath, description: frontmatter.description || '', tools: Array.isArray(frontmatter.tools) ? frontmatter.tools.join(', ') : (frontmatter.tools || ''), model: Array.isArray(frontmatter.model) ? frontmatter.model.join(', ') : (frontmatter.model || ''), thinkingLevel: frontmatter.thinkingLevel || frontmatter['thinking-level'] || '', spawns: Array.isArray(frontmatter.spawns) ? frontmatter.spawns.join(', ') : (frontmatter.spawns || ''), permissionMode: frontmatter.permissionMode || '', skills: frontmatter.skills || '', updatedAt: descriptor.stat.mtime.getTime() };
         },
         detailFile: (summary) => {
           const content = fs.readFileSync(summary.fullPath, 'utf-8');
-          const { frontmatter, body } = parseFrontmatter(content);
-          return { systemPrompt: body, fullContent: content, updatedAt: fs.statSync(summary.fullPath).mtime.getTime(), name: frontmatter.name || summary.fileName, description: frontmatter.description || '', tools: frontmatter.tools || '', model: frontmatter.model || '', permissionMode: frontmatter.permissionMode || '', skills: frontmatter.skills || '' };
+          const { frontmatter, body } = parseFrontmatter(content, this.platform);
+          return { systemPrompt: body, fullContent: content, updatedAt: fs.statSync(summary.fullPath).mtime.getTime(), name: frontmatter.name || summary.fileName, description: frontmatter.description || '', tools: Array.isArray(frontmatter.tools) ? frontmatter.tools.join(', ') : (frontmatter.tools || ''), model: Array.isArray(frontmatter.model) ? frontmatter.model.join(', ') : (frontmatter.model || ''), thinkingLevel: frontmatter.thinkingLevel || frontmatter['thinking-level'] || '', spawns: Array.isArray(frontmatter.spawns) ? frontmatter.spawns.join(', ') : (frontmatter.spawns || ''), permissionMode: frontmatter.permissionMode || '', skills: frontmatter.skills || '' };
         }
       }));
     }
@@ -807,7 +841,7 @@ class AgentsService {
   /**
    * 创建代理
    */
-  createAgent({ fileName, scope, projectPath, name, description, tools, model, permissionMode, skills, systemPrompt, configMode, configFile, configContent }) {
+  createAgent({ fileName, scope, projectPath, name, description, tools, model, thinkingLevel, spawns, permissionMode, skills, systemPrompt, configMode, configFile, configContent }) {
     const safeFileName = assertSafeAgentFileName(fileName);
 
     if (this.platform === 'codex') {
@@ -836,6 +870,8 @@ class AgentsService {
     const frontmatterData = { name: (name || safeFileName), description };
     if (tools) frontmatterData.tools = tools;
     if (model) frontmatterData.model = model;
+    if (thinkingLevel) frontmatterData.thinkingLevel = thinkingLevel;
+    if (spawns) frontmatterData.spawns = spawns;
     if (permissionMode) frontmatterData.permissionMode = permissionMode;
     if (skills) frontmatterData.skills = skills;
 
@@ -848,7 +884,7 @@ class AgentsService {
   /**
    * 更新代理
    */
-  updateAgent({ fileName, scope, projectPath, name, description, tools, model, permissionMode, skills, systemPrompt, configMode, configFile, configContent }) {
+  updateAgent({ fileName, scope, projectPath, name, description, tools, model, thinkingLevel, spawns, permissionMode, skills, systemPrompt, configMode, configFile, configContent }) {
     const safeFileName = assertSafeAgentFileName(fileName);
 
     if (this.platform === 'codex') {
@@ -869,6 +905,8 @@ class AgentsService {
     };
     if (tools) frontmatterData.tools = tools;
     if (model) frontmatterData.model = model;
+    if (thinkingLevel) frontmatterData.thinkingLevel = thinkingLevel;
+    if (spawns) frontmatterData.spawns = spawns;
     if (permissionMode) frontmatterData.permissionMode = permissionMode;
     if (skills) frontmatterData.skills = skills;
 

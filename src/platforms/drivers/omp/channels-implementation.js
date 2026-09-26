@@ -24,7 +24,7 @@ const {
   upsertSyncedChannels
 } = require('../../../server/services/channel-sync-utils');
 
-const OMP_THINKING_SUFFIX_RE = /:(minimal|low|medium|high|xhigh|off)$/;
+const OMP_THINKING_SUFFIX_RE = /:(minimal|low|medium|high|xhigh|max|off)$/i;
 
 let configuredState = {
   channels: PATHS.channels?.omp,

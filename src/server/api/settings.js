@@ -10,6 +10,10 @@ const {
 const { getPlatformCatalog } = require('../services/platform-catalog');
 const { loadConfig, saveConfig } = require('../../config/loader');
 const {
+  readOmpModelRoleSettings,
+  updateOmpModelRoleSettings
+} = require('../../platforms/drivers/omp/model-role-settings');
+const {
   MODEL_SCHEMA_VERSION,
   getPublicModelFieldSchema,
   isPlainObject,
@@ -268,5 +272,28 @@ function handleDeleteModelOverride(req, res) {
 
 router.delete('/model-settings/:modelId', handleDeleteModelOverride);
 router.delete('/model-metadata/:modelId', handleDeleteModelOverride);
+
+router.get('/omp-model-roles', (req, res) => {
+  try {
+    res.json({ success: true, ...readOmpModelRoleSettings() });
+  } catch (error) {
+    console.error('Error getting OMP model roles:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.put('/omp-model-roles', (req, res) => {
+  try {
+    const { roles } = req.body || {};
+    if (!roles || typeof roles !== 'object' || Array.isArray(roles)) {
+      return res.status(400).json({ error: 'roles must be an object' });
+    }
+    res.json({ success: true, ...updateOmpModelRoleSettings(roles) });
+  } catch (error) {
+    console.error('Error saving OMP model roles:', error);
+    const isValidationError = /^roles(?:\.| must be)/.test(error.message);
+    res.status(isValidationError ? 400 : 500).json({ error: error.message });
+  }
+});
 
 module.exports = router;

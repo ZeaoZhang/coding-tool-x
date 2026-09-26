@@ -109,6 +109,8 @@ npm test            # 运行项目测试
 
 本项目基于 [CooperJiang/coding-tool](https://github.com/CooperJiang/coding-tool) 持续扩展。感谢上游项目以及所有提供反馈、测试和贡献的用户。
 
+特别感谢 linud.do 社区对本项目的关注、反馈与支持。
+
 ## License
 
 [MIT](LICENSE)

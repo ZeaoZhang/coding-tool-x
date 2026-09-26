@@ -157,7 +157,7 @@ function extractModelId(body, contentType = '') {
 }
 
 function normalizeModelId(value) {
-  return String(value || '').trim().replace(/:(minimal|low|medium|high|xhigh|off)$/, '');
+  return String(value || '').trim().replace(/:(minimal|low|medium|high|xhigh|max|off)$/i, '');
 }
 
 function channelSupportsModel(channel, modelId) {
