@@ -51,7 +51,7 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Bump patch version
+      - name: Choose date-stamped package version
         id: version
         if: steps.catalog.outputs.changed == 'true'
         run: |
@@ -59,12 +59,25 @@ jobs:
           npm version "$next_version" --no-git-tag-version
           echo "version=$next_version" >> "$GITHUB_OUTPUT"
 
-      - name: Publish package to npm
+      - name: Check whether this date's package version already exists
+        id: version-availability
         if: steps.catalog.outputs.changed == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if npm view "coding-tool-x@$VERSION" version >/dev/null 2>&1; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Version $VERSION was already published today; leaving this catalog change for the next daily run."
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish package to npm
+        if: steps.catalog.outputs.changed == 'true' && steps.version-availability.outputs.available == 'true'
         run: npm publish --access public --tag latest
 
       - name: Commit and push catalog update
-        if: steps.catalog.outputs.changed == 'true'
+        if: steps.catalog.outputs.changed == 'true' && steps.version-availability.outputs.available == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
