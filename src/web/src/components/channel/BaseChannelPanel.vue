@@ -120,6 +120,16 @@
                 :placeholder="field.placeholder"
                 @update:value="handlePresetChange"
               />
+              <!-- 固定选项字段 -->
+              <n-select
+                v-else-if="field.type === 'select' && !['model', 'speedTestModel'].includes(field.key)"
+                :value="getNestedValue(state.formData, field.key)"
+                :options="field.options || []"
+                :placeholder="field.placeholder"
+                :clearable="field.clearable"
+                :disabled="field.disabledOnEdit && !!state.editingChannel"
+                @update:value="(val) => setNestedValue(state.formData, field.key, val)"
+              />
               <!-- 模型重定向编辑器 -->
               <ModelRedirectEditor
                 v-else-if="field.type === 'model-redirect'"

@@ -48,11 +48,17 @@
       </div>
     </div>
 
+    <div v-if="currentPlatform === 'dsh' && capabilities.install" class="dsh-install-row">
+      <n-select v-model:value="dshProfile" :options="dshProfileOptions" size="small" placeholder="选择 Profile" />
+      <n-input v-model:value="dshPackageSpec" size="small" placeholder="npm 包名，例如 @scope/dsh-plugin" @keyup.enter="installDshPackage" />
+      <n-button size="small" type="primary" :loading="installingDshPackage" :disabled="!dshProfile || !dshPackageSpec.trim()" @click="installDshPackage">安装外置插件</n-button>
+    </div>
+
     <!-- 统计栏 -->
     <div class="asset-summary">
       <span class="asset-summary-item">
         <span class="asset-summary-label">全部</span>
-        <span class="asset-summary-value">{{ plugins.length }}</span>
+        <span class="asset-summary-value">{{ visiblePlugins.length }}</span>
       </span>
       <span class="asset-summary-item">
         <span class="asset-summary-label">已安装</span>
@@ -60,7 +66,7 @@
       </span>
       <span class="asset-summary-item">
         <span class="asset-summary-label">可安装</span>
-        <span class="asset-summary-value">{{ plugins.length - installedCount }}</span>
+        <span class="asset-summary-value">{{ visiblePlugins.length - installedCount }}</span>
       </span>
     </div>
 
@@ -85,7 +91,7 @@
           <n-empty :description="emptyText">
             <template #icon><n-icon size="48" color="var(--text-quaternary)"><ExtensionPuzzleOutline /></n-icon></template>
             <template #extra>
-              <n-button size="small" @click="showRepoManager = true" v-if="managedPluginPlatforms.includes(currentPlatform) && plugins.length === 0 && capabilities.repositories">配置仓库源</n-button>
+              <n-button size="small" @click="showRepoManager = true" v-if="managedPluginPlatforms.includes(currentPlatform) && visiblePlugins.length === 0 && capabilities.repositories">配置仓库源</n-button>
             </template>
           </n-empty>
         </div>
@@ -137,7 +143,8 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { NButton, NIcon, NInput, NSelect, NSpin, NEmpty, useMessage } from 'naive-ui'
 import { ArrowBackOutline, GitBranchOutline, RefreshOutline, SearchOutline, ExtensionPuzzleOutline, InformationCircleOutline, CloudDownloadOutline } from '@vicons/ionicons5'
-import { getPlugins, getMarketPlugins, getPluginCapabilities, installPlugin, uninstallPlugin, refreshPlugins, getPluginRefreshTask, invalidatePluginSessionCache } from '../api/plugins'
+import { getPlugins, getMarketPlugins, getPluginCapabilities, installPlugin, uninstallPlugin, installDshPlugin, uninstallDshPlugin, refreshPlugins, getPluginRefreshTask, invalidatePluginSessionCache } from '../api/plugins'
+import { getDshProfiles } from '../api/dsh-agent-presets'
 import { importFromClaude } from '../api/config-registry'
 import PluginCard from './PluginCard.vue'
 import PluginRepoManager from './PluginRepoManager.vue'
@@ -171,6 +178,11 @@ const installingKeys = ref({})
 const uninstallingKeys = ref({})
 const importing = ref(false)
 const refreshing = ref(false)
+const dshProfiles = ref([])
+const dshProfile = ref('')
+const dshPackageSpec = ref('')
+const installingDshPackage = ref(false)
+const dshProfileOptions = computed(() => dshProfiles.value.map(profile => ({ label: profile.name, value: profile.name })))
 const loadRequestId = ref(0)
 const capabilities = ref({
   supportsPlugins: true,
@@ -219,7 +231,10 @@ const filterOptions = [
   { label: '未安装', value: 'uninstalled' }
 ]
 
-const installedCount = computed(() => plugins.value.filter(p => p.installed).length)
+const visiblePlugins = computed(() => currentPlatform.value === 'dsh'
+  ? plugins.value.filter(plugin => plugin.profile === dshProfile.value)
+  : plugins.value)
+const installedCount = computed(() => visiblePlugins.value.filter(plugin => plugin.installed).length)
 
 function requestContext(plugin = null) {
   return {
@@ -231,7 +246,7 @@ function requestContext(plugin = null) {
 }
 
 const filteredPlugins = computed(() => {
-  let result = plugins.value
+  let result = visiblePlugins.value
   if (filterStatus.value === 'installed') result = result.filter(p => p.installed)
   else if (filterStatus.value === 'uninstalled') result = result.filter(p => !p.installed)
   if (searchQuery.value.trim()) {
@@ -243,6 +258,7 @@ const filteredPlugins = computed(() => {
 
 const emptyText = computed(() => {
   if (searchQuery.value) return '没有匹配的插件'
+  if (currentPlatform.value === 'dsh') return '当前 Profile 没有外置插件，可通过上方输入框安装 npm 包'
   if (filterStatus.value === 'installed') return '暂无已安装的插件'
   if (filterStatus.value === 'uninstalled') return '所有插件都已安装'
   if (capabilities.value.supportsPlugins === false) return capabilities.value.disabledReason || `${currentPlatformLabel.value} 暂未提供插件管理能力`
@@ -297,6 +313,10 @@ async function loadData() {
   }
   loading.value = true
   try {
+    if (platform === 'dsh') {
+      dshProfiles.value = await getDshProfiles()
+      if (!dshProfiles.value.some(profile => profile.name === dshProfile.value)) dshProfile.value = dshProfiles.value[0]?.name || ''
+    }
     if (!await loadCapabilities(platform, requestId)) return
     if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return
 
@@ -373,6 +393,23 @@ async function loadData() {
     if (requestId === loadRequestId.value) {
       loading.value = false
     }
+  }
+}
+
+async function installDshPackage() {
+  const spec = dshPackageSpec.value.trim()
+  if (!dshProfile.value || !spec || installingDshPackage.value) return
+  installingDshPackage.value = true
+  try {
+    await installDshPlugin(dshProfile.value, spec)
+    message.success(`已安装 ${spec}`)
+    dshPackageSpec.value = ''
+    invalidatePluginSessionCache('dsh')
+    await loadData()
+  } catch (err) {
+    message.error(err.message || '安装外置插件失败')
+  } finally {
+    installingDshPackage.value = false
   }
 }
 
@@ -489,11 +526,13 @@ async function handleUninstall(plugin) {
   if (!supportsCurrentPlatform.value || !capabilities.value.uninstall || plugin.readonly) return
   uninstallingKeys.value[plugin.key] = true
   try {
-    const res = await uninstallPlugin(
-      plugin.pluginId || plugin.id || plugin.name,
-      currentPlatform.value,
-      requestContext(plugin)
-    )
+    const res = currentPlatform.value === 'dsh'
+      ? await uninstallDshPlugin(plugin.profile, plugin.name)
+      : await uninstallPlugin(
+        plugin.pluginId || plugin.id || plugin.name,
+        currentPlatform.value,
+        requestContext(plugin)
+      )
     if (res.success) {
       message.success(`插件 "${plugin.name}" 已卸载`)
       invalidatePluginSessionCache(currentPlatform.value)
@@ -533,4 +572,6 @@ watch(() => currentPlatform.value, () => {
 <style scoped>
 .back-btn { padding: 4px; }
 .action-btn { padding: 4px 8px; }
+.dsh-install-row { display: grid; grid-template-columns: minmax(150px, 220px) minmax(180px, 1fr) auto; gap: 8px; padding: 0 16px 12px; }
+@media (max-width: 620px) { .dsh-install-row { grid-template-columns: 1fr; } }
 </style>

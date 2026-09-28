@@ -3,7 +3,7 @@
 const { createDriver: createNativeConfigDriver } = require('./native-config');
 const { createDriver: createProjectsDriver } = require('./projects');
 const { createDriver: createSessionsDriver } = require('./sessions');
-const { listProfiles, listProfilePlugins, listProfileCapabilities, listProfileMcp, listProfilePrompts, listPlugins, upsertProfilePatchRow, deleteProfilePatchRow } = require('./common');
+const { listProfiles, listManageableProfilePlugins, listProfileCapabilities, listProfileMcp, listProfilePrompts, listProfileAgentPresets, restoreAgentPresetRedactions, listPlugins, upsertProfilePatchRow, deleteProfilePatchRow } = require('./common');
 const { listSkills, getSkill, createSkill, updateSkill, deleteSkill } = require('./resources');
 const { installPlugin, uninstallPlugin, updatePlugin } = require('./plugin-manager');
 const { createDriver: createChannelsDriver } = require('./channels');
@@ -50,6 +50,25 @@ function promptConfigFromRequest(request = {}) {
   delete config.disabled;
   delete config.scope;
   delete config.cwd;
+  return config;
+}
+
+function agentPresetConfigFromRequest(request = {}) {
+  const body = request.body || {};
+  const source = body.config && typeof body.config === 'object' && !Array.isArray(body.config) ? body.config : body;
+  const id = String(source.id || '').trim();
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id)) throw new Error('Agent preset id must use lowercase letters, numbers, and hyphens');
+  if (!Array.isArray(source.plugins) || source.plugins.some(plugin => !plugin || typeof plugin !== 'object' || Array.isArray(plugin))) {
+    throw new Error('Agent preset plugins must be an array of plugin declarations');
+  }
+  const config = {
+    id,
+    plugins: source.plugins
+  };
+  for (const key of ['name', 'description']) {
+    if (typeof source[key] === 'string' && source[key].trim()) config[key] = source[key].trim();
+  }
+  if (Number.isFinite(Number(source.order))) config.order = Number(source.order);
   return config;
 }
 
@@ -211,7 +230,7 @@ function createDriver(context = {}) {
   driver.listPlugins = request => resultFor(request, 'ok', listPlugins(context));
   driver.listProfilePlugins = async (request = {}) => {
     const profile = request.params?.profileName;
-    const result = listProfilePlugins(context, profile);
+    const result = listManageableProfilePlugins(context, profile);
     return result ? resultFor(request, 'ok', result) : resultFor(request, 'unsupported');
   };
   driver.listProfileCapabilities = async (request = {}) => {
@@ -228,6 +247,45 @@ function createDriver(context = {}) {
     const profile = request.params?.profileName;
     const result = listProfilePrompts(context, profile);
     return result ? resultFor(request, 'ok', result) : resultFor(request, 'unsupported');
+  };
+  driver.listProfileAgentPresets = async (request = {}) => {
+    const result = listProfileAgentPresets(context, request.params?.profileName);
+    return result ? resultFor(request, 'ok', result) : resultFor(request, 'unsupported');
+  };
+  driver.upsertAgentPreset = async (request = {}) => {
+    const profileName = request.params?.profileName;
+    const requestedConfig = agentPresetConfigFromRequest(request);
+    const config = restoreAgentPresetRedactions(context, profileName, `preset-${requestedConfig.id}`, requestedConfig);
+    const id = `preset-${config.id}`;
+    const patch = requirePatchResult(upsertProfilePatchRow(context, profileName, {
+      id,
+      name: '@deepseek-ai/dsh-agent-preset',
+      config
+    }, profilePatchOptions(request)), profileName);
+    return resultFor(request, 'ok', {
+      profile: profileName,
+      operation: 'upsertAgentPreset',
+      patch,
+      ...listProfileAgentPresets(context, profileName)
+    });
+  };
+  driver.deleteAgentPreset = async (request = {}) => {
+    const profileName = request.params?.profileName;
+    const id = requiredId(request.params?.presetId, 'Agent preset id');
+    const current = listProfileAgentPresets(context, profileName);
+    if (!current) return resultFor(request, 'unsupported');
+    const preset = current.presets.find(item => item.id === id);
+    if (!preset) return resultFor(request, 'ok', current);
+    if (preset.builtIn) {
+      return resultFor(request, 'failed', undefined, 'Built-in Agent presets can be customized but cannot be deleted');
+    }
+    const patch = requirePatchResult(deleteProfilePatchRow(context, profileName, preset.patchId, profilePatchOptions(request)), profileName);
+    return resultFor(request, 'ok', {
+      profile: profileName,
+      operation: 'deleteAgentPreset',
+      patch,
+      ...listProfileAgentPresets(context, profileName)
+    });
   };
   driver.installPlugin = async (request = {}) => {
     const result = await installPlugin(context, request);

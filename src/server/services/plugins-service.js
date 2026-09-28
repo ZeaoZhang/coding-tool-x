@@ -117,6 +117,18 @@ const PLATFORM_CAPABILITIES = {
     import: false,
     syncRepos: false
   },
+  dsh: {
+    platform: 'dsh',
+    supportsPlugins: true,
+    repositories: false,
+    market: false,
+    install: true,
+    uninstall: true,
+    toggle: false,
+    config: false,
+    import: false,
+    syncRepos: false
+  },
   omp: {
     platform: 'omp',
     supportsPlugins: true,
@@ -134,19 +146,6 @@ const PLATFORM_CAPABILITIES = {
     repositoryAuth: false,
     installMetadataMode: 'omp'
   },
-  dsh: {
-    platform: 'dsh',
-    supportsPlugins: true,
-    repositories: true,
-    market: false,
-    install: false,
-    uninstall: false,
-    toggle: false,
-    config: false,
-    import: false,
-    syncRepos: false,
-    disabledReason: 'DSH 插件由 profile 管理，当前面板仅提供只读查看'
-  }
 };
 
 function cloneRepos(repos = []) {
@@ -1670,7 +1669,7 @@ class PluginsService {
           source: 'dsh-profile',
           pluginType: 'dsh-profile',
           enabled: true,
-          readonly: true,
+          readonly: false,
           description: plugin.description || '',
           directory: plugin.name || name
         });

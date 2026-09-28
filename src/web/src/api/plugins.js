@@ -4,7 +4,7 @@
  * 管理 Claude Code 插件
  */
 
-import { client } from './client'
+import { client, getPlatformApiPrefix } from './client'
 import { requestKey, requestSingleflight } from './request-singleflight'
 
 const sessionCache = new Map()
@@ -93,6 +93,18 @@ export async function getPluginRefreshTask(taskId, options = {}) {
 
 export function invalidatePluginSessionCache(platform = '') {
   clearSessionCache(platform)
+}
+
+export async function installDshPlugin(profile, spec) {
+  const prefix = getPlatformApiPrefix('dsh')
+  const response = await client.post(`${prefix}/profiles/${encodeURIComponent(profile)}/plugins/install`, { spec })
+  return { success: true, ...(response.data?.data || response.data || {}) }
+}
+
+export async function uninstallDshPlugin(profile, packageName) {
+  const prefix = getPlatformApiPrefix('dsh')
+  const response = await client.delete(`${prefix}/profiles/${encodeURIComponent(profile)}/plugins/${encodeURIComponent(packageName)}`)
+  return { success: true, ...(response.data?.data || response.data || {}) }
 }
 
 /**

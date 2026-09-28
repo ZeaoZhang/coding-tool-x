@@ -3,7 +3,7 @@
 const { execFile } = require('child_process');
 const path = require('path');
 const { promisify } = require('util');
-const { resolvePaths, listProfilePlugins, safeProfileName } = require('./common');
+const { resolvePaths, listProfilePlugins, listManageableProfilePlugins, safeProfileName } = require('./common');
 
 const execFileAsync = promisify(execFile);
 
@@ -23,6 +23,40 @@ function normalizeSpecs(value) {
     throw new Error('DSH plugin package spec 不能是选项或包含 NUL 字符');
   }
   return specs;
+}
+
+function packageNameFromSpec(spec) {
+  const value = String(spec || '').trim();
+  if (!value || /^(?:https?:|git\+|github:|file:)/i.test(value)) return null;
+  const slash = value.lastIndexOf('/');
+  const versionSeparator = value.lastIndexOf('@');
+  if (versionSeparator > slash) return value.slice(0, versionSeparator);
+  return value;
+}
+
+function profilePluginInventory(context, profileName) {
+  const plugins = listProfilePlugins(context, profileName);
+  if (!plugins) {
+    const error = new Error(`DSH profile not found: ${profileName}`);
+    error.statusCode = 404;
+    throw error;
+  }
+  return plugins.plugins;
+}
+
+function requireExternalPluginSpecs(context, profileName, specs, { allowNew = false } = {}) {
+  const plugins = profilePluginInventory(context, profileName);
+  const byName = new Map(plugins.map(plugin => [plugin.name, plugin]));
+  const builtinNames = new Set(plugins.filter(plugin => plugin.builtIn).map(plugin => plugin.name));
+  for (const spec of specs) {
+    const name = packageNameFromSpec(spec);
+    if (name && builtinNames.has(name)) {
+      throw new Error(`DSH built-in plugin cannot be managed here: ${name}`);
+    }
+    if (!allowNew && (!name || !byName.has(name) || byName.get(name).builtIn)) {
+      throw new Error(`Only installed external DSH plugins can be managed here: ${spec}`);
+    }
+  }
 }
 
 function resolveWorkingDirectory(paths, value) {
@@ -85,13 +119,16 @@ async function runDshPlugin(context = {}, profileName, args, options = {}) {
     exitCode: 0,
     stdout: redactCommandOutput(result.stdout),
     stderr: redactCommandOutput(result.stderr),
-    plugins: listProfilePlugins(context, profile)
+    plugins: listManageableProfilePlugins(context, profile)
   };
 }
 
 async function installPlugin(context = {}, request = {}) {
   const body = request.body || {};
-  return runDshPlugin(context, request.params?.profileName, ['add', ...normalizeSpecs(body.specs || body.spec || body.package)], {
+  const profileName = request.params?.profileName;
+  const specs = normalizeSpecs(body.specs || body.spec || body.package);
+  requireExternalPluginSpecs(context, profileName, specs, { allowNew: true });
+  return runDshPlugin(context, profileName, ['add', ...specs], {
     cwd: body.cwd
   });
 }
@@ -99,14 +136,35 @@ async function installPlugin(context = {}, request = {}) {
 async function uninstallPlugin(context = {}, request = {}) {
   const body = request.body || {};
   const specs = normalizeSpecs(body.specs || body.spec || request.params?.pluginName);
-  return runDshPlugin(context, request.params?.profileName, ['remove', ...specs], { cwd: body.cwd });
+  const profileName = request.params?.profileName;
+  requireExternalPluginSpecs(context, profileName, specs);
+  return runDshPlugin(context, profileName, ['remove', ...specs], { cwd: body.cwd });
 }
 
 async function updatePlugin(context = {}, request = {}) {
   const body = request.body || {};
   const specs = body.specs || body.spec || body.package;
-  const args = ['update', ...(specs === undefined ? [] : normalizeSpecs(specs))];
-  return runDshPlugin(context, request.params?.profileName, args, { cwd: body.cwd });
+  const profileName = request.params?.profileName;
+  const inventory = profilePluginInventory(context, profileName);
+  let targets;
+  if (specs === undefined) {
+    targets = inventory.filter(plugin => !plugin.builtIn).map(plugin => plugin.name);
+  } else {
+    targets = normalizeSpecs(specs);
+    requireExternalPluginSpecs(context, profileName, targets);
+  }
+  if (!targets.length) {
+    const profile = safeProfileName(profileName);
+    return {
+      profile,
+      exitCode: 0,
+      stdout: '',
+      stderr: '',
+      skipped: 'No installed external DSH plugins to update',
+      plugins: listManageableProfilePlugins(context, profile)
+    };
+  }
+  return runDshPlugin(context, profileName, ['update', ...targets], { cwd: body.cwd });
 }
 
 module.exports = {

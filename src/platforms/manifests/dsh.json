@@ -25,7 +25,7 @@
   "resourceTypes": {
     "skills": true,
     "commands": false,
-    "agents": false,
+    "agents": true,
     "plugins": true,
     "mcp": true,
     "prompts": true
@@ -38,10 +38,10 @@
       "refresh": true
     },
     "plugins": {
-      "repositories": true,
+      "repositories": false,
       "market": false,
-      "install": false,
-      "uninstall": false,
+      "install": true,
+      "uninstall": true,
       "import": false,
       "syncRepos": false
     }
@@ -474,6 +474,30 @@
         "path": "/profiles/:profileName/prompts/:promptId",
         "capability": "api",
         "operation": "deletePrompt",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/profiles/:profileName/agent-presets",
+        "capability": "api",
+        "operation": "listProfileAgentPresets",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
+        "path": "/profiles/:profileName/agent-presets",
+        "capability": "api",
+        "operation": "upsertAgentPreset",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "DELETE",
+        "path": "/profiles/:profileName/agent-presets/:presetId",
+        "capability": "api",
+        "operation": "deleteAgentPreset",
         "request": "default",
         "response": "default"
       },

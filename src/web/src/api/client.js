@@ -29,7 +29,8 @@ export const LEGACY_PLATFORM_PREFIXES = Object.freeze({
   codex: '/codex',
   gemini: '/gemini',
   opencode: '/opencode',
-  omp: '/omp'
+  omp: '/omp',
+  dsh: '/dsh'
 })
 
 let platformApiPrefixes = { ...LEGACY_PLATFORM_PREFIXES }

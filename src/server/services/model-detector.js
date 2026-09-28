@@ -330,32 +330,29 @@ function buildRequestHeaders(channelType, channel) {
 }
 
 function buildOpenAiCompatibleUrl(baseUrl, endpoint) {
-  const trimmed = String(baseUrl || '').trim().replace(/\/+$/, '');
-  if (!trimmed) {
+  const rawBaseUrl = String(baseUrl || '').trim();
+  if (!rawBaseUrl) {
     throw new Error('Invalid baseUrl');
   }
 
+  const parsed = new URL(rawBaseUrl);
+  const basePath = parsed.pathname.replace(/\/+$/, '');
   const normalizedEndpoint = String(endpoint || '').startsWith('/')
     ? String(endpoint)
     : `/${endpoint}`;
-
-  if (trimmed.endsWith(normalizedEndpoint)) {
-    return trimmed;
-  }
-
   const endpointWithoutV1 = normalizedEndpoint.startsWith('/v1/')
     ? normalizedEndpoint.slice(3)
     : normalizedEndpoint;
 
-  if (trimmed.endsWith(endpointWithoutV1)) {
-    return trimmed;
-  }
+  if (basePath.endsWith(normalizedEndpoint)) return parsed.toString();
+  if (basePath.endsWith(endpointWithoutV1)) return parsed.toString();
 
-  if (trimmed.endsWith('/v1') && normalizedEndpoint.startsWith('/v1/')) {
-    return `${trimmed}${normalizedEndpoint.slice(3)}`;
-  }
-
-  return `${trimmed}${normalizedEndpoint}`;
+  const suffix = /\/v1$/.test(basePath) && normalizedEndpoint.startsWith('/v1/')
+    ? normalizedEndpoint.slice(3)
+    : normalizedEndpoint;
+  parsed.pathname = `${basePath}${suffix}` || '/';
+  parsed.hash = '';
+  return parsed.toString();
 }
 
 
@@ -1044,14 +1041,8 @@ async function fetchModelsFromProvider(channel, channelType, options = {}) {
       resolve(result);
     };
     try {
-      const baseUrl = channel.baseUrl.trim().replace(/\/+$/, '');
       const endpoint = capability.modelListEndpoint; // e.g. '/v1/models'
-      // 避免路径重复：如果 baseUrl 已包含 /v1，则只拼接 /models
-      const requestUrl = baseUrl.endsWith('/v1') && endpoint.startsWith('/v1/')
-        ? `${baseUrl}${endpoint.slice(3)}`
-        : `${baseUrl}${endpoint}`;
-
-      const parsedUrl = new URL(requestUrl);
+      const parsedUrl = new URL(buildOpenAiCompatibleUrl(channel.baseUrl, endpoint));
       const isHttps = parsedUrl.protocol === 'https:';
       const httpModule = isHttps ? https : http;
 

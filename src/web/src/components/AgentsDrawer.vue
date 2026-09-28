@@ -8,10 +8,12 @@
     <n-drawer-content closable :native-scrollbar="false" :body-content-style="bodyStyle">
       <template #header>
         <div class="drawer-header">
-          <span>代理管理</span>
+          <span>{{ props.platform === 'dsh' ? 'Agent 预设管理' : '代理管理' }}</span>
         </div>
       </template>
+      <DshAgentPresetsPanel v-if="props.platform === 'dsh'" />
       <AgentsPanel
+        v-else
         @back="visible = false"
         :hide-back="true"
         :in-drawer="true"
@@ -25,6 +27,7 @@
 import { computed } from 'vue'
 import { NDrawer, NDrawerContent } from 'naive-ui'
 import AgentsPanel from './AgentsPanel.vue'
+import DshAgentPresetsPanel from './DshAgentPresetsPanel.vue'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 
 const props = defineProps({

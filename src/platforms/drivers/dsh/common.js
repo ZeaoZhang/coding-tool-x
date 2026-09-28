@@ -251,8 +251,14 @@ function listProfilePlugins(context = {}, profileName) {
     const packageJsonPath = packageDir ? path.join(packageDir, 'package.json') : null;
     const packageJson = packageJsonPath ? readJsonFile(packageJsonPath, {}) : {};
     const bundle = isObject(packageJson.dsh?.bundle) ? packageJson.dsh.bundle : null;
-    const patchPath = bundle?.patch && packageDir ? path.resolve(packageDir, bundle.patch) : null;
-    const patchExists = Boolean(patchPath && fs.existsSync(patchPath));
+    const declaredPatches = Array.isArray(bundle?.patch)
+      ? bundle.patch
+      : bundle?.patch ? [bundle.patch] : [];
+    const patchPaths = packageDir
+      ? declaredPatches.filter(item => typeof item === 'string' && item.trim()).map(item => path.resolve(packageDir, item))
+      : [];
+    const patchPath = patchPaths[0] || null;
+    const patchExists = patchPaths.length > 0 && patchPaths.every(filePath => fs.existsSync(filePath));
     return {
       name,
       requestedVersion: manifest.dependencies?.[name] || manifest.devDependencies?.[name] || null,
@@ -261,8 +267,10 @@ function listProfilePlugins(context = {}, profileName) {
       bundle: Boolean(bundle),
       patch: bundle?.patch || null,
       patchPath,
+      patchPaths,
       patchExists,
       inBundleList: bundleNames.includes(name),
+      builtIn: isBuiltInProfilePackage(packageDir, name, profile.profileDir, paths),
       management: 'ctx+dsh-plugin'
     };
   });
@@ -276,14 +284,39 @@ function listProfilePlugins(context = {}, profileName) {
   };
 }
 
+function isPathInside(parentPath, targetPath) {
+  if (!parentPath || !targetPath) return false;
+  const parent = path.resolve(parentPath);
+  const target = path.resolve(targetPath);
+  return target === parent || target.startsWith(`${parent}${path.sep}`);
+}
+
+function isBuiltInProfilePackage(packageDir, packageName, profileDir, paths) {
+  const profileModules = path.join(profileDir, 'node_modules');
+  const sharedProfileModules = path.join(paths.profiles, 'node_modules');
+  if (packageDir && (isPathInside(profileModules, packageDir) || isPathInside(sharedProfileModules, packageDir))) return false;
+  if (/^@deepseek-ai\/dsh-/.test(packageName)) return true;
+  if (!packageDir) return false;
+  return true;
+}
+
+function listManageableProfilePlugins(context = {}, profileName) {
+  const result = listProfilePlugins(context, profileName);
+  if (!result) return null;
+  return {
+    ...result,
+    plugins: result.plugins.filter(plugin => !plugin.builtIn)
+  };
+}
+
 function profilePatchFiles(context = {}, profileName) {
   const paths = resolvePaths(context);
   const pluginInfo = listProfilePlugins(context, profileName);
   if (!pluginInfo) return null;
   const profile = readProfileManifest(paths, profileName);
   const bundleFiles = pluginInfo.plugins
-    .filter(plugin => plugin.inBundleList && plugin.patchPath)
-    .map(plugin => plugin.patchPath);
+    .filter(plugin => plugin.inBundleList)
+    .flatMap(plugin => plugin.patchPaths || (plugin.patchPath ? [plugin.patchPath] : []));
   const files = [...new Set([
     ...bundleFiles,
     path.join(profile.profileDir, 'cordis.patch.yml'),
@@ -399,9 +432,11 @@ function upsertProfilePatchRow(context = {}, profileName, entry, options = {}) {
   const id = patchEntryId(entry);
   if (!id) throw new Error('DSH patch entry id is required');
   return updateProfilePatch(context, profileName, (document, meta) => {
-    const hasComposedRow = meta.composedRows.some(row => patchEntryId(row.entry) === id);
+    const hasComposedRowOutsideProfile = meta.composedRows.some(row => (
+      patchEntryId(row.entry) === id && path.resolve(row.source) !== path.resolve(meta.patchPath)
+    ));
     const withoutOwn = removeManagedRows(document, row => patchEntryId(row) === id);
-    if (hasComposedRow) withoutOwn.push(entry);
+    if (hasComposedRowOutsideProfile) withoutOwn.push(entry);
     else withoutOwn.push({ insert: [entry] });
     return withoutOwn;
   }, options);
@@ -428,6 +463,7 @@ function collectPatchRows(value, rows = [], source = null, options = {}) {
       id: entry.id || null,
       name: entry.name || null,
       disabled: entry.disabled === true,
+      hasDisabled: Object.prototype.hasOwnProperty.call(entry, 'disabled'),
       hasConfig: Object.prototype.hasOwnProperty.call(entry, 'config'),
       source
     };
@@ -462,7 +498,20 @@ function effectivePatchRows(info) {
       if (row.operation === 'delete') {
         byId.delete(row.id);
       } else {
-        byId.set(row.id, row);
+        const current = byId.get(row.id);
+        if (row.operation === 'insert' || !current) {
+          byId.set(row.id, row);
+        } else {
+          byId.set(row.id, {
+            ...current,
+            ...row,
+            name: row.name || current.name,
+            disabled: row.hasDisabled ? row.disabled : current.disabled,
+            hasDisabled: row.hasDisabled || current.hasDisabled,
+            config: row.hasConfig ? row.config : current.config,
+            hasConfig: row.hasConfig || current.hasConfig
+          });
+        }
       }
     }
   }
@@ -543,10 +592,93 @@ function listProfilePrompts(context = {}, profileName) {
 
 function listPlugins(context = {}) {
   return {
-    profiles: listProfiles(context).map(profile => listProfilePlugins(context, profile.name)).filter(Boolean),
+    profiles: listProfiles(context).map(profile => listManageableProfilePlugins(context, profile.name)).filter(Boolean),
     management: 'ctx+dsh-plugin',
-    note: 'ctx 通过 dsh plugin 管理插件依赖；插件运行生命周期和 profile 重启仍由 dsh 负责。'
+    note: '仅列出并管理 Profile 安装的外置插件；DSH 安装目录中的内置插件由 DSH 管理。'
   };
+}
+
+function listProfileAgentPresets(context = {}, profileName) {
+  const info = readProfilePatchContributions(context, profileName);
+  if (!info) return null;
+  const patchPath = path.join(info.profile.profileDir, 'cordis.patch.yml');
+  const bundledPatchPaths = new Set(info.pluginInfo.plugins
+    .filter(plugin => plugin.inBundleList && plugin.patchPath)
+    .map(plugin => path.resolve(plugin.patchPath)));
+  const bundledPresetIds = new Set(info.contributions
+    .filter(contribution => bundledPatchPaths.has(path.resolve(contribution.path)))
+    .flatMap(contribution => contribution.rows)
+    .filter(row => row.name === '@deepseek-ai/dsh-agent-preset')
+    .map(row => row.id));
+  const presets = effectivePatchRows(info)
+    .filter(row => row.name === '@deepseek-ai/dsh-agent-preset' && isObject(row.config))
+    .map(row => ({
+      id: String(row.config.id || String(row.id || '').replace(/^preset-/, '')),
+      patchId: row.id,
+      name: typeof row.config.name === 'string' ? row.config.name : '',
+      description: typeof row.config.description === 'string' ? row.config.description : '',
+      order: Number.isFinite(row.config.order) ? row.config.order : 0,
+      plugins: Array.isArray(row.config.plugins) ? redactPatchConfig(row.config.plugins) : [],
+      builtIn: bundledPresetIds.has(row.id),
+      source: row.source
+    }))
+    .filter(preset => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(preset.id));
+  return {
+    profile: info.pluginInfo.profile,
+    revision: fileRevision(patchPath),
+    presets,
+    management: 'ctx-profile-patch'
+  };
+}
+
+function effectiveRawPatchEntry(context = {}, profileName, entryId) {
+  const info = profilePatchFiles(context, profileName);
+  if (!info) return null;
+  const byId = new Map();
+  for (const filePath of info.files) {
+    if (!fs.existsSync(filePath)) continue;
+    for (const { operation, entry } of patchRowsFromDocument(readYamlFile(filePath, []))) {
+      const id = patchEntryId(entry);
+      if (!id) continue;
+      if (operation === 'delete') {
+        byId.delete(id);
+        continue;
+      }
+      const current = byId.get(id);
+      if (operation === 'insert' || !current) {
+        byId.set(id, { ...entry, source: filePath });
+      } else {
+        byId.set(id, { ...current, ...entry, id, source: filePath });
+      }
+    }
+  }
+  return byId.get(entryId) || null;
+}
+
+function restoreRedactedValues(value, original) {
+  if (value === '[REDACTED]' || value === '[EXPRESSION]') return clone(original);
+  if (Array.isArray(value)) {
+    const originalArray = Array.isArray(original) ? original : [];
+    return value.map((entry, index) => {
+      const entryId = isObject(entry) ? entry.id : null;
+      const originalEntry = entryId
+        ? originalArray.find(candidate => isObject(candidate) && candidate.id === entryId)
+        : originalArray[index];
+      return restoreRedactedValues(entry, originalEntry);
+    });
+  }
+  if (!isObject(value)) return value;
+  const originalObject = isObject(original) ? original : {};
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
+    key,
+    restoreRedactedValues(entry, originalObject[key])
+  ]));
+}
+
+function restoreAgentPresetRedactions(context = {}, profileName, presetId, config) {
+  const original = effectiveRawPatchEntry(context, profileName, presetId);
+  if (!original || !isObject(original.config)) return config;
+  return restoreRedactedValues(config, original.config);
 }
 
 module.exports = {
@@ -562,9 +694,12 @@ module.exports = {
   credentialMetadata,
   listProfiles,
   listProfilePlugins,
+  listManageableProfilePlugins,
   listProfileCapabilities,
   listProfileMcp,
   listProfilePrompts,
+  listProfileAgentPresets,
+  restoreAgentPresetRedactions,
   listPlugins,
   profilePatchFiles,
   readProfilePatchContributions,

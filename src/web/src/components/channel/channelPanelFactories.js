@@ -501,7 +501,7 @@ const channelPanelFactories = {
           },
           {
             key: 'providerApi',
-            label: '上游 API',
+            label: 'API 格式',
             type: 'select',
             options: [
               { label: 'OpenAI Chat Completions', value: 'openai-completions' },
@@ -523,12 +523,6 @@ const channelPanelFactories = {
             type: 'password',
             required: true,
             placeholder: 'sk-...'
-          },
-          {
-            key: 'apiKeyEnv',
-            label: 'Key 环境变量',
-            type: 'text',
-            placeholder: 'CTX_DSH_PROVIDER_API_KEY'
           },
           {
             key: 'model',
@@ -571,7 +565,6 @@ const channelPanelFactories = {
       providerApi: 'openai-completions',
       baseUrl: '',
       apiKey: '',
-      apiKeyEnv: '',
       model: '',
       models: [],
       speedTestModel: '',
@@ -590,7 +583,6 @@ const channelPanelFactories = {
       providerApi: channel.providerApi || 'openai-completions',
       baseUrl: channel.baseUrl || '',
       apiKey: channel.apiKey || '',
-      apiKeyEnv: channel.apiKeyEnv || '',
       model: channel.model || channel.models?.[0]?.id || '',
       models: Array.isArray(channel.models)
         ? channel.models.map(item => typeof item === 'string' ? item : item?.id).filter(Boolean)
@@ -632,7 +624,6 @@ const channelPanelFactories = {
         providerApi: form.providerApi,
         baseUrl: form.baseUrl,
         apiKey: form.apiKey,
-        apiKeyEnv: form.apiKeyEnv || undefined,
         model: form.model,
         models: form.models,
         speedTestModel: form.speedTestModel || null,
@@ -646,7 +637,6 @@ const channelPanelFactories = {
         providerApi: form.providerApi,
         baseUrl: form.baseUrl,
         apiKey: form.apiKey,
-        apiKeyEnv: form.apiKeyEnv || undefined,
         model: form.model,
         models: form.models,
         speedTestModel: form.speedTestModel || null,
@@ -667,7 +657,7 @@ const channelPanelFactories = {
     },
     buildInfoRows: (channel, helpers) => [
       { label: 'Provider', value: channel.providerKey || '(未设置)', mono: true },
-      { label: 'API', value: channel.providerApi || 'openai-completions', mono: true },
+      { label: 'API 格式', value: channel.providerApi || 'openai-completions', mono: true },
       { label: 'Model', value: channel.model || '(未设置)', mono: true },
       { label: 'URL', value: channel.baseUrl, mono: true },
       { label: 'Key', value: helpers.maskApiKey(channel.apiKey), mono: true }

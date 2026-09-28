@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const { writeYamlFile } = require('../../../utils/native-config-patcher');
-const { resolvePaths, readYamlFile, mergeSettings, fileRevision, credentialMetadata, redactSecrets, listProfiles, listProfilePlugins, listProfileMcp, listProfilePrompts, DSH_YAML_SOURCE_TAGS } = require('./common');
+const { resolvePaths, readYamlFile, mergeSettings, fileRevision, credentialMetadata, redactSecrets, listProfiles, listManageableProfilePlugins, listProfileMcp, listProfilePrompts, DSH_YAML_SOURCE_TAGS } = require('./common');
 const { resolveSkillRoots } = require('./resources');
 
 function createDriver(context = {}) {
@@ -62,7 +62,7 @@ function createDriver(context = {}) {
         cwd: request.query?.cwd
       });
       const profiles = listProfiles(context).map(profile => {
-        const plugins = listProfilePlugins(context, profile.name);
+        const plugins = listManageableProfilePlugins(context, profile.name);
         const mcp = listProfileMcp(context, profile.name);
         const prompts = listProfilePrompts(context, profile.name);
         return {
