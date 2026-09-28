@@ -8,13 +8,13 @@
               <GitCompareOutline />
             </n-icon>
           </div>
-          <span>OpenCode 请求转换</span>
+          <span>{{ targetLabel }} 请求转换</span>
         </div>
       </template>
 
       <div class="convert-container">
         <n-form label-placement="top">
-          <n-form-item label="来源渠道">
+          <n-form-item label="来源 CLI">
             <n-select
               v-model:value="sourceType"
               :options="sourceTypeOptions"
@@ -26,6 +26,7 @@
             <n-select
               v-model:value="targetApi"
               :options="targetApiOptions"
+              :disabled="targetApiOptions.length === 0"
               placeholder="选择目标 API"
             />
           </n-form-item>
@@ -40,11 +41,25 @@
           </n-form-item>
         </n-form>
 
+        <n-alert
+          v-if="target === 'omp' && targetApiOptions.length === 0"
+          type="info"
+          :show-icon="true"
+          style="margin-bottom: 12px;"
+        >
+          暂无可用于转换的 OMP 协议日志。请先通过 OpenAI 兼容渠道发起一次请求，并启用 CC_TOOL_LOG_REQUESTS。
+        </n-alert>
+
         <div class="action-row">
           <n-button quaternary @click="fillSamplePayload">填充示例</n-button>
           <n-space>
             <n-button @click="handleClear">清空结果</n-button>
-            <n-button type="primary" :loading="converting" @click="handleConvert">开始转换</n-button>
+            <n-button
+              type="primary"
+              :loading="converting"
+              :disabled="targetApiOptions.length === 0"
+              @click="handleConvert"
+            >开始转换</n-button>
           </n-space>
         </div>
 
@@ -89,6 +104,16 @@
             />
           </n-form-item>
 
+          <n-form-item label="目标 CLI 请求头（来自最近一次请求日志）">
+            <n-input
+              :value="formattedRequestHeaders"
+              type="textarea"
+              readonly
+              :autosize="{ minRows: 4, maxRows: 10 }"
+              placeholder="尚无请求快照；启用 CC_TOOL_LOG_REQUESTS 后重新发起一次目标 CLI 请求"
+            />
+          </n-form-item>
+
           <div class="action-row">
             <div />
             <n-button size="small" @click="copyResult">复制转换结果</n-button>
@@ -117,16 +142,18 @@ import {
 import { GitCompareOutline } from '@vicons/ionicons5'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 import {
-  convertClaudeToOpenCode,
-  convertCodexToOpenCode,
-  convertGeminiToOpenCode,
-  getOpenCodeGatewayFormats
+  convertCliRequest,
+  getCliConversionFormats
 } from '../api/convert'
 import message from '../utils/message'
 
 const { drawerWidth } = useResponsiveDrawer(620, 520)
 
 const props = defineProps({
+  target: {
+    type: String,
+    default: 'opencode'
+  },
   visible: {
     type: Boolean,
     default: false
@@ -151,12 +178,14 @@ const targetApiOptions = ref([
 ])
 
 const sourceType = ref('claude')
+const targetLabel = computed(() => props.target === 'omp' ? 'OMP' : 'OpenCode')
 const targetApi = ref('responses')
 const payloadText = ref('')
 const converting = ref(false)
 const result = ref(null)
 const errorText = ref('')
 const formatsLoaded = ref(false)
+const loadedTarget = ref('')
 
 const SAMPLE_PAYLOADS = {
   claude: {
@@ -203,6 +232,10 @@ const formattedRequestBody = computed(() => {
   if (!result.value?.requestBody) return ''
   return JSON.stringify(result.value.requestBody, null, 2)
 })
+const formattedRequestHeaders = computed(() => {
+  const headers = result.value?.requestHeaders
+  return headers && Object.keys(headers).length > 0 ? JSON.stringify(headers, null, 2) : ''
+})
 
 function fillSamplePayload() {
   const sample = SAMPLE_PAYLOADS[sourceType.value] || SAMPLE_PAYLOADS.claude
@@ -210,16 +243,16 @@ function fillSamplePayload() {
 }
 
 async function loadFormats() {
-  if (formatsLoaded.value) return
+  if (formatsLoaded.value && loadedTarget.value === props.target) return
   try {
-    const data = await getOpenCodeGatewayFormats()
+    const data = await getCliConversionFormats(props.target)
     if (Array.isArray(data.sourceTypes) && data.sourceTypes.length > 0) {
       sourceTypeOptions.value = data.sourceTypes.map(item => ({
         label: item.name || item.id,
         value: item.id
       }))
     }
-    if (Array.isArray(data.targetApis) && data.targetApis.length > 0) {
+    if (Array.isArray(data.targetApis)) {
       targetApiOptions.value = data.targetApis.map(item => {
         if (item === 'chat.completions') {
           return { label: 'Chat Completions (/v1/chat/completions)', value: item }
@@ -229,10 +262,13 @@ async function loadFormats() {
     }
     if (data.defaultTargetApi) {
       targetApi.value = data.defaultTargetApi
+    } else if (!targetApiOptions.value.some(item => item.value === targetApi.value)) {
+      targetApi.value = targetApiOptions.value[0]?.value || null
     }
     formatsLoaded.value = true
+    loadedTarget.value = props.target
   } catch (error) {
-    console.error('Failed to load opencode gateway formats:', error)
+    console.error(`Failed to load ${props.target} conversion formats:`, error)
   }
 }
 
@@ -255,18 +291,8 @@ async function handleConvert() {
 
   converting.value = true
   try {
-    const converterMap = {
-      claude: convertClaudeToOpenCode,
-      codex: convertCodexToOpenCode,
-      gemini: convertGeminiToOpenCode
-    }
-
-    const converter = converterMap[sourceType.value]
-    if (!converter) {
-      throw new Error(`Unsupported sourceType: ${sourceType.value}`)
-    }
-
-    const data = await converter({
+    const data = await convertCliRequest(props.target, {
+      sourceType: sourceType.value,
       payload: parsedPayload,
       options: {
         targetApi: targetApi.value
@@ -292,7 +318,8 @@ async function copyResult() {
 
   const payload = {
     endpoint: result.value.endpoint,
-    requestBody: result.value.requestBody
+    requestBody: result.value.requestBody,
+    requestHeaders: result.value.requestHeaders || {}
   }
 
   try {
@@ -307,7 +334,11 @@ watch(() => sourceType.value, () => {
   fillSamplePayload()
 })
 
-watch(() => props.visible, async (val) => {
+watch(() => [props.visible, props.target], async ([val, target], previous) => {
+  if (previous && previous[1] !== target) {
+    result.value = null
+    errorText.value = ''
+  }
   if (val) {
     await loadFormats()
     if (!payloadText.value) {

@@ -1,6 +1,6 @@
 const http = require('http');
 const { WebSocket, WebSocketServer } = require('ws');
-const { createOmpGateway } = require('../../../src/platforms/drivers/omp/gateway');
+const { createOmpGateway, redactSensitiveQuery } = require('../../../src/platforms/drivers/omp/gateway');
 const { prepareManagedOmpChannels } = require('../../../src/platforms/drivers/omp/gateway-routing');
 
 function listen(server) {
@@ -37,6 +37,11 @@ function request({ port, path, headers, body }) {
 }
 
 describe('OMP gateway data plane', () => {
+  it('preserves protocol query parameters and removes credentials from logged paths', () => {
+    expect(redactSensitiveQuery('/responses?api-version=2025-01-01&authorization=Bearer-secret&auth=hidden&oauth_token=private&model=fast'))
+      .toBe('/responses?api-version=2025-01-01&model=fast');
+  });
+
   it('reports a bind failure without leaving a listening gateway behind', async () => {
     const occupied = http.createServer();
     const occupiedPort = await listen(occupied);

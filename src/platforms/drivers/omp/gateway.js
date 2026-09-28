@@ -9,6 +9,7 @@ const { allocateChannel, releaseChannel } = require('../../../server/services/ch
 const { recordSuccess, recordFailure } = require('../../../server/services/channel-health');
 const { attachServerShutdownHandling, expediteServerShutdown } = require('../../../server/services/server-shutdown');
 const { resolveOmpGatewayRoute } = require('./gateway-routing');
+const { persistProxyRequestSnapshot } = require('../../../server/services/request-logger');
 
 const RETRYABLE_STATUS = new Set([401, 403, 429, 502, 503, 504]);
 const MAX_REQUEST_BYTES = 100 * 1024 * 1024;
@@ -181,6 +182,17 @@ function writeJson(res, statusCode, payload) {
     'content-length': body.length
   });
   res.end(body);
+}
+
+function redactSensitiveQuery(path) {
+  const url = new URL(String(path || '/'), 'http://127.0.0.1');
+  for (const key of [...url.searchParams.keys()]) {
+    const normalizedKey = key.toLowerCase().replace(/_/g, '-');
+    if (/(^|[-])(api-?key|key|auth|authorization|oauth|access-token|token|secret|credential|password|signature|jwt|cookie|session)([-]|$)/i.test(normalizedKey)) {
+      url.searchParams.delete(key);
+    }
+  }
+  return `${url.pathname}${url.search}`;
 }
 
 function constantTimeEqual(left, right) {
@@ -465,6 +477,19 @@ function createOmpGateway(options = {}) {
     }
     route.upstreamPath = `${route.upstreamPath}${parsed.search}`;
 
+    persistProxyRequestSnapshot('omp', {
+      timestamp: Date.now(),
+      source: 'omp',
+      request: {
+        method: req.method,
+        headers: req.headers
+      },
+      route: {
+        providerApi: route.providerApi,
+        path: redactSensitiveQuery(route.upstreamPath)
+      }
+    });
+
     inflightRequests++;
     const abortController = new AbortController();
     const abortDownstream = () => abortController.abort();
@@ -685,5 +710,6 @@ function createOmpGateway(options = {}) {
 }
 
 module.exports = {
-  createOmpGateway
+  createOmpGateway,
+  redactSensitiveQuery
 };

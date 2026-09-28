@@ -21,6 +21,21 @@ const { PATHS } = pathsModule;
 const getPlatformStatePath = typeof pathsModule.getPlatformStatePath === 'function'
   ? pathsModule.getPlatformStatePath
   : (category, platform) => PATHS[category]?.[platform];
+const latestProxyRequestSnapshots = new Map();
+
+function compactProxyRequestSnapshot(payload = {}) {
+  const request = payload.request && typeof payload.request === 'object' ? payload.request : {};
+  const route = payload.route && typeof payload.route === 'object' ? payload.route : undefined;
+  return {
+    ...(payload.timestamp !== undefined ? { timestamp: payload.timestamp } : {}),
+    ...(payload.source ? { source: payload.source } : {}),
+    request: {
+      ...(request.method ? { method: request.method } : {}),
+      ...(request.headers && typeof request.headers === 'object' ? { headers: request.headers } : {})
+    },
+    ...(route ? { route: { ...route } } : {})
+  };
+}
 
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) {
@@ -57,6 +72,10 @@ function persistProxyRequestSnapshot(source, payload) {
   if (!isProxyRequestLoggingEnabled()) return;
 
   try {
+    latestProxyRequestSnapshots.set(
+      String(source || '').trim().toLowerCase(),
+      compactProxyRequestSnapshot(payload)
+    );
     const logPath = getPlatformStatePath('requestSnapshots', source);
     if (!logPath) return;
     ensureDir(path.dirname(logPath));
@@ -68,6 +87,80 @@ function persistProxyRequestSnapshot(source, payload) {
   } catch (error) {
     console.error(`[request-logger] Failed to persist ${source} request snapshot:`, error);
   }
+}
+
+function loadLatestProxyRequestSnapshot(source) {
+  const normalizedSource = String(source || '').trim().toLowerCase();
+  if (latestProxyRequestSnapshots.has(normalizedSource)) {
+    return latestProxyRequestSnapshots.get(normalizedSource);
+  }
+  const logPath = getPlatformStatePath('requestSnapshots', normalizedSource);
+  if (!logPath) return {};
+
+  let fd;
+  try {
+    fd = fs.openSync(logPath, 'r');
+    const fileSize = fs.fstatSync(fd).size;
+    const chunkSize = 1024 * 1024;
+    let position = fileSize;
+    let parts = [];
+    let bytesScanned = 0;
+    while (position > 0) {
+      const bytesToRead = Math.min(position, chunkSize);
+      position -= bytesToRead;
+      bytesScanned += bytesToRead;
+      const chunk = Buffer.alloc(bytesToRead);
+      fs.readSync(fd, chunk, 0, bytesToRead, position);
+      let segmentEnd = chunk.length;
+      for (let index = chunk.length - 1; index >= 0; index -= 1) {
+        if (chunk[index] !== 10) continue;
+        if (segmentEnd > index + 1) parts.push(chunk.subarray(index + 1, segmentEnd));
+        const line = Buffer.concat(parts.reverse()).toString('utf8');
+        parts = [];
+        segmentEnd = index;
+        if (!line.trim()) continue;
+        try {
+          const entry = JSON.parse(line);
+          if (entry && typeof entry === 'object') {
+            const compact = compactProxyRequestSnapshot(entry);
+            latestProxyRequestSnapshots.set(normalizedSource, compact);
+            return compact;
+          }
+        } catch {
+          // Ignore malformed records and continue scanning older complete lines.
+        }
+      }
+      if (segmentEnd > 0) parts.push(chunk.subarray(0, segmentEnd));
+      if (bytesScanned > 128 * 1024 * 1024) break;
+    }
+  } catch {
+    // Request snapshots are optional and may not exist yet.
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+  return {};
+}
+
+function loadLatestProxyRequestHeaders(source) {
+  const headers = loadLatestProxyRequestSnapshot(source)?.request?.headers;
+  if (!headers || typeof headers !== 'object' || Array.isArray(headers)) return {};
+
+  const hopByHopHeaders = new Set([
+    'connection',
+    'content-length',
+    'host',
+    'keep-alive',
+    'proxy-connection',
+    'te',
+    'trailer',
+    'transfer-encoding',
+    'upgrade'
+  ]);
+  const sensitiveHeaderName = /(auth|cookie|session|token|secret|credential|api[-_]?key|password|signature|\bjwt\b|capability)/i;
+
+  return Object.fromEntries(Object.entries(headers).filter(([name]) => (
+    !hopByHopHeaders.has(name.toLowerCase()) && !sensitiveHeaderName.test(name)
+  )));
 }
 
 /**
@@ -317,6 +410,8 @@ module.exports = {
   isProxyRequestLoggingEnabled,
   isApiRequestLoggingEnabled,
   persistProxyRequestSnapshot,
+  loadLatestProxyRequestSnapshot,
+  loadLatestProxyRequestHeaders,
   persistClaudeRequestTemplate,
   loadClaudeRequestTemplate,
   createApiRequestLogger

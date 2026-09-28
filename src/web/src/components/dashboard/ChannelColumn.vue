@@ -311,6 +311,10 @@
               <div class="log-col col-token" :class="`col-token-${channelType}`">写入</div>
               <div class="log-col col-token" :class="`col-token-${channelType}`">命中</div>
             </template>
+            <template v-else-if="channelType === 'dsh'">
+              <div class="log-col col-token" :class="`col-token-${logLayoutClass}`">缓存</div>
+              <div class="log-col col-token" :class="`col-token-${logLayoutClass}`">总计</div>
+            </template>
             <template v-else-if="channelType === 'codex'">
               <div class="log-col col-token" :class="`col-token-${channelType}`">推理</div>
               <div class="log-col col-token" :class="`col-token-${channelType}`">缓存</div>
@@ -374,6 +378,10 @@
                 <template v-if="channelType === 'claude'">
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'cacheCreation') }}</div>
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'cacheRead') }}</div>
+                </template>
+                <template v-else-if="channelType === 'dsh'">
+                  <div class="log-col col-token" :class="`col-token-${logLayoutClass}`">{{ formatLogToken(log, 'cached') }}</div>
+                  <div class="log-col col-token" :class="`col-token-${logLayoutClass}`">{{ formatLogToken(log, 'total') }}</div>
                 </template>
                 <template v-else-if="channelType === 'codex'">
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'reasoning') }}</div>
@@ -773,6 +781,9 @@ function formatStatNumber(num) {
 
 function formatLogToken(log, key) {
   if (log?.usageMissing) {
+    return '--'
+  }
+  if (key === 'cached' && props.channelType === 'dsh' && log?.cacheUsageAvailable !== true) {
     return '--'
   }
   return log?.tokens?.[key] || 0

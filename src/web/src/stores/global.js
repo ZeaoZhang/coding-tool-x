@@ -311,6 +311,7 @@ export const useGlobalStore = defineStore('global', () => {
       statusCode: data.statusCode || null,
       stage: data.stage || null,
       usageMissing: Boolean(data.usageMissing),
+      cacheUsageAvailable: typeof data.cacheUsageAvailable === 'boolean' ? data.cacheUsageAvailable : undefined,
       timestamp,
       time,
       tokens: {

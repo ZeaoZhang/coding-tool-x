@@ -123,20 +123,6 @@ export const opencodePresets = [
     models: []
   },
 
-  // Completions vs Responses 入口
-  {
-    id: 'entry_responses',
-    name: 'Responses 入口',
-    category: 'entry',
-    description: '渠道按 OpenAI Responses 请求入口管理（非 Codex）',
-    websiteUrl: '',
-    baseUrl: '',
-    wireApi: 'openai',
-    providerApi: 'responses',
-    gatewaySourceType: 'openai_compatible',
-    models: []
-  },
-
   // ============================================
   // 自定义
   // ============================================

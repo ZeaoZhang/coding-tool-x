@@ -95,6 +95,50 @@ describe('request-logger toggles and persistence', () => {
     ]);
   });
 
+  test('returns current target headers immediately and removes credentials', () => {
+    process.env.CC_TOOL_LOG_REQUESTS = 'true';
+    requestLogger.persistProxyRequestSnapshot('omp', {
+      timestamp: Date.now(),
+      request: {
+        body: 'x'.repeat(1024),
+        headers: {
+          'x-cli-version': '1.2.3',
+          authorization: 'Bearer gateway-secret',
+          'x-api-key': 'provider-secret',
+          cookie: 'session=secret',
+          'cf-access-jwt-assertion': 'jwt-secret',
+          host: 'localhost:19999',
+          'content-length': '100'
+        }
+      },
+      route: { providerApi: 'openai-responses', path: '/v1/responses' }
+    });
+
+    const snapshot = requestLogger.loadLatestProxyRequestSnapshot('omp');
+    expect(snapshot.route.providerApi).toBe('openai-responses');
+    expect(snapshot.request.body).toBeUndefined();
+    expect(requestLogger.loadLatestProxyRequestHeaders('omp')).toEqual({ 'x-cli-version': '1.2.3' });
+  });
+
+  test('reloads only request metadata from the latest complete disk record', () => {
+    process.env.CC_TOOL_LOG_REQUESTS = 'true';
+    requestLogger.persistProxyRequestSnapshot('opencode', {
+      timestamp: 1,
+      request: { method: 'POST', headers: { 'x-cli-version': 'disk-log' }, body: { data: 'x'.repeat(1024 * 1024) } }
+    });
+    requestLogger.persistProxyRequestSnapshot('opencode', {
+      timestamp: 2,
+      request: { method: 'POST', headers: { 'x-cli-version': 'latest-disk-log' }, body: { data: 'latest' } }
+    });
+
+    delete require.cache[require.resolve('../../../src/server/services/request-logger')];
+    requestLogger = require('../../../src/server/services/request-logger');
+    const snapshot = requestLogger.loadLatestProxyRequestSnapshot('opencode');
+    expect(snapshot.timestamp).toBe(2);
+    expect(snapshot.request.headers).toEqual({ 'x-cli-version': 'latest-disk-log' });
+    expect(snapshot.request.body).toBeUndefined();
+  });
+
   test('logs API requests when the middleware is enabled', () => {
     process.env.CC_TOOL_LOG_API_REQUESTS = 'true';
     const middleware = requestLogger.createApiRequestLogger();

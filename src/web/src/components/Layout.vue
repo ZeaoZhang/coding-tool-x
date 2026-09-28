@@ -219,9 +219,10 @@
     <!-- Prompts Drawer -->
     <PromptsDrawer v-if="isDrawerLoaded('prompts')" v-model:visible="showPromptsDrawer" />
 
-    <!-- OpenCode Gateway Convert Drawer -->
+    <!-- CLI Request Conversion Drawer -->
     <GatewayConvertDrawer
-      v-if="currentChannel === 'opencode' && isDrawerLoaded('gateway')"
+      v-if="['opencode', 'omp'].includes(currentChannel) && isDrawerLoaded('gateway')"
+      :target="currentChannel"
       v-model:visible="showGatewayConvertDrawer"
     />
 
@@ -474,17 +475,22 @@ const router = useRouter()
 const route = useRoute()
 const APP_NAME = 'coding-tool-x'
 
-const moreMenuOptions = [
-  { label: '配置模板', key: 'config-templates' },
-  { label: '配置导入/导出', key: 'config-export' },
-  { type: 'divider', key: 'divider-1' },
-  { label: '使用帮助', key: 'help' },
-  { label: 'GitHub 仓库', key: 'github' }
-]
-
 // 导航状态
 const currentRoute = computed(() => route.name)
 const currentChannel = computed(() => getRoutePlatform(route) || null)
+const moreMenuOptions = computed(() => {
+  const options = [
+    { label: '配置模板', key: 'config-templates' },
+    { label: '配置导入/导出', key: 'config-export' },
+    { type: 'divider', key: 'divider-1' },
+    { label: '使用帮助', key: 'help' },
+    { label: 'GitHub 仓库', key: 'github' }
+  ]
+  if (['opencode', 'omp'].includes(currentChannel.value)) {
+    options.unshift({ label: 'CLI 请求转换', key: 'gateway-convert' })
+  }
+  return options
+})
 const { enabledPlatforms } = useEnabledCliPlatforms()
 const currentPlatform = computed(() => enabledPlatforms.value.find(platform => platform.key === currentChannel.value) || null)
 const supportsNativeLogs = computed(() => currentPlatform.value?.capabilities?.nativeLogs === true)
@@ -732,6 +738,10 @@ function openConfigExportDrawer() {
 }
 
 function handleMoreMenuSelect(key) {
+  if (key === 'gateway-convert') {
+    openGatewayConvertDrawer()
+    return
+  }
   if (key === 'config-templates') {
     openConfigTemplatesDrawer()
     return
@@ -846,14 +856,14 @@ function openPluginsDrawer(event) {
 }
 
 function openGatewayConvertDrawer() {
-  if (currentChannel.value !== 'opencode') {
+  if (!['opencode', 'omp'].includes(currentChannel.value)) {
     return
   }
   openDrawer('gateway', showGatewayConvertDrawer)
 }
 
 watch(() => currentChannel.value, (channel) => {
-  if (channel !== 'opencode' && showGatewayConvertDrawer.value) {
+  if (!['opencode', 'omp'].includes(channel) && showGatewayConvertDrawer.value) {
     showGatewayConvertDrawer.value = false
   }
 })

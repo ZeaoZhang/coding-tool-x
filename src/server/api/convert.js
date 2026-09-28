@@ -1,40 +1,28 @@
 const express = require('express');
 const router = express.Router();
 const { getPlatformCatalog } = require('../services/platform-catalog');
+const { createSameOriginGuard } = require('../services/network-access');
+
+router.use(createSameOriginGuard({
+  message: '禁止跨站访问请求转换接口'
+}));
+
+function getConversionDriver(target) {
+  return getPlatformCatalog().driver(target, 'conversion');
+}
+
+function getConversionFormats(driver) {
+  const formats = driver?.formats?.() || driver?.getFormats?.();
+  return formats;
+}
 
 /**
- * 获取支持的格式列表
- * GET /api/convert/formats
+ * Read conversion capabilities for a target CLI.
+ * GET /api/convert/:target/formats
  */
-router.get('/formats', (req, res) => {
-  const driver = getPlatformCatalog().driver('opencode', 'conversion');
-  const formats = driver?.formats?.() || driver?.getFormats?.();
-  if (!formats) {
-    return res.status(404).json({ success: false, error: 'Conversion is not supported' });
-  }
-  const sourceTypes = formats.sourceTypes || [];
-  res.json({
-    formats: sourceTypes.map(type => ({
-      id: type,
-      name: (formats.formats || []).find(item => item.id === type)?.name
-        || String(type).replace(/[-_]/g, ' ').replace(/\b\w/g, char => char.toUpperCase()),
-      description: `${type} session format`,
-      extension: '.jsonl',
-      icon: type
-    })),
-    conversions: sourceTypes.flatMap(sourceType => sourceTypes
-      .filter(targetType => targetType !== sourceType)
-      .map(targetType => ({ from: sourceType, to: targetType })))
-  });
-});
-
-/**
- * 获取 OpenCode 网关支持格式
- * GET /api/convert/opencode/formats
- */
-router.get('/opencode/formats', (req, res) => {
-  const driver = getConversionDriver();
-  const formats = driver?.formats?.() || driver?.getFormats?.();
+router.get('/:target/formats', (req, res) => {
+  const driver = getConversionDriver(req.params.target);
+  const formats = getConversionFormats(driver);
   if (!formats) {
     return res.status(404).json({ success: false, error: 'Conversion is not supported' });
   }
@@ -45,62 +33,24 @@ router.get('/opencode/formats', (req, res) => {
       name: (formats.formats || []).find(item => item.id === type)?.name
         || String(type).replace(/[-_]/g, ' ').replace(/\b\w/g, char => char.toUpperCase())
     })),
-    target: 'opencode',
+    target: req.params.target,
     targetApis: formats.targetApis || [],
     defaultTargetApi: formats.defaultTargetApi,
-    endpoints: formats.endpoints || {},
-    sourceEndpoints: Object.fromEntries(sourceTypes.map(type => [type, `/api/convert/opencode/${type}`]))
+    endpoints: formats.endpoints || {}
   });
 });
 
-function getConversionDriver() {
-  return getPlatformCatalog().driver('opencode', 'conversion');
-}
-
-function handleOpenCodeConvert(req, res, sourceType) {
-  try {
-    const { payload, options = {} } = req.body || {};
-    const driver = getConversionDriver();
-
-    if (!driver) {
-      return res.status(404).json({ success: false, error: 'Conversion is not supported' });
-    }
-    if (!payload) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required parameters: payload'
-      });
-    }
-    const result = driver.convertSource
-      ? driver.convertSource(sourceType, payload, options)
-      : driver.convert({ sourceType, payload, options });
-    return res.json({
-      success: true,
-      ...result
-    });
-  } catch (error) {
-    console.error(`[Convert API] OpenCode ${sourceType} convert error:`, error);
-    return res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-}
-
-router.post('/opencode/:sourceType', (req, res) => {
-  return handleOpenCodeConvert(req, res, req.params.sourceType);
-});
-
 /**
- * 在线转换为 OpenCode 可处理格式
- * POST /api/convert/opencode
+ * Online conversion to a CLI-compatible request format.
+ * POST /api/convert/:target
  * Body: { sourceType, payload, options? }
  */
-router.post('/opencode', (req, res) => {
+router.post('/:target', (req, res) => {
   try {
     const { sourceType, payload, options = {} } = req.body || {};
-    const driver = getConversionDriver();
-    const sourceTypes = driver?.formats?.().sourceTypes || driver?.getFormats?.().sourceTypes || [];
+    const driver = getConversionDriver(req.params.target);
+    const formats = getConversionFormats(driver);
+    const sourceTypes = formats?.sourceTypes || [];
     const normalized = driver?.normalizeSourceType?.(sourceType) || sourceType;
 
     if (!driver) {
@@ -124,7 +74,7 @@ router.post('/opencode', (req, res) => {
       ...driver.convert({ sourceType: normalized, payload, options })
     });
   } catch (error) {
-    console.error('[Convert API] OpenCode gateway convert error:', error);
+    console.error(`[Convert API] ${req.params.target} convert error:`, error);
     return res.status(500).json({
       success: false,
       error: error.message

@@ -140,6 +140,7 @@ function recordEvent(platform, event, runtime = getPlatformRuntime(), channelCac
     channel,
     model: event.model || '',
     tokens,
+    cacheUsageAvailable: event.cacheUsageAvailable,
     cost: Number(event.cost) || 0,
     timestamp,
     usageMissing: false

@@ -484,6 +484,7 @@
     "hooks": "legacy:omp",
     "resourceSync": "legacy:omp",
     "mcp": "legacy:omp",
-    "prompts": "legacy:omp"
+    "prompts": "legacy:omp",
+    "conversion": "opencode-conversion"
   }
 }

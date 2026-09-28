@@ -37,6 +37,20 @@ function extractUsage(record = {}) {
   );
 }
 
+function hasCacheUsage(usage = {}) {
+  const aliases = [
+    'cached', 'cached_tokens', 'cachedTokens', 'cached_input_tokens', 'cachedInputTokens',
+    'cache_read_input_tokens', 'cacheReadInputTokens', 'cacheRead', 'cache_read', 'cachedContentTokenCount'
+  ];
+  const hasField = source => aliases.some(key => (
+    source && Object.prototype.hasOwnProperty.call(source, key) && source[key] !== undefined && source[key] !== null
+  ));
+  if (hasField(usage)) return true;
+
+  return [usage.input_tokens_details, usage.inputTokensDetails, usage.prompt_tokens_details, usage.promptTokensDetails, usage.usageMetadata]
+    .some(hasField) || Boolean(usage.cache && (usage.cache.read !== undefined || usage.cache.readTokens !== undefined));
+}
+
 function normalizeTimestamp(value) {
   if (typeof value === 'number' && Number.isFinite(value)) {
     if (value > 1e11) return value;
@@ -75,6 +89,7 @@ function normalizeDshEvent(record = {}, filePath = '', index = 0) {
     provider,
     model,
     tokens,
+    cacheUsageAvailable: hasCacheUsage(usage),
     cost,
     channelId: record.channelId || data.channelId || message.channelId || source.channelId,
     channel: record.channel || data.channel || message.channel || provider
@@ -113,4 +128,4 @@ function createDriver({ nativeRoot, pathContext, paths, fsImpl = fs } = {}) {
   };
 }
 
-module.exports = { createDriver, extractUsage, normalizeDshEvent };
+module.exports = { createDriver, extractUsage, hasCacheUsage, normalizeDshEvent };

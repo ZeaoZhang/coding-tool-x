@@ -28,6 +28,10 @@
           <div class="col col-token" :class="`col-token-${source}`">写入</div>
           <div class="col col-token" :class="`col-token-${source}`">命中</div>
         </template>
+        <template v-else-if="source === 'dsh'">
+          <div class="col col-token" :class="`col-token-${logLayoutClass}`">缓存</div>
+          <div class="col col-token" :class="`col-token-${logLayoutClass}`">总计</div>
+        </template>
         <template v-else-if="source === 'codex'">
           <div class="col col-token" :class="`col-token-${source}`">推理</div>
           <div class="col col-token" :class="`col-token-${source}`">缓存</div>
@@ -90,6 +94,10 @@
                   <template v-if="source === 'claude'">
                     <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'cacheCreation') }}</div>
                     <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'cacheRead') }}</div>
+                  </template>
+                  <template v-else-if="source === 'dsh'">
+                    <div class="col col-token" :class="`col-token-${logLayoutClass}`">{{ formatTokenCell(log, 'cached') }}</div>
+                    <div class="col col-token" :class="`col-token-${logLayoutClass}`">{{ formatTokenCell(log, 'total') }}</div>
                   </template>
                   <template v-else-if="source === 'codex'">
                     <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'reasoning') }}</div>
@@ -188,6 +196,9 @@ function formatNumber(num) {
 
 function formatTokenCell(log, key) {
   if (log.usageMissing) {
+    return '--'
+  }
+  if (key === 'cached' && props.source === 'dsh' && log.cacheUsageAvailable !== true) {
     return '--'
   }
   return log.tokens?.[key] || 0

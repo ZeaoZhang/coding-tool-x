@@ -73,7 +73,7 @@ function formatRealtimeTime(timestamp = Date.now()) {
   return new Date(timestamp).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-function buildSuccessLogPayload({ source, requestId, channel, model, originalModel, redirectedModel, tokens, cost = 0, timestamp = Date.now(), usageMissing = false }) {
+function buildSuccessLogPayload({ source, requestId, channel, model, originalModel, redirectedModel, tokens, cacheUsageAvailable, cost = 0, timestamp = Date.now(), usageMissing = false }) {
   const normalized = normalizeUsageTokens(source, tokens);
   const payload = {
     type: 'log', status: 'success', id: requestId, time: formatRealtimeTime(timestamp), channel,
@@ -82,6 +82,7 @@ function buildSuccessLogPayload({ source, requestId, channel, model, originalMod
     reasoningTokens: normalized.reasoning, totalTokens: normalized.total, cost,
     source: normalizeToolSource(source), timestamp, usageMissing: Boolean(usageMissing)
   };
+  if (typeof cacheUsageAvailable === 'boolean') payload.cacheUsageAvailable = cacheUsageAvailable;
   if (originalModel) payload.originalModel = originalModel;
   if (redirectedModel) payload.redirectedModel = redirectedModel;
   return payload;
