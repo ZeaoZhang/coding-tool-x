@@ -95,10 +95,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ZeaoZhang/coding-tool.git"
+    "url": "git+https://github.com/ZeaoZhang/coding-tool-x.git"
   },
   "bugs": {
-    "url": "https://github.com/ZeaoZhang/coding-tool/issues"
+    "url": "https://github.com/ZeaoZhang/coding-tool-x/issues"
   },
-  "homepage": "https://github.com/ZeaoZhang/coding-tool#readme"
+  "homepage": "https://github.com/ZeaoZhang/coding-tool-x#readme"
 }
