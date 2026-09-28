@@ -45,3 +45,5 @@ build/
 .omp/mcp.json
 .cursor/
 
+# Local Superpowers workspace data
+.superpowers/
