@@ -9,6 +9,7 @@
           </div>
           <div class="asset-tags">
             <n-tag v-if="plugin.installed" type="success" size="tiny" :bordered="false">已安装</n-tag>
+            <n-tag v-if="plugin.builtIn" type="info" size="tiny" :bordered="false">内置</n-tag>
             <n-tag v-if="readonly" type="default" size="tiny" :bordered="false">只读</n-tag>
             <n-tag v-if="plugin.scope" type="info" size="tiny" :bordered="false">
               {{ plugin.scope === 'project' ? '项目' : '全局' }}

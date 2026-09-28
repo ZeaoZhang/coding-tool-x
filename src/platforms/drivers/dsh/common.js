@@ -34,6 +34,45 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function resolveDshInstallRoot(context = {}) {
+  const command = String(
+    context.dshCommand
+      || context.dependencies?.dshCommand
+      || process.env.DSH_COMMAND
+      || 'dsh'
+  ).trim();
+  if (!command) return null;
+  const commandHasPath = path.isAbsolute(command) || command.includes(path.sep);
+  if (!commandHasPath && /\s/.test(command)) return null;
+
+  const candidates = commandHasPath
+    ? [path.resolve(command)]
+    : String(context.dshEnv?.PATH || process.env.PATH || '')
+      .split(path.delimiter)
+      .filter(Boolean)
+      .map(directory => path.join(directory, command));
+
+  for (const candidate of candidates) {
+    let executablePath;
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      executablePath = fs.realpathSync(candidate);
+    } catch (_) {
+      continue;
+    }
+
+    let directory = path.dirname(executablePath);
+    for (let depth = 0; depth < 8; depth += 1) {
+      const packageJson = readJsonFile(path.join(directory, 'package.json'), null);
+      if (packageJson?.name === '@deepseek-ai/dsh') return directory;
+      const parent = path.dirname(directory);
+      if (parent === directory) break;
+      directory = parent;
+    }
+  }
+  return null;
+}
+
 function resolvePaths(context = {}) {
   const paths = context.paths || context.pathContext?.native || {};
   const home = path.resolve(paths.dir || paths.home || context.pathContext?.home || process.env.DSH_HOME || path.join(require('os').homedir(), '.dsh'));
@@ -46,7 +85,7 @@ function resolvePaths(context = {}) {
     patch: paths.patch || path.join(home, 'cordis.patch.yml')
   };
   const installAnchor = paths.installAnchor || context.installAnchor || process.env.DSH_INSTALL_ANCHOR;
-  const installRoot = paths.installRoot || context.installRoot || process.env.DSH_INSTALL_ROOT;
+  const installRoot = paths.installRoot || context.installRoot || process.env.DSH_INSTALL_ROOT || resolveDshInstallRoot(context);
   if (installAnchor) resolved.installAnchor = installAnchor;
   if (installRoot) resolved.installRoot = installRoot;
   return resolved;
@@ -246,7 +285,7 @@ function listProfilePlugins(context = {}, profileName) {
   const bundleNames = Array.isArray(profileConfig.bundles) ? profileConfig.bundles : [];
   const dependencyNames = Object.keys(isObject(manifest.dependencies) ? manifest.dependencies : {});
   const names = [...new Set([...bundleNames, ...dependencyNames])];
-  const plugins = names.map(name => {
+  const describePlugin = name => {
     const packageDir = resolvePackageDir(profile.profileDir, name, paths);
     const packageJsonPath = packageDir ? path.join(packageDir, 'package.json') : null;
     const packageJson = packageJsonPath ? readJsonFile(packageJsonPath, {}) : {};
@@ -269,11 +308,29 @@ function listProfilePlugins(context = {}, profileName) {
       patchPath,
       patchPaths,
       patchExists,
+      description: packageJson.description || '',
       inBundleList: bundleNames.includes(name),
       builtIn: isBuiltInProfilePackage(packageDir, name, profile.profileDir, paths),
       management: 'ctx+dsh-plugin'
     };
-  });
+  };
+  const declaredPlugins = names.map(describePlugin);
+  const builtinNames = bundledPluginNames(declaredPlugins);
+  const plugins = [...declaredPlugins];
+  for (const name of builtinNames) {
+    if (names.includes(name)) continue;
+    const plugin = describePlugin(name);
+    plugin.installed = true;
+    if (!plugin.builtIn) {
+      const packageDir = resolvePackageDir(profile.profileDir, name, paths);
+      const profileModules = path.join(profile.profileDir, 'node_modules');
+      const sharedProfileModules = path.join(paths.profiles, 'node_modules');
+      if (!packageDir || (!isPathInside(profileModules, packageDir) && !isPathInside(sharedProfileModules, packageDir))) {
+        plugin.builtIn = true;
+      }
+    }
+    plugins.push(plugin);
+  }
   return {
     profile: profile.name,
     profilePath: profile.profileDir,
@@ -298,6 +355,24 @@ function isBuiltInProfilePackage(packageDir, packageName, profileDir, paths) {
   if (/^@deepseek-ai\/dsh-/.test(packageName)) return true;
   if (!packageDir) return false;
   return true;
+}
+
+function bundledPluginNames(plugins) {
+  const names = new Set();
+  for (const plugin of plugins) {
+    if (!plugin.inBundleList || !plugin.builtIn) continue;
+    for (const filePath of plugin.patchPaths || []) {
+      if (!fs.existsSync(filePath)) continue;
+      const rows = collectPatchRows(readYamlFile(filePath, []), [], filePath);
+      for (const row of rows) {
+        const match = typeof row.name === 'string'
+          ? row.name.match(/^(@deepseek-ai\/[a-z0-9._-]+)(?:\/[a-z0-9._-]+)*$/i)
+          : null;
+        if (match) names.add(match[1]);
+      }
+    }
+  }
+  return names;
 }
 
 function listManageableProfilePlugins(context = {}, profileName) {
@@ -592,9 +667,9 @@ function listProfilePrompts(context = {}, profileName) {
 
 function listPlugins(context = {}) {
   return {
-    profiles: listProfiles(context).map(profile => listManageableProfilePlugins(context, profile.name)).filter(Boolean),
+    profiles: listProfiles(context).map(profile => listProfilePlugins(context, profile.name)).filter(Boolean),
     management: 'ctx+dsh-plugin',
-    note: '仅列出并管理 Profile 安装的外置插件；DSH 安装目录中的内置插件由 DSH 管理。'
+    note: '内置插件只读展示；仅 Profile 安装的外置插件由此处管理。'
   };
 }
 
@@ -603,8 +678,9 @@ function listProfileAgentPresets(context = {}, profileName) {
   if (!info) return null;
   const patchPath = path.join(info.profile.profileDir, 'cordis.patch.yml');
   const bundledPatchPaths = new Set(info.pluginInfo.plugins
-    .filter(plugin => plugin.inBundleList && plugin.patchPath)
-    .map(plugin => path.resolve(plugin.patchPath)));
+    .filter(plugin => plugin.inBundleList && plugin.builtIn && plugin.patchPath)
+    .flatMap(plugin => plugin.patchPaths || [plugin.patchPath])
+    .map(filePath => path.resolve(filePath)));
   const bundledPresetIds = new Set(info.contributions
     .filter(contribution => bundledPatchPaths.has(path.resolve(contribution.path)))
     .flatMap(contribution => contribution.rows)

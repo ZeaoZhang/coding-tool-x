@@ -1669,7 +1669,7 @@ class PluginsService {
           source: 'dsh-profile',
           pluginType: 'dsh-profile',
           enabled: true,
-          readonly: false,
+          readonly: plugin.builtIn === true,
           description: plugin.description || '',
           directory: plugin.name || name
         });
