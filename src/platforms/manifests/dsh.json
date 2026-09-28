@@ -5,6 +5,7 @@
   "command": "dsh",
   "iconToken": "terminal",
   "color": "#2563eb",
+  "logLayout": "basic",
   "defaultVisible": true,
   "defaultEnabled": false,
   "sortOrder": 50,

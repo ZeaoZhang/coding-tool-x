@@ -188,6 +188,7 @@ function createPlatformRegistry({
       portLabel: platform.portLabel || null,
       apiPrefix: platform.api?.prefix || null,
       modelCatalogKey: platform.modelConfig?.catalogKey || platform.key,
+      ...(platform.logLayout ? { logLayout: platform.logLayout } : {}),
       capabilities
     };
     const resourceTypes = publicResourceTypes(platform.resourceTypes);

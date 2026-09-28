@@ -7,7 +7,7 @@ export const MINIMAL_PLATFORM_FALLBACK = [
   { key: 'gemini', label: 'Gemini', capabilities: { channels: true, projects: true, sessions: true, proxy: true, statistics: true, resourceSync: true, skills: true, commands: true, agents: true, nativeConfig: true } },
   { key: 'opencode', label: 'OpenCode', capabilities: { channels: true, projects: true, sessions: true, proxy: true, statistics: true, resourceSync: true, skills: true, commands: true, agents: true, nativeConfig: true } },
   { key: 'omp', label: 'OMP', capabilities: { channels: true, projects: true, sessions: true, proxy: true, statistics: true, resourceSync: true, skills: true, commands: true, plugins: true, agents: false, nativeConfig: true } },
-  { key: 'dsh', label: 'DSH', title: 'DeepSeek Harness', command: 'dsh', iconToken: 'terminal', color: '#2563eb', defaultVisible: true, capabilities: { channels: true, projects: true, sessions: true, proxy: true, statistics: true, nativeLogs: true, nativeConfig: true, api: true, mcp: true, prompts: true }, resourceTypes: { skills: true, commands: false, agents: true, plugins: true, mcp: true, prompts: true }, resourceActions: { skills: { create: false, repositories: true, import: false, refresh: true }, plugins: { repositories: false, market: false, install: true, uninstall: true, import: false, syncRepos: false } } }
+  { key: 'dsh', label: 'DSH', title: 'DeepSeek Harness', command: 'dsh', iconToken: 'terminal', color: '#2563eb', defaultVisible: true, logLayout: 'basic', capabilities: { channels: true, projects: true, sessions: true, proxy: true, statistics: true, nativeLogs: true, nativeConfig: true, api: true, mcp: true, prompts: true }, resourceTypes: { skills: true, commands: false, agents: true, plugins: true, mcp: true, prompts: true }, resourceActions: { skills: { create: false, repositories: true, import: false, refresh: true }, plugins: { repositories: false, market: false, install: true, uninstall: true, import: false, syncRepos: false } } }
 ]
 
 function normalizeCapabilities(platform = {}) {
@@ -66,6 +66,9 @@ export function normalizePublicPlatform(platform = {}) {
     portLabel: typeof platform?.portLabel === 'string' ? platform.portLabel : '',
     apiPrefix: typeof platform?.apiPrefix === 'string' ? platform.apiPrefix : '',
     modelCatalogKey: typeof platform?.modelCatalogKey === 'string' ? platform.modelCatalogKey : key,
+    logLayout: platform?.logLayout === 'basic'
+      ? 'basic'
+      : MINIMAL_PLATFORM_FALLBACK.find(fallback => fallback.key === key)?.logLayout || '',
     enabled: platform?.enabled !== false,
     custom: platform?.custom === true,
     capabilities,

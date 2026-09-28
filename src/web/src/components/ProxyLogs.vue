@@ -21,9 +21,9 @@
     <div class="logs-table">
       <!-- 表头 -->
       <div class="table-header" :class="`table-header-${source}`">
-        <div class="col col-channel" :class="`col-channel-${source}`">渠道</div>
-        <div class="col col-token" :class="`col-token-${source}`">请求</div>
-        <div class="col col-token" :class="`col-token-${source}`">回复</div>
+        <div class="col col-channel" :class="`col-channel-${logLayoutClass}`">渠道</div>
+        <div class="col col-token" :class="`col-token-${logLayoutClass}`">请求</div>
+        <div class="col col-token" :class="`col-token-${logLayoutClass}`">回复</div>
         <template v-if="source === 'claude'">
           <div class="col col-token" :class="`col-token-${source}`">写入</div>
           <div class="col col-token" :class="`col-token-${source}`">命中</div>
@@ -42,7 +42,7 @@
           <div class="col col-token" :class="`col-token-${source}`">缓存</div>
           <div class="col col-token" :class="`col-token-${source}`">总计</div>
         </template>
-        <div class="col col-time" :class="`col-time-${source}`">时间</div>
+        <div class="col col-time" :class="`col-time-${logLayoutClass}`">时间</div>
       </div>
 
       <!-- 内容区域（可滚动） -->
@@ -82,11 +82,11 @@
             <n-tooltip placement="top" :style="{ maxWidth: '300px' }">
               <template #trigger>
                 <div class="table-row-content" :class="`table-row-content-${source}`">
-                  <div class="col col-channel" :class="`col-channel-${source}`" :title="log.channel">
+                  <div class="col col-channel" :class="`col-channel-${logLayoutClass}`" :title="log.channel">
                     <n-tag size="small" type="success">{{ log.channel }}</n-tag>
                   </div>
-                  <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'input') }}</div>
-                  <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'output') }}</div>
+                  <div class="col col-token" :class="`col-token-${logLayoutClass}`">{{ formatTokenCell(log, 'input') }}</div>
+                  <div class="col col-token" :class="`col-token-${logLayoutClass}`">{{ formatTokenCell(log, 'output') }}</div>
                   <template v-if="source === 'claude'">
                     <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'cacheCreation') }}</div>
                     <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'cacheRead') }}</div>
@@ -105,7 +105,7 @@
                     <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'cached') }}</div>
                     <div class="col col-token" :class="`col-token-${source}`">{{ formatTokenCell(log, 'total') }}</div>
                   </template>
-                  <div class="col col-time" :class="`col-time-${source}`">{{ log.time }}</div>
+                  <div class="col col-time" :class="`col-time-${logLayoutClass}`">{{ log.time }}</div>
                 </div>
               </template>
               <div v-if="log.model">
@@ -146,6 +146,7 @@ import { getPlatformTodayStatistics } from '../api/statistics'
 import { clearProxyLogs } from '../api/proxy'
 import message from '../utils/message'
 import { useGlobalState } from '../composables/useGlobalState'
+import { usePlatformStore } from '../stores/platforms'
 
 // Props
 const props = defineProps({
@@ -156,6 +157,10 @@ const props = defineProps({
 })
 
 const { logsBySource, wsConnected, clearLogsState, logLimit } = useGlobalState()
+const platformStore = usePlatformStore()
+const logLayoutClass = computed(() => (
+  platformStore.get(props.source)?.logLayout || String(props.source || '').trim().toLowerCase()
+))
 
 const filteredLogs = computed(() => {
   const source = String(props.source || '').trim().toLowerCase()
@@ -645,6 +650,29 @@ onUnmounted(() => {
   padding-right: 6px;
 }
 
+/* Shared channel/input/output/time layout declared by platform metadata. */
+.col-channel-basic {
+  flex: 1 1 80px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.col-token-basic {
+  flex: 0 0 68px;
+  justify-content: center;
+  min-width: 0;
+}
+
+.col-time-basic {
+  flex: 0 0 85px;
+  min-width: 85px;
+  font-family: monospace;
+  font-size: 11px;
+  justify-content: flex-end;
+  padding-left: 10px;
+  padding-right: 6px;
+}
+
 /* 通用样式（保留以防兼容性问题） */
 .col-channel {
   min-width: 0;
@@ -754,17 +782,20 @@ onUnmounted(() => {
 
   /* 压缩列宽 */
   .col-channel-claude,
-  .col-channel-gemini {
+  .col-channel-gemini,
+  .col-channel-basic {
     flex: 0 0 75px;
   }
 
   .col-token-claude,
-  .col-token-gemini {
+  .col-token-gemini,
+  .col-token-basic {
     flex: 0 0 55px;
   }
 
   .col-time-claude,
-  .col-time-gemini {
+  .col-time-gemini,
+  .col-time-basic {
     flex: 0 0 80px;
     min-width: 80px;
   }
@@ -840,7 +871,8 @@ onUnmounted(() => {
   .col-channel-gemini,
   .col-channel-codex,
   .col-channel-opencode,
-  .col-channel-omp {
+  .col-channel-omp,
+  .col-channel-basic {
     flex: 0 0 60px;
   }
 
@@ -854,7 +886,8 @@ onUnmounted(() => {
   .col-token-gemini,
   .col-token-codex,
   .col-token-opencode,
-  .col-token-omp {
+  .col-token-omp,
+  .col-token-basic {
     flex: 0 0 40px;
     font-size: 9px;
   }
@@ -863,7 +896,8 @@ onUnmounted(() => {
   .col-time-gemini,
   .col-time-codex,
   .col-time-opencode,
-  .col-time-omp {
+  .col-time-omp,
+  .col-time-basic {
     flex: 0 0 65px;
     min-width: 65px;
     font-size: 9px;
@@ -931,7 +965,8 @@ onUnmounted(() => {
   .col-channel-gemini,
   .col-channel-codex,
   .col-channel-opencode,
-  .col-channel-omp {
+  .col-channel-omp,
+  .col-channel-basic {
     flex: 0 0 50px;
   }
 
@@ -945,7 +980,8 @@ onUnmounted(() => {
   .col-token-gemini,
   .col-token-codex,
   .col-token-opencode,
-  .col-token-omp {
+  .col-token-omp,
+  .col-token-basic {
     flex: 0 0 32px;
     font-size: 8px;
   }
@@ -954,7 +990,8 @@ onUnmounted(() => {
   .col-time-gemini,
   .col-time-codex,
   .col-time-opencode,
-  .col-time-omp {
+  .col-time-omp,
+  .col-time-basic {
     flex: 0 0 55px;
     min-width: 55px;
     font-size: 8px;
@@ -1006,7 +1043,8 @@ onUnmounted(() => {
   .col-channel-gemini,
   .col-channel-codex,
   .col-channel-opencode,
-  .col-channel-omp {
+  .col-channel-omp,
+  .col-channel-basic {
     flex: 0 0 45px;
   }
 
@@ -1014,7 +1052,8 @@ onUnmounted(() => {
   .col-token-gemini,
   .col-token-codex,
   .col-token-opencode,
-  .col-token-omp {
+  .col-token-omp,
+  .col-token-basic {
     flex: 0 0 28px;
     font-size: 7px;
   }
@@ -1023,7 +1062,8 @@ onUnmounted(() => {
   .col-time-gemini,
   .col-time-codex,
   .col-time-opencode,
-  .col-time-omp {
+  .col-time-omp,
+  .col-time-basic {
     flex: 0 0 48px;
     min-width: 48px;
     font-size: 7px;

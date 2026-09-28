@@ -116,6 +116,7 @@ const schema = {
     portLabel: { type: 'string', minLength: 1 },
     apiBasePath: { type: 'string', minLength: 1 },
     logFile: { type: 'string', minLength: 1 },
+    logLayout: { enum: ['basic'] },
     logAliases: { type: 'array', items: { type: 'string', minLength: 1 } },
     logNote: { type: 'string' },
     logColor: { type: 'string', minLength: 1 },

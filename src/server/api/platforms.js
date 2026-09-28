@@ -18,6 +18,7 @@ const PUBLIC_FIELDS = Object.freeze([
   'portLabel',
   'apiPrefix',
   'modelCatalogKey',
+  'logLayout',
   'promptLabel',
   'resourceTypes',
   'resourceActions'

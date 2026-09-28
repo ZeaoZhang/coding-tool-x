@@ -304,9 +304,9 @@
           <div class="logs-table-wrapper">
           <!-- 表头 -->
           <div class="logs-table-header" :class="`logs-header-${channelType}`">
-            <div class="log-col col-channel" :class="`col-channel-${channelType}`">渠道</div>
-            <div class="log-col col-token" :class="`col-token-${channelType}`">请求</div>
-            <div class="log-col col-token" :class="`col-token-${channelType}`">回复</div>
+            <div class="log-col col-channel" :class="`col-channel-${logLayoutClass}`">渠道</div>
+            <div class="log-col col-token" :class="`col-token-${logLayoutClass}`">请求</div>
+            <div class="log-col col-token" :class="`col-token-${logLayoutClass}`">回复</div>
             <template v-if="channelType === 'claude'">
               <div class="log-col col-token" :class="`col-token-${channelType}`">写入</div>
               <div class="log-col col-token" :class="`col-token-${channelType}`">命中</div>
@@ -328,7 +328,7 @@
             <template v-else>
               <div class="log-col col-token" :class="`col-token-${channelType}`">总计</div>
             </template>
-            <div class="log-col col-time" :class="`col-time-${channelType}`">时间</div>
+            <div class="log-col col-time" :class="`col-time-${logLayoutClass}`">时间</div>
           </div>
           <!-- 日志内容 -->
           <div class="logs-container" ref="logsContainer">
@@ -366,11 +366,11 @@
               </template>
               <!-- 普通日志 -->
               <template v-else>
-                <div class="log-col col-channel" :class="`col-channel-${channelType}`">
+                <div class="log-col col-channel" :class="`col-channel-${logLayoutClass}`">
                   <n-tag size="tiny" type="success">{{ log.channel }}</n-tag>
                 </div>
-                <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'input') }}</div>
-                <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'output') }}</div>
+                <div class="log-col col-token" :class="`col-token-${logLayoutClass}`">{{ formatLogToken(log, 'input') }}</div>
+                <div class="log-col col-token" :class="`col-token-${logLayoutClass}`">{{ formatLogToken(log, 'output') }}</div>
                 <template v-if="channelType === 'claude'">
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'cacheCreation') }}</div>
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'cacheRead') }}</div>
@@ -392,7 +392,7 @@
                 <template v-else>
                   <div class="log-col col-token" :class="`col-token-${channelType}`">{{ formatLogToken(log, 'total') }}</div>
                 </template>
-                <div class="log-col col-time" :class="`col-time-${channelType}`">{{ log.time }}</div>
+                <div class="log-col col-time" :class="`col-time-${logLayoutClass}`">{{ log.time }}</div>
               </template>
             </div>
           </div>
@@ -492,6 +492,7 @@ const platformConfig = computed(() => platformStore.get(props.channelType) || {
   capabilities: {},
   resourceTypes: {}
 })
+const logLayoutClass = computed(() => platformConfig.value.logLayout || props.channelType)
 const channelTitle = computed(() => platformConfig.value.title || platformConfig.value.label || props.channelType)
 const channelIcon = computed(() => platformConfig.value.icon || TerminalOutline)
 const accentColor = computed(() => platformConfig.value.color || '#64748b')
@@ -2296,6 +2297,22 @@ onUnmounted(() => {
 }
 
 .col-time-omp {
+  flex: 1.8 1 60px;
+  min-width: 55px;
+}
+
+/* Shared channel/input/output/time layout declared by platform metadata. */
+.col-channel-basic {
+  flex: 2.5 1 70px;
+  min-width: 55px;
+}
+
+.col-token-basic {
+  flex: 1.2 1 45px;
+  min-width: 40px;
+}
+
+.col-time-basic {
   flex: 1.8 1 60px;
   min-width: 55px;
 }
