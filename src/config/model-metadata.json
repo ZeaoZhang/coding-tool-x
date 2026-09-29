@@ -1,7 +1,7 @@
 {
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
-  "lastUpdated": "2026-09-28",
+  "lastUpdated": "2026-09-29",
   "defaultModels": {
     "claude": [
       "claude-opus-4-7",
@@ -18,7 +18,8 @@
       "claude-opus-4-5",
       "claude-haiku-4-5",
       "claude-sonnet-4-5",
-      "claude-opus-5-5"
+      "claude-opus-5-5",
+      "claude-sonnet-5-5"
     ],
     "codex": [
       "gpt-5.5",
@@ -1803,6 +1804,33 @@
         "omp"
       ]
     },
+    "claude-sonnet-5-5": {
+      "id": "claude-sonnet-5-5",
+      "input": [
+        "text",
+        "image"
+      ],
+      "limit": {
+        "context": 1000000,
+        "output": 128000
+      },
+      "name": "Claude Sonnet 5.5",
+      "pricing": {
+        "cacheCreation": 2.5,
+        "cacheRead": 0.2,
+        "input": 2,
+        "output": 10
+      },
+      "provider": "anthropic",
+      "reasoning": true,
+      "sourceId": "anthropic/claude-sonnet-5-5",
+      "supportsTools": true,
+      "toolTypes": [
+        "claude",
+        "opencode",
+        "omp"
+      ]
+    },
     "deepseek/deepseek-flash": {
       "id": "deepseek/deepseek-flash",
       "input": [
@@ -3272,6 +3300,7 @@
       },
       "name": "Codestral (latest)",
       "pricing": {
+        "cacheRead": 0.03,
         "input": 0.3,
         "output": 0.9
       },
@@ -3319,6 +3348,7 @@
       },
       "name": "Mistral Large 3",
       "pricing": {
+        "cacheRead": 0.05,
         "input": 0.5,
         "output": 1.5
       },
@@ -3343,6 +3373,7 @@
       },
       "name": "Mistral Large (latest)",
       "pricing": {
+        "cacheRead": 0.05,
         "input": 0.5,
         "output": 1.5
       },
@@ -3415,6 +3446,7 @@
       },
       "name": "Mistral Medium 3.5",
       "pricing": {
+        "cacheRead": 0.15,
         "input": 1.5,
         "output": 7.5
       },
@@ -3439,6 +3471,7 @@
       },
       "name": "Mistral Medium (latest)",
       "pricing": {
+        "cacheRead": 0.15,
         "input": 1.5,
         "output": 7.5
       },
@@ -3510,6 +3543,7 @@
       },
       "name": "Mistral Small 4",
       "pricing": {
+        "cacheRead": 0.015,
         "input": 0.15,
         "output": 0.6
       },
@@ -3534,6 +3568,7 @@
       },
       "name": "Mistral Small (latest)",
       "pricing": {
+        "cacheRead": 0.015,
         "input": 0.15,
         "output": 0.6
       },
