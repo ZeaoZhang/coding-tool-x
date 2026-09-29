@@ -472,7 +472,8 @@ const presetOptions = computed(() => {
       groups[category] = {
         type: 'group',
         label: config.presetCategories?.[category] || category,
-        key: category,
+        // Group keys share Naive UI's virtual-list key space with preset values.
+        key: `preset-group:${category}`,
         children: []
       }
     }
