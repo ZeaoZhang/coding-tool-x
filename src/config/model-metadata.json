@@ -1,7 +1,7 @@
 {
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
-  "lastUpdated": "2026-10-03",
+  "lastUpdated": "2026-10-07",
   "defaultModels": {
     "claude": [
       "claude-opus-4-7",
@@ -144,6 +144,7 @@
     "kimi-k3": "moonshotai/kimi-k3",
     "mistral-large-2411": "mistral/mistral-large-2411",
     "mistral-large-2512": "mistral/mistral-large-2512",
+    "mistral-large-4": "mistral/mistral-large-4",
     "mistral-large-latest": "mistral/mistral-large-latest",
     "mistral-medium-2505": "mistral/mistral-medium-2505",
     "mistral-medium-2508": "mistral/mistral-medium-2508",
@@ -3389,6 +3390,31 @@
         "omp"
       ]
     },
+    "mistral/mistral-large-4": {
+      "id": "mistral/mistral-large-4",
+      "input": [
+        "text",
+        "image"
+      ],
+      "limit": {
+        "context": 524288,
+        "output": 262144
+      },
+      "name": "Mistral Large 4",
+      "pricing": {
+        "cacheRead": 0.07,
+        "input": 0.68,
+        "output": 2.09
+      },
+      "provider": "mistral",
+      "reasoning": true,
+      "sourceId": "mistral/mistral-large-4",
+      "supportsTools": true,
+      "toolTypes": [
+        "opencode",
+        "omp"
+      ]
+    },
     "mistral/mistral-large-latest": {
       "id": "mistral/mistral-large-latest",
       "input": [
@@ -3566,7 +3592,7 @@
         "image"
       ],
       "limit": {
-        "context": 256000,
+        "context": 262144,
         "output": 256000
       },
       "name": "Mistral Small 4",
@@ -3591,7 +3617,7 @@
         "image"
       ],
       "limit": {
-        "context": 256000,
+        "context": 262144,
         "output": 256000
       },
       "name": "Mistral Small (latest)",
