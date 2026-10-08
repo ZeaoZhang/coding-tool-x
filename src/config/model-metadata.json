@@ -1,7 +1,7 @@
 {
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
-  "lastUpdated": "2026-10-07",
+  "lastUpdated": "2026-10-08",
   "defaultModels": {
     "claude": [
       "claude-opus-4-7",
@@ -19,7 +19,8 @@
       "claude-haiku-4-5",
       "claude-sonnet-4-5",
       "claude-opus-5-5",
-      "claude-sonnet-5-5"
+      "claude-sonnet-5-5",
+      "claude-haiku-5-5"
     ],
     "codex": [
       "gpt-5.5",
@@ -97,6 +98,7 @@
     "claude-opus-4.7": "claude-opus-4-7",
     "claude-sonnet-4-5": "claude-sonnet-4-5-20250929",
     "claude-sonnet-4-6": "claude-sonnet-4-6",
+    "codestral-2508": "mistral/codestral-2508",
     "codestral-latest": "mistral/codestral-latest",
     "deepseek-flash": "deepseek/deepseek-flash",
     "deepseek-v4-flash": "deepseek/deepseek-v4-flash",
@@ -1509,6 +1511,33 @@
         "omp"
       ]
     },
+    "claude-haiku-5-5": {
+      "id": "claude-haiku-5-5",
+      "input": [
+        "text",
+        "image"
+      ],
+      "limit": {
+        "context": 1000000,
+        "output": 128000
+      },
+      "name": "Claude Haiku 5.5",
+      "pricing": {
+        "cacheCreation": 0.125,
+        "cacheRead": 0.01,
+        "input": 0.1,
+        "output": 0.5
+      },
+      "provider": "anthropic",
+      "reasoning": true,
+      "sourceId": "anthropic/claude-haiku-5-5",
+      "supportsTools": true,
+      "toolTypes": [
+        "claude",
+        "opencode",
+        "omp"
+      ]
+    },
     "claude-opus-4-5": {
       "id": "claude-opus-4-5",
       "input": [
@@ -1705,7 +1734,7 @@
         "image"
       ],
       "limit": {
-        "context": 1000000,
+        "context": 200000,
         "output": 64000
       },
       "name": "Claude Sonnet 4.5 (latest)",
@@ -1732,7 +1761,7 @@
         "image"
       ],
       "limit": {
-        "context": 1000000,
+        "context": 200000,
         "output": 64000
       },
       "name": "Claude Sonnet 4.5",
@@ -1819,7 +1848,7 @@
       "name": "Claude Sonnet 5.5",
       "pricing": {
         "cacheCreation": 2.5,
-        "cacheRead": 0.2,
+        "cacheRead": 0.1,
         "input": 2,
         "output": 10
       },
@@ -3318,6 +3347,30 @@
         "omp"
       ]
     },
+    "mistral/codestral-2508": {
+      "id": "mistral/codestral-2508",
+      "input": [
+        "text"
+      ],
+      "limit": {
+        "context": 256000,
+        "output": 8192
+      },
+      "name": "Codestral 25.08",
+      "pricing": {
+        "cacheRead": 0.03,
+        "input": 0.3,
+        "output": 0.9
+      },
+      "provider": "mistral",
+      "reasoning": false,
+      "sourceId": "mistral/codestral-2508",
+      "supportsTools": true,
+      "toolTypes": [
+        "opencode",
+        "omp"
+      ]
+    },
     "mistral/codestral-latest": {
       "id": "mistral/codestral-latest",
       "input": [
@@ -3867,6 +3920,7 @@
       },
       "name": "Kimi K3",
       "pricing": {
+        "cacheCreation": 3,
         "cacheRead": 0.3,
         "input": 3,
         "output": 15
