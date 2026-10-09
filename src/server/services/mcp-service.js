@@ -9,6 +9,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { McpClient, buildMissingCommandMessage, createMissingCommandHint } = require('./mcp-client');
 const mcpFormat = require('../../shared/mcp-format');
+const { importMcpServer } = require('../../shared/mcp-import');
 const { convertToOmpMcpFormat, convertFromOmpMcpFormat } = mcpFormat;
 const { PATHS } = require('../../config/paths');
 const { ControlManifestStore } = require('./control-manifest-store');
@@ -1072,25 +1073,7 @@ async function importGenericMcpServers(driver, platform, servers) {
 
   for (const [id, spec] of Object.entries(mcpServers)) {
     if (!spec || typeof spec !== 'object' || Array.isArray(spec)) continue;
-    if (servers[id]) {
-      servers[id].apps = normalizeServerApps(servers[id].apps, {});
-      if (!servers[id].apps[platform]) {
-        servers[id].apps[platform] = true;
-        count++;
-      }
-      continue;
-    }
-
-    const now = Date.now();
-    servers[id] = {
-      id,
-      name: id,
-      server: normalizeServerSpec(spec),
-      apps: { [platform]: true },
-      createdAt: now,
-      updatedAt: now
-    };
-    count++;
+    if (importMcpServer(servers, { id, platform, spec: normalizeServerSpec(spec) })) count++;
   }
 
   return count;

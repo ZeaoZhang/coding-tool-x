@@ -8,6 +8,7 @@ const tomlStringify = require('@iarna/toml').stringify;
 const { ok, failed } = require('../driver-result');
 const { extractServerSpec, convertToCodexFormat, convertFromCodexFormat, convertToOmpMcpFormat, convertFromOmpMcpFormat, convertToOpenCodeFormat, convertFromOpenCodeFormat } = require('../mcp-format');
 const { redactSecrets, validateMcpId } = require('../project-config');
+const { importMcpServer } = require('../mcp-import');
 
 const SCHEMA_URL = 'https://raw.githubusercontent.com/can1357/oh-my-omp/main/packages/coding-agent/src/config/mcp-schema.json';
 
@@ -192,14 +193,7 @@ function createMcpDriver({ platform, ...context } = {}) {
     let count = 0;
     for (const [id, spec] of Object.entries(map)) {
       if (!spec || typeof spec !== 'object' || Array.isArray(spec)) continue;
-      if (servers[id]) {
-        servers[id].apps = { ...(servers[id].apps || {}), [platform]: true };
-        count += 1;
-        continue;
-      }
-      const now = Date.now();
-      servers[id] = { id, name: id, server: internalSpec(spec), apps: { [platform]: true }, createdAt: now, updatedAt: now };
-      count += 1;
+      if (importMcpServer(servers, { id, platform, spec: internalSpec(spec) })) count += 1;
     }
     return count;
   }

@@ -326,8 +326,8 @@ router.post('/import/:platform', async (req, res) => {
       success: true,
       imported: count,
       message: count > 0
-        ? `成功从 ${resolved.key} 导入 ${count} 个 MCP 服务器`
-        : `${resolved.key} 没有可导入的 MCP 服务器`
+        ? `已从 ${resolved.key} 导入或更新 ${count} 个 MCP 服务器`
+        : `${resolved.key} 的 MCP 配置没有新增或变更`
     });
   } catch (error) {
     console.error('[MCP API] Import failed:', sanitizeErrorMessage(error.message || error));

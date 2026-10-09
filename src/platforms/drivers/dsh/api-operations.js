@@ -9,6 +9,7 @@ const { installPlugin, uninstallPlugin, updatePlugin } = require('./plugin-manag
 const { createDriver: createChannelsDriver } = require('./channels');
 const { createDriver: createProxyDriver } = require('./proxy');
 const { createDriver: createStatisticsDriver } = require('./statistics');
+const { importMcpServer } = require('../../../shared/mcp-import');
 
 function requiredId(value, label) {
   const id = String(value || '').trim();
@@ -153,16 +154,32 @@ function dshMcpSpecToConfig(spec = {}, serverName) {
   return config;
 }
 
-function readDshMcpEntries(context = {}) {
+function dshMcpServerName(server, fallbackId) {
+  const requested = String(server?.name || '').trim();
+  if (/^[A-Za-z0-9_-]{1,32}$/.test(requested)) return requested;
+  return String(fallbackId || '')
+    .replace(/[^A-Za-z0-9_-]/g, '_')
+    .slice(0, 32) || 'mcp';
+}
+
+function readDshMcpRecords(context = {}) {
   const profile = resolveProfileName(context);
-  if (!profile) return {};
+  if (!profile) return [];
   const result = listProfileMcp(context, profile);
-  const entries = {};
+  const entries = [];
   for (const server of result?.servers || []) {
     if (!server?.id || server.disabled) continue;
-    entries[server.id] = dshMcpConfigToSpec(server.config || {});
+    entries.push({
+      id: server.id,
+      name: server.config?.serverName || server.id,
+      spec: dshMcpConfigToSpec(server.config || {})
+    });
   }
   return entries;
+}
+
+function readDshMcpEntries(context = {}) {
+  return Object.fromEntries(readDshMcpRecords(context).map(({ id, spec }) => [id, spec]));
 }
 
 function promptContentFromDshConfig(config = {}) {
@@ -359,47 +376,33 @@ function createDriver(context = {}) {
     driver.read = () => resultFor(mcpContext('read'), 'ok', { mcpServers: readDshMcpEntries(context) });
     driver.normalize = spec => resultFor(mcpContext('normalize'), 'ok', spec);
     driver.sync = async server => {
-    const profileName = profileNameForRequest(context, server);
-    const id = String(server?.id || '').trim();
-    if (!id) throw new Error('MCP server id is required');
-    const patch = requirePatchResult(
-      upsertProfilePatchRow(context, profileName, {
-        id,
-        name: '@deepseek-ai/dsh-mcp-client',
-        config: dshMcpSpecToConfig(server.server || {}, id)
-      }),
-      profileName
-    );
-    return resultFor(mcpContext('sync'), 'ok', patch);
-  };
-  driver.remove = async serverId => {
-    const profileName = profileNameForRequest(context);
-    const id = String(serverId || '').trim();
-    if (!id) throw new Error('MCP server id is required');
-    if (!profileName) return resultFor(mcpContext('remove'), 'ok', true);
-    const patch = requirePatchResult(deleteProfilePatchRow(context, profileName, id), profileName);
-    return resultFor(mcpContext('remove'), 'ok', patch);
-  };
+      const profileName = profileNameForRequest(context, server);
+      const id = String(server?.id || '').trim();
+      if (!id) throw new Error('MCP server id is required');
+      const patch = requirePatchResult(
+        upsertProfilePatchRow(context, profileName, {
+          id,
+          name: '@deepseek-ai/dsh-mcp-client',
+          config: dshMcpSpecToConfig(server.server || {}, dshMcpServerName(server, id))
+        }),
+        profileName
+      );
+      return resultFor(mcpContext('sync'), 'ok', patch);
+    };
+    driver.remove = async serverId => {
+      const profileName = profileNameForRequest(context);
+      const id = String(serverId || '').trim();
+      if (!id) throw new Error('MCP server id is required');
+      if (!profileName) return resultFor(mcpContext('remove'), 'ok', true);
+      const patch = requirePatchResult(deleteProfilePatchRow(context, profileName, id), profileName);
+      return resultFor(mcpContext('remove'), 'ok', patch);
+    };
     driver.import = async servers => {
-    const entries = readDshMcpEntries(context);
-    let count = 0;
-    for (const [id, spec] of Object.entries(entries)) {
-      if (servers[id]) {
-        servers[id].apps = { ...(servers[id].apps || {}), dsh: true };
-        continue;
+      let count = 0;
+      for (const entry of readDshMcpRecords(context)) {
+        if (importMcpServer(servers, { ...entry, platform: 'dsh' })) count++;
       }
-      const now = Date.now();
-      servers[id] = {
-        id,
-        name: id,
-        server: spec,
-        apps: { dsh: true },
-        createdAt: now,
-        updatedAt: now
-      };
-      count++;
-    }
-    return resultFor(mcpContext('import'), 'ok', count);
+      return resultFor(mcpContext('import'), 'ok', count);
     };
   }
 
