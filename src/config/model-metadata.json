@@ -1,7 +1,7 @@
 {
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
-  "lastUpdated": "2026-10-08",
+  "lastUpdated": "2026-10-09",
   "defaultModels": {
     "claude": [
       "claude-opus-4-7",
@@ -3450,7 +3450,7 @@
         "image"
       ],
       "limit": {
-        "context": 524288,
+        "context": 1048576,
         "output": 262144
       },
       "name": "Mistral Large 4",
