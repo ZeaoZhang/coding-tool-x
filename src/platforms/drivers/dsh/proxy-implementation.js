@@ -20,16 +20,17 @@ const {
 const { persistProxyRequestSnapshot } = require('../../../server/services/request-logger');
 const { redirectModel, resolveTargetUrl, isChatCompletionsPath, ensureOpenAiStreamUsage } = require('../../../shared/proxy-utils');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('../../../server/services/proxy-runtime');
-const { attachServerShutdownHandling, expediteServerShutdown } = require('../../../server/services/server-shutdown');
+const { bindProxyRequest, prepareProxyResponse } = require('../../../shared/proxy-transport');
+const { attachServerShutdownHandling, expediteServerShutdown, PROXY_IDLE_TIMEOUT_MS } = require('../../../server/services/server-shutdown');
 
 let proxyServer = null;
 let currentPort = null;
-const requestMetadata = new Map();
+let requestMetadata = new WeakMap();
 
 const jsonBodyParser = express.json({
   limit: '100mb',
   verify: (req, _res, buffer) => {
-    req.rawBody = Buffer.from(buffer);
+    req.rawBody = buffer;
   }
 });
 
@@ -84,8 +85,11 @@ async function startDshProxyServer(options = {}) {
       });
       req.selectedChannel = channel;
       release = releaseOnce(channel);
+      req.__releaseChannel = release;
+      res.on('finish', release);
       res.on('close', release);
       res.on('error', release);
+      if (res.destroyed || res.writableEnded) { release(); return; }
       broadcastSchedulerState('dsh', getSchedulerState('dsh'));
 
       const apiKey = getEffectiveApiKey(channel);
@@ -119,8 +123,8 @@ async function startDshProxyServer(options = {}) {
       proxy.web(req, res, {
         target: resolveTargetUrl(channel.baseUrl, req.url),
         changeOrigin: true,
-        proxyTimeout: 120000,
-        timeout: 120000
+        proxyTimeout: PROXY_IDLE_TIMEOUT_MS,
+        timeout: 0
       }, error => {
         release?.();
         if (!error) return;
@@ -137,7 +141,8 @@ async function startDshProxyServer(options = {}) {
     }
   });
 
-  proxy.on('proxyReq', (proxyReq, req) => {
+  proxy.on('proxyReq', (proxyReq, req, res) => {
+    bindProxyRequest(proxyReq, res);
     const channel = req.selectedChannel;
     if (!channel) return;
     const metadata = {
@@ -161,22 +166,32 @@ async function startDshProxyServer(options = {}) {
   });
 
   proxy.on('proxyRes', (proxyRes, req, res) => {
+    prepareProxyResponse(proxyRes, res);
     const metadata = requestMetadata.get(req);
     if (!metadata) return;
-    if (Number(proxyRes.statusCode) >= 400) {
-      recordFailure(metadata.channelId, 'dsh', new Error(`DSH upstream HTTP ${proxyRes.statusCode}`));
-    } else {
-      recordSuccess(metadata.channelId, 'dsh');
-    }
-    requestMetadata.delete(req);
-    res?.on('close', () => requestMetadata.delete(req));
+    let completed = false;
+    const finish = error => {
+      if (completed) return;
+      completed = true;
+      requestMetadata.delete(req);
+      if (error || Number(proxyRes.statusCode) >= 400) {
+        recordFailure(metadata.channelId, 'dsh', error || new Error(`DSH upstream HTTP ${proxyRes.statusCode}`));
+      } else {
+        recordSuccess(metadata.channelId, 'dsh');
+      }
+    };
+    proxyRes.once('end', () => finish());
+    proxyRes.once('error', finish);
+    proxyRes.once('close', () => {
+      if (!completed) finish(new Error('DSH upstream response closed early'));
+    });
+    res?.once('close', () => requestMetadata.delete(req));
   });
 
   proxy.on('error', (error, req, res) => {
     if (req?.selectedChannel) {
       recordFailure(req.selectedChannel.id, 'dsh', error);
-      releaseChannel(req.selectedChannel.id, 'dsh');
-      broadcastSchedulerState('dsh', getSchedulerState('dsh'));
+      req.__releaseChannel?.();
     }
     if (res && !res.headersSent) res.status(502).json({ error: { message: `Proxy error: ${error.message}`, type: 'proxy_error' } });
   });
@@ -213,10 +228,10 @@ async function startDshProxyServer(options = {}) {
 async function stopDshProxyServer(options = {}) {
   const clearStartTime = options.clearStartTime !== false;
   const stoppedPort = currentPort;
-  requestMetadata.clear();
+  requestMetadata = new WeakMap();
 
   if (proxyServer) {
-    const shutdownTimer = expediteServerShutdown(proxyServer);
+    const shutdownTimer = expediteServerShutdown(proxyServer, { forceAfterMs: options.forceAfterMs });
     await new Promise(resolve => proxyServer.close(resolve));
     if (shutdownTimer) clearTimeout(shutdownTimer);
     proxyServer = null;

@@ -7,7 +7,7 @@ const { createDecodedStream } = require('../../../server/services/response-decod
 const { parseNonStreamingUsage } = require('../../../shared/response-usage-parser');
 const { convertClaudeToOpenCodePayload } = require('../opencode/gateway-converter');
 
-const REQUEST_TIMEOUT_MS = 120000;
+const { PROXY_IDLE_TIMEOUT_MS: REQUEST_TIMEOUT_MS } = require('../../../server/services/server-shutdown');
 
 function getRequestPathname(urlPath = '') {
   try {

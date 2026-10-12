@@ -299,7 +299,13 @@ async function getProxyStatusEntries({ registry = getPlatformRegistry(), runtime
         entries.push({ platform, state: { status: 'unsupported', ...context }, port: getPlatformPort(platform, config) });
         continue;
       }
-      const state = await Promise.resolve(driver.status());
+      const result = await Promise.resolve(driver.status());
+      // Proxy drivers use the shared Driver contract and wrap successful
+      // service status payloads in { status: 'ok', data }. Keep compatibility
+      // with legacy drivers that return the service payload directly.
+      const state = result && result.status === 'ok'
+        ? (result.data && typeof result.data === 'object' ? result.data : {})
+        : result;
       if (state && typeof state.status === 'string' && state.status !== 'ok') {
         entries.push({ platform, state: { ...state, ...context }, port: getPlatformPort(platform, config) });
       } else {
@@ -508,8 +514,10 @@ function buildStartOptions(port, enableHost, enableHttps) {
     interpreter: 'node',
     windowsHide: true,
     autorestart: true,
-    kill_timeout: 5000,
+    // Let active OMP streams drain before PM2 forcibly terminates the process.
+    kill_timeout: 125000,
     max_memory_restart: '500M',
+    node_args: '--expose-gc',
     env,
     output: path.join(PATHS.logs, STARTUP_LOG_FILE),
     error: path.join(PATHS.logs, STARTUP_LOG_FILE),
@@ -761,9 +769,9 @@ async function handleStatus() {
         console.log(chalk.gray(`  ${label}${chalk.gray('[N/A]  不支持')}`));
         continue;
       }
-      if (state.status === 'failed') {
+      if (state.status && state.status !== 'ok') {
         console.log(chalk.red(`  ${label}${chalk.red('[ERROR] 查询失败')}`) +
-          chalk.gray(` (${state.error || 'unknown error'})`));
+          chalk.gray(` (${state.error || state.status || 'unknown error'})`));
         continue;
       }
       console.log(chalk.gray(`  ${label}`) + (state.running

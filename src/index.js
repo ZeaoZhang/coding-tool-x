@@ -164,6 +164,11 @@ async function dispatchPlatformCommand(platform, args = [], dependencies = {}) {
   const channel = platform.key;
   const options = dependencies.registry ? { registry: dependencies.registry } : {};
 
+  if (args.length > 1) {
+    reportInvalidCommand('参数', args[1], `ctx ${platform.command || platform.key} ${action}`);
+    return;
+  }
+
   switch (action) {
     case 'start':
       await proxyStart(channel, options);
@@ -178,9 +183,21 @@ async function dispatchPlatformCommand(platform, args = [], dependencies = {}) {
       await proxyStatus(channel, options);
       return;
     default:
-      console.log(chalk.red(`\n[ERROR] 未知操作: ${action}\n`));
-      console.log(chalk.gray('支持的操作: start, stop, restart, status\n'));
+      reportInvalidCommand('操作', action, '支持的操作: start, stop, restart, status');
   }
+}
+
+function reportInvalidCommand(kind, value, usage = '') {
+  console.error(chalk.red(`\n[ERROR] 未知${kind}: ${value}\n`));
+  if (usage) console.error(chalk.gray(`${usage}\n`));
+  process.exitCode = 1;
+}
+
+function validateCommandOptions(command, args, allowedOptions) {
+  const invalidOption = args.find(argument => !allowedOptions.has(argument));
+  if (!invalidOption) return true;
+  reportInvalidCommand('参数', invalidOption, `用法: ${command}`);
+  return false;
 }
 
 let processShutdownPromise = null;
@@ -193,7 +210,7 @@ async function stopOwnedOmpGatewayBeforeExit() {
     } = require('./platforms/drivers/omp/proxy-implementation');
     if (getOmpProxyStatus().running) {
       const preserveManagedMode = process.argv.includes('--daemon');
-      await stopOmpProxyServer({ forceAfterMs: 1500, preserveManagedMode });
+      await stopOmpProxyServer({ forceAfterMs: 120000, preserveManagedMode });
     }
   } catch (error) {
     console.error(chalk.yellow(`[WARN]  OMP 动态网关退出清理失败: ${error.message}`));
@@ -204,11 +221,20 @@ function shutdownProcess(code = 0, error = null) {
   if (processShutdownPromise) return processShutdownPromise;
   processShutdownPromise = (async () => {
     try {
+      require('./server/services/memory-reclaimer').stopMemoryReclaimer();
+    } catch (memoryError) {
+      console.error(chalk.yellow(`[WARN] 内存回收器退出清理失败: ${memoryError.message}`));
+    }
+    try {
       require('./server/services/native-log-observer').shutdownNativeCliLogObserver();
     } catch (observerError) {
       console.error(chalk.yellow(`[WARN] CLI 原生会话日志退出清理失败: ${observerError.message}`));
     }
-    await stopOwnedOmpGatewayBeforeExit();
+    await Promise.all([
+      stopOwnedOmpGatewayBeforeExit(),
+      require('./server/services/server-shutdown').drainProxyServers({ forceAfterMs: 120000 })
+        .catch(drainError => console.error(`[WARN] Proxy drain failed: ${drainError.message}`))
+    ]);
     eventBus.emitSync('cli:shutdown', {});
     PluginManager.shutdownPlugins();
     try {
@@ -282,6 +308,11 @@ async function main({ menuDependencies } = {}) {
   if (args[0] === 'daemon') {
     const subCommand = args[1] || 'status';
 
+    if (['start', 'stop', 'restart', 'status'].includes(subCommand) && args.length > 2) {
+      reportInvalidCommand('参数', args[2], `ctx daemon ${subCommand}`);
+      return;
+    }
+
     if (subCommand === 'start') {
       await handleStart();
       return finishCli(0);
@@ -314,25 +345,37 @@ async function main({ menuDependencies } = {}) {
       return;
     }
 
-    console.log(chalk.red(`\n[ERROR] 未知 daemon 子命令: ${subCommand}\n`));
-    console.log(chalk.gray('支持的命令: start, stop, restart, status, logs\n'));
+    reportInvalidCommand('daemon 子命令', subCommand, '支持的命令: start, stop, restart, status, logs');
     return;
   }
 
   // reset 命令 - 恢复默认配置
   if (args[0] === 'reset') {
+    if (args.length > 1) {
+      reportInvalidCommand('参数', args[1], '用法: ctx reset');
+      return;
+    }
     await resetConfig();
     return;
   }
 
   // security 命令 - 安全设置
   if (args[0] === 'security') {
-    const { showSecurityHelp, handleSecurityReset } = require('./commands/security');
     const subCommand = args[1] || 'help';
 
+    if (!['reset', 'disable', 'off', 'help'].includes(subCommand)) {
+      reportInvalidCommand('security 子命令', subCommand, '支持的命令: reset, disable, off, help');
+      return;
+    }
+    const { showSecurityHelp, handleSecurityReset } = require('./commands/security');
+
     if (subCommand === 'reset' || subCommand === 'disable' || subCommand === 'off') {
+      if (args.length > 2) {
+        reportInvalidCommand('参数', args[2], `ctx security ${subCommand}`);
+        return;
+      }
       await handleSecurityReset();
-    } else {
+    } else if (subCommand === 'help') {
       showSecurityHelp();
     }
     return;
@@ -340,31 +383,52 @@ async function main({ menuDependencies } = {}) {
 
   // start 命令 - 启动服务（后台）
   if (args[0] === 'start') {
+    if (!validateCommandOptions('ctx start [--host|--hosts] [--https]', args.slice(1), new Set(['--host', '--hosts', '--https']))) return;
     await handleStart();
     return finishCli(0);
   }
 
   // stop 命令 - 停止服务
   if (args[0] === 'stop') {
+    if (args.length > 1) {
+      reportInvalidCommand('参数', args[1], '用法: ctx stop');
+      return;
+    }
     await handleStop();
     return finishCli(0);
   }
 
   // restart 命令 - 重启服务
   if (args[0] === 'restart') {
+    if (!validateCommandOptions('ctx restart [--host|--hosts] [--https]', args.slice(1), new Set(['--host', '--hosts', '--https']))) return;
     await handleRestart();
     return finishCli(0);
   }
 
   // status 命令 - 查看服务状态
   if (args[0] === 'status') {
+    if (args.length > 1) {
+      reportInvalidCommand('参数', args[1], '用法: ctx status');
+      return;
+    }
     await handleStatus();
     return finishCli(0);
   }
 
   // ui 命令 - Web UI 管理
   if (args[0] === 'ui') {
-    const subCommand = args[1];
+    const commandArgs = args.slice(1);
+    const subCommand = commandArgs[0] && !commandArgs[0].startsWith('-') ? commandArgs[0] : null;
+    const optionArgs = subCommand ? commandArgs.slice(1) : commandArgs;
+    const allowedOptions = new Set(['--https', '--host', '--hosts', '--daemon']);
+
+    if (subCommand && !['start', 'stop', 'restart'].includes(subCommand)) {
+      reportInvalidCommand('ui 子命令', subCommand, '支持的命令: start, stop, restart');
+      return;
+    }
+    if (!validateCommandOptions(`ctx ui${subCommand ? ` ${subCommand}` : ''}`, optionArgs,
+      subCommand === 'stop' ? new Set() : allowedOptions)) return;
+
     if (subCommand === 'start') {
       await handleStart();  // UI start 实际上就是启动整个服务
       return finishCli(0);
@@ -440,12 +504,17 @@ async function main({ menuDependencies } = {}) {
 
   // doctor 命令 - 系统诊断
   if (args[0] === 'doctor') {
+    if (args.length > 1) {
+      reportInvalidCommand('参数', args[1], '用法: ctx doctor');
+      return;
+    }
     await handleDoctor();
     return;
   }
 
   // update 命令 - 检查并更新到最新版本
   if (args[0] === 'update') {
+    if (!validateCommandOptions('ctx update [--check]', args.slice(1), new Set(['--check']))) return;
     const checkOnly = args.includes('--check');
     await handleUpdate({ checkOnly });
     return;
@@ -453,6 +522,10 @@ async function main({ menuDependencies } = {}) {
 
   // port 命令 - 配置端口
   if (args[0] === 'port') {
+    if (args.length > 1) {
+      reportInvalidCommand('参数', args[1], '用法: ctx port');
+      return;
+    }
     const { handlePortConfig } = require('./commands/port-config');
     await handlePortConfig();
     return;
@@ -460,8 +533,17 @@ async function main({ menuDependencies } = {}) {
 
   // 代理命令
   if (args[0] === 'proxy') {
-    const { handleProxyStart, handleProxyStop, handleProxyStatus } = require('./commands/proxy');
     const subCommand = args[1] || 'start';
+
+    if (!['start', 'stop', 'status'].includes(subCommand)) {
+      reportInvalidCommand('proxy 子命令', subCommand, '支持的命令: start, stop, status');
+      return;
+    }
+    if (args.length > 2) {
+      reportInvalidCommand('参数', args[2], `ctx proxy ${subCommand}`);
+      return;
+    }
+    const { handleProxyStart, handleProxyStop, handleProxyStatus } = require('./commands/proxy');
 
     switch (subCommand) {
       case 'start':
@@ -476,10 +558,6 @@ async function main({ menuDependencies } = {}) {
         handleProxyStatus();
         return;
 
-      default:
-        // 默认执行 start
-        await handleProxyStart();
-        return;
     }
   }
 
@@ -505,6 +583,12 @@ async function main({ menuDependencies } = {}) {
       console.error(chalk.red(result.error));
       return shutdownProcess(1);
     }
+    return;
+  }
+
+  if (args.length > 0) {
+    reportInvalidCommand('命令', args[0], '运行 ctx --help 查看可用命令');
+    PluginManager.shutdownPlugins();
     return;
   }
 

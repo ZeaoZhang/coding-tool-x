@@ -204,7 +204,7 @@ describe('daemon restart flow', () => {
     expect(pm2Mock.delete).toHaveBeenCalledWith('cc-tool', expect.any(Function));
     expect(pm2Mock.start).toHaveBeenCalledWith(expect.objectContaining({
       name: 'cc-tool',
-      kill_timeout: 5000
+      kill_timeout: 125000
     }), expect.any(Function));
     expect(pm2Mock.disconnect).toHaveBeenCalled();
   });
@@ -215,7 +215,7 @@ describe('daemon stop helpers', () => {
     expect(daemon._test.buildStartOptions(19999, true, false).args).toContain('--host');
   });
   test('allows PM2 enough time for graceful gateway shutdown', () => {
-    expect(daemon._test.buildStartOptions(19999, false, false).kill_timeout).toBe(5000);
+    expect(daemon._test.buildStartOptions(19999, false, false).kill_timeout).toBe(125000);
   });
 
   test('explicitly hides the PM2-managed Node process on Windows', () => {

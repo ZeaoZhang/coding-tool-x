@@ -24,6 +24,7 @@ const {
   createSameOriginGuard
 } = require('./services/network-access');
 const { createApiRequestLogger } = require('./services/request-logger');
+const { startMemoryReclaimer, trackMemoryActivity } = require('./services/memory-reclaimer');
 const { inspectWebBuildState, ensureWebDistReady } = require('./services/web-build');
 const { ensureHttpsCredentials } = require('./services/https-cert');
 const { scheduleSessionHistoryMaintenance } = require('./services/session-history-maintenance');
@@ -197,6 +198,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   const allowRemoteMutation = isRemoteMutationAllowedByEnv(process.env);
 
   // Middleware
+  app.use(trackMemoryActivity);
   app.use(express.json({ limit: '100mb' }));
   app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
@@ -368,6 +370,7 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
     traceStartupMemory('proxy-restore-complete');
     await performStartupHealthCheck({ config });
     traceStartupMemory('health-check-complete');
+    startMemoryReclaimer();
     return server;
   } finally {
     try {

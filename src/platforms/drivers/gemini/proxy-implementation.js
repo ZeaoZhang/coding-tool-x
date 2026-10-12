@@ -13,14 +13,15 @@ const {
 } = require('./channels-implementation');
 const { persistProxyRequestSnapshot } = require('../../../server/services/request-logger');
 const { redirectModel: redirectModelBase, resolveTargetUrl } = require('../../../shared/proxy-utils');
-const { attachServerShutdownHandling, expediteServerShutdown } = require('../../../server/services/server-shutdown');
+const { bindProxyRequest, prepareProxyResponse } = require('../../../shared/proxy-transport');
+const { attachServerShutdownHandling, expediteServerShutdown, PROXY_IDLE_TIMEOUT_MS } = require('../../../server/services/server-shutdown');
 
 let proxyServer = null;
 let proxyApp = null;
 let currentPort = null;
 
 // 用于存储每个请求的元数据
-const requestMetadata = new Map();
+let requestMetadata = new WeakMap();
 
 // 用于缓存已打印过的模型重定向规则，避免重复打印
 // 格式: { channelId: { "originalModel": "redirectedModel", ... } }
@@ -30,7 +31,7 @@ const printedGeminiRedirectCache = new Map();
 const jsonBodyParser = express.json({
   limit: '100mb',
   verify: (req, res, buf) => {
-    req.rawBody = Buffer.from(buf);
+    req.rawBody = buf;
   }
 });
 
@@ -198,7 +199,8 @@ async function startGeminiProxyServer(options = {}) {
 
     const proxy = httpProxy.createProxyServer({});
 
-    proxy.on('proxyReq', (proxyReq, req) => {
+    proxy.on('proxyReq', (proxyReq, req, res) => {
+      bindProxyRequest(proxyReq, res);
       const activeChannel = req.selectedChannel;
       if (!activeChannel) return;
 
@@ -255,8 +257,11 @@ async function startGeminiProxyServer(options = {}) {
           };
         })();
 
+        req.__releaseChannel = release;
+        res.on('finish', release);
         res.on('close', release);
         res.on('error', release);
+        if (res.destroyed || res.writableEnded) { release(); return; }
 
         broadcastSchedulerState('gemini', getSchedulerState('gemini'));
 
@@ -335,8 +340,8 @@ async function startGeminiProxyServer(options = {}) {
         proxy.web(req, res, {
           target,
           changeOrigin: true,
-          proxyTimeout: 120000,  // 代理连接超时 2 分钟
-          timeout: 120000        // 请求超时 2 分钟
+          proxyTimeout: PROXY_IDLE_TIMEOUT_MS,  // Allow long reasoning gaps without an unbounded upstream wait
+          timeout: 0            // The upstream timeout bounds idle waits; streaming clients may pause
         }, (err) => {
           release();
           if (err) {
@@ -353,6 +358,7 @@ async function startGeminiProxyServer(options = {}) {
           }
         });
       } catch (error) {
+        req.__releaseChannel?.();
         console.error('Gemini channel allocation error:', error);
         if (!res.headersSent) {
           res.status(503).json({
@@ -367,6 +373,7 @@ async function startGeminiProxyServer(options = {}) {
 
     // 代理响应只负责维护传输健康状态；实时日志和 usage 来自 CLI 原生日志。
     proxy.on('proxyRes', (proxyRes, req, res) => {
+      prepareProxyResponse(proxyRes, res);
       const metadata = requestMetadata.get(req);
       if (!metadata) return;
 
@@ -403,8 +410,7 @@ async function startGeminiProxyServer(options = {}) {
       console.error('Gemini proxy error:', err);
       if (req && req.selectedChannel) {
         recordFailure(req.selectedChannel.id, 'gemini', err);
-        releaseChannel(req.selectedChannel.id, 'gemini');
-        broadcastSchedulerState('gemini', getSchedulerState('gemini'));
+        req.__releaseChannel?.();
       }
       if (res && !res.headersSent) {
         res.status(502).json({
@@ -457,9 +463,9 @@ async function stopGeminiProxyServer(options = {}) {
     return { success: true, message: 'Gemini proxy server not running' };
   }
 
-  requestMetadata.clear();
+  requestMetadata = new WeakMap();
 
-  const shutdownTimer = expediteServerShutdown(proxyServer);
+  const shutdownTimer = expediteServerShutdown(proxyServer, { forceAfterMs: options.forceAfterMs });
 
   return new Promise((resolve) => {
     proxyServer.close(() => {

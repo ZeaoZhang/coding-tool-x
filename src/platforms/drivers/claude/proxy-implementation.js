@@ -19,14 +19,15 @@ const {
 const { persistProxyRequestSnapshot, persistClaudeRequestTemplate } = require('../../../server/services/request-logger');
 const { redirectModel, normalizeGatewaySourceType } = require('../../../shared/proxy-utils');
 const { handleClaudeOpenAiGatewayRequest } = require('./openai-gateway');
-const { attachServerShutdownHandling, expediteServerShutdown } = require('../../../server/services/server-shutdown');
+const { bindProxyRequest, prepareProxyResponse } = require('../../../shared/proxy-transport');
+const { attachServerShutdownHandling, expediteServerShutdown, PROXY_IDLE_TIMEOUT_MS } = require('../../../server/services/server-shutdown');
 
 let proxyServer = null;
 let proxyApp = null;
 let currentPort = null;
 
 // 用于存储每个请求的元数据（用于 WebSocket 日志）
-const requestMetadata = new Map();
+let requestMetadata = new WeakMap();
 
 // 用于缓存已打印过的模型重定向规则，避免重复打印
 // 格式: { channelId: { "originalModel": "redirectedModel", ... } }
@@ -35,7 +36,7 @@ const printedRedirectCache = new Map();
 const jsonBodyParser = express.json({
   limit: '100mb',
   verify: (req, res, buf) => {
-    req.rawBody = Buffer.from(buf);
+    req.rawBody = buf;
   }
 });
 
@@ -174,6 +175,7 @@ async function startProxyServer(options = {}) {
     const proxy = httpProxy.createProxyServer({});
 
     proxy.on('proxyReq', (proxyReq, req, res) => {
+      bindProxyRequest(proxyReq, res);
       const selectedChannel = req.selectedChannel;
       if (selectedChannel) {
         const requestId = `${Date.now()}-${Math.random()}`;
@@ -238,9 +240,10 @@ async function startProxyServer(options = {}) {
         };
 
         req.__releaseChannel = release;
-
+        res.on('finish', release);
         res.on('close', release);
         res.on('error', release);
+        if (res.destroyed || res.writableEnded) { release(); return; }
 
         const effectiveKey = getEffectiveApiKey(channel);
         if (!effectiveKey) {
@@ -306,8 +309,8 @@ async function startProxyServer(options = {}) {
         const proxyOptions = {
           target: channel.baseUrl,
           changeOrigin: true,
-          proxyTimeout: 120000,  // 代理连接超时 2 分钟
-          timeout: 120000        // 请求超时 2 分钟
+          proxyTimeout: PROXY_IDLE_TIMEOUT_MS,  // Allow long reasoning gaps without an unbounded upstream wait
+          timeout: 0            // The upstream timeout bounds idle waits; streaming clients may pause
         };
 
         if (channel.proxyUrl) {
@@ -329,6 +332,7 @@ async function startProxyServer(options = {}) {
           }
         });
       } catch (error) {
+        req.__releaseChannel?.();
         console.error('Channel allocation error:', error);
         if (!res.headersSent) {
           res.status(503).json({
@@ -341,6 +345,7 @@ async function startProxyServer(options = {}) {
 
     // 代理响应只负责维护传输健康状态；实时日志和 usage 来自 CLI 原生日志。
     proxy.on('proxyRes', (proxyRes, req, res) => {
+      prepareProxyResponse(proxyRes, res);
       const metadata = requestMetadata.get(req);
       if (!metadata) return;
 
@@ -425,9 +430,9 @@ async function stopProxyServer(options = {}) {
     return { success: true, message: 'Proxy server not running' };
   }
 
-  requestMetadata.clear();
+  requestMetadata = new WeakMap();
 
-  const shutdownTimer = expediteServerShutdown(proxyServer);
+  const shutdownTimer = expediteServerShutdown(proxyServer, { forceAfterMs: options.forceAfterMs });
 
   return new Promise((resolve) => {
     proxyServer.close(() => {

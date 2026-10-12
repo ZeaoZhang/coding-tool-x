@@ -280,6 +280,49 @@ describe('clearRedirectCache', () => {
 });
 
 describe('startProxyServer', () => {
+  it('cancels the upstream response when a streaming client disconnects', async () => {
+    let upstreamClosed = false;
+    upstreamServer = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write('data: waiting\n\n');
+      res.once('close', () => { upstreamClosed = true; });
+    });
+    await new Promise(resolve => upstreamServer.listen(0, '127.0.0.1', resolve));
+    allocateChannel.mockResolvedValue({ id: 'stream-channel', name: 'Stream',
+      baseUrl: `http://127.0.0.1:${upstreamServer.address().port}` });
+    proxyModule = require(PROXY_SERVER_PATH);
+    await proxyModule.startProxyServer();
+    await new Promise((resolve, reject) => {
+      const client = http.request({ hostname: '127.0.0.1', port: proxyPort,
+        path: '/v1/messages', method: 'POST', headers: { 'content-type': 'application/json' } }, res => {
+        res.once('data', () => { res.destroy(); client.destroy(); resolve(); });
+        res.on('error', () => {});
+      });
+      client.once('error', reject);
+      client.end('{"model":"claude-sonnet","stream":true}');
+    });
+    await vi.waitFor(() => expect(upstreamClosed).toBe(true));
+    expect(releaseChannel).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases a channel allocated after the downstream client has disconnected', async () => {
+    let completeAllocation;
+    allocateChannel.mockImplementation(() => new Promise(resolve => { completeAllocation = resolve; }));
+    proxyModule = require(PROXY_SERVER_PATH);
+    await proxyModule.startProxyServer();
+    const client = http.request({ hostname: '127.0.0.1', port: proxyPort,
+      path: '/v1/messages', method: 'POST', headers: { 'content-type': 'application/json' } });
+    client.on('error', () => {});
+    client.end('{"model":"claude-sonnet"}');
+    await vi.waitFor(() => expect(completeAllocation).toBeTypeOf('function'));
+    client.destroy();
+    // Allow the server to observe close before the queued allocation resolves.
+    await new Promise(resolve => setTimeout(resolve, 30));
+    completeAllocation({ id: 'queued-channel', name: 'Queued', baseUrl: 'http://127.0.0.1:1' });
+    await vi.waitFor(() => expect(releaseChannel).toHaveBeenCalledTimes(1));
+    expect(getEffectiveApiKey).not.toHaveBeenCalled();
+  });
+
   it('parses non-stream Anthropic JSON usage without publishing proxy usage logs', async () => {
     upstreamServer = http.createServer((req, res) => {
       let requestBody = '';

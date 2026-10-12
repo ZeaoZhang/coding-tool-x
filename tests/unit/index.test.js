@@ -61,7 +61,7 @@ test('preserves OMP managed mode during process shutdown', async () => {
   await index._test.stopOwnedOmpGatewayBeforeExit();
 
   expect(stopOmpProxyServer).toHaveBeenCalledWith({
-    forceAfterMs: 1500,
+    forceAfterMs: 120000,
     preserveManagedMode: true
   });
 });

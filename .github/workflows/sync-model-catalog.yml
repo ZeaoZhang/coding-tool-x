@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish current changes even when the model catalog is unchanged
+        type: boolean
+        default: false
 
 concurrency:
   group: sync-model-catalog-publish
@@ -43,8 +48,12 @@ jobs:
 
       - name: Check for model catalog changes
         id: catalog
+        env:
+          FORCE_PUBLISH: ${{ inputs.publish }}
         run: |
-          if git diff --quiet -- src/config/model-metadata.json; then
+          if [ "$FORCE_PUBLISH" = "true" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet -- src/config/model-metadata.json; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "No model metadata changes; skipping npm publish."
           else

@@ -78,7 +78,10 @@ describe('OMP gateway data plane', () => {
         };
         res.writeHead(201, {
           'content-type': 'application/json',
-          'x-upstream-response': 'yes'
+          'x-upstream-response': 'yes',
+          connection: 'keep-alive, x-upstream-hop',
+          'keep-alive': 'timeout=1',
+          'x-upstream-hop': 'upstream-only'
         });
         res.end('{"ok":true}');
       });
@@ -133,6 +136,8 @@ describe('OMP gateway data plane', () => {
 
       expect(response.statusCode).toBe(201);
       expect(response.headers['x-upstream-response']).toBe('yes');
+      expect(response.headers['x-upstream-hop']).toBeUndefined();
+      expect(response.headers['keep-alive']).not.toBe('timeout=1');
       expect(response.body).toEqual(Buffer.from('{"ok":true}'));
       expect(received).toEqual({
         method: 'POST',
@@ -535,10 +540,12 @@ describe('OMP gateway data plane', () => {
     }
   });
 
-  it('switches once inside the same routing group before committing a retryable response', async () => {
+  it('closes an unfinished retryable response before switching within the routing group', async () => {
+    let firstResponseClosed = false;
     const firstUpstream = http.createServer((_req, res) => {
       res.writeHead(503, { 'content-type': 'application/json' });
-      res.end('{"error":"busy"}');
+      res.write('{"error":"busy"');
+      res.once('close', () => { firstResponseClosed = true; });
     });
     const secondUpstream = http.createServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -593,6 +600,7 @@ describe('OMP gateway data plane', () => {
 
       expect(response.statusCode).toBe(200);
       expect(response.body.toString()).toBe('{"channel":"second"}');
+      await vi.waitFor(() => expect(firstResponseClosed).toBe(true));
       expect(allocateChannel).toHaveBeenCalledTimes(2);
       expect(allocateChannel).toHaveBeenNthCalledWith(2, expect.objectContaining({
         candidateIds: ['first', 'second'],

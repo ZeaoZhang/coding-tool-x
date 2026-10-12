@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const { downstreamHeaders } = require('../../../shared/proxy-transport');
 const http = require('http');
 const https = require('https');
 const httpProxy = require('http-proxy');
@@ -118,12 +119,20 @@ function readRequestBody(req) {
     const chunks = [];
     let size = 0;
     let settled = false;
+    const cleanup = () => {
+      chunks.length = 0;
+      req.removeListener('data', onData);
+      req.removeListener('end', onEnd);
+      req.removeListener('error', fail);
+      req.removeListener('aborted', onAborted);
+    };
     const fail = (error) => {
       if (settled) return;
       settled = true;
+      cleanup();
       reject(error);
     };
-    req.on('data', (chunk) => {
+    const onData = (chunk) => {
       if (settled) return;
       size += chunk.length;
       if (size > MAX_REQUEST_BYTES) {
@@ -132,14 +141,19 @@ function readRequestBody(req) {
         return;
       }
       chunks.push(chunk);
-    });
-    req.on('end', () => {
+    };
+    const onEnd = () => {
       if (settled) return;
       settled = true;
-      resolve(Buffer.concat(chunks));
-    });
+      const body = Buffer.concat(chunks, size);
+      cleanup();
+      resolve(body);
+    };
+    const onAborted = () => fail(new Error('Client aborted request'));
+    req.on('data', onData);
+    req.on('end', onEnd);
     req.on('error', fail);
-    req.on('aborted', () => fail(new Error('Client aborted request')));
+    req.on('aborted', onAborted);
   });
 }
 
@@ -183,6 +197,7 @@ function writeJson(res, statusCode, payload) {
   });
   res.end(body);
 }
+
 
 function redactSensitiveQuery(path) {
   const url = new URL(String(path || '/'), 'http://127.0.0.1');
@@ -330,8 +345,13 @@ function createOmpGateway(options = {}) {
         upstreamResponse = response;
         activeUpstreams.delete(upstreamRequest);
         activeUpstreams.add(response);
+        // Install error handling before resolving: discarded retry responses
+        // must never raise an unhandled stream error and terminate the daemon.
+        response.on('error', () => {});
         response.once('close', () => {
+          activeUpstreams.delete(response);
           signal?.removeEventListener('abort', abortUpstream);
+          releaseOnce();
         });
         const statusCode = response.statusCode || 502;
         resolve({
@@ -387,8 +407,7 @@ function createOmpGateway(options = {}) {
       try {
         const result = await forwardAttempt(req, route, channel, body, signal);
         if (attempt === 0 && RETRYABLE_STATUS.has(result.statusCode)) {
-          result.response.once('close', () => activeUpstreams.delete(result.response));
-          result.response.resume();
+          result.response.destroy();
           result.release();
           onFailure(channel.id, 'omp');
           lastError = Object.assign(new Error(`OMP upstream returned HTTP ${result.statusCode}`), {
@@ -397,7 +416,7 @@ function createOmpGateway(options = {}) {
           continue;
         }
 
-        res.writeHead(result.statusCode, result.response.headers);
+        res.writeHead(result.statusCode, downstreamHeaders(result.response.headers));
         await new Promise((resolve) => {
           let completed = false;
           const finish = (error) => {
@@ -413,7 +432,12 @@ function createOmpGateway(options = {}) {
             resolve();
           };
           result.response.once('end', () => finish());
-          result.response.once('close', () => finish(new Error('OMP upstream response closed early')));
+          result.response.once('close', () => {
+            if (completed) return;
+            const error = new Error('OMP upstream response closed early');
+            if (!res.destroyed) res.destroy(error);
+            finish(error);
+          });
           result.response.once('error', (error) => {
             if (!res.destroyed) res.destroy(error);
             finish(error);
@@ -640,7 +664,7 @@ function createOmpGateway(options = {}) {
       handleRequest(req, res).catch((error) => {
         writeJson(res, 500, { error: error.message || 'OMP gateway request failed' });
       });
-    }));
+    }), { drainOnExit: false });
     server.on('upgrade', (req, socket, head) => {
       handleUpgrade(req, socket, head).catch((error) => {
         rejectUpgrade(socket, 503, error.message || 'OMP websocket proxy failed');
