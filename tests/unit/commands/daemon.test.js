@@ -300,28 +300,95 @@ describe('daemon stop helpers', () => {
   });
 });
 
-describe('daemon registry-backed proxy status', () => {
-  test('reads status for arbitrary enabled registry platforms', async () => {
-    const status = vi.fn(async () => ({ running: true, port: 23100 }));
+describe('daemon backend proxy status', () => {
+  const platform = { key: 'demo-cli', label: 'Demo CLI', portKey: 'demoProxy', defaultPort: 23100, apiBasePath: '/api/custom/proxy' };
+  const registry = { list: () => [platform], resolve: () => platform };
+
+  test('queries the manifest endpoint instead of creating a local proxy driver', async () => {
+    const httpRequest = vi.fn(async () => ({ status: 200, data: { running: true, port: 23100 } }));
+    const getDriver = vi.fn(() => { throw new Error('Must not load a CLI-local driver'); });
     const entries = await daemon._test.getProxyStatusEntries({
-      registry: {
-        list: vi.fn(() => [{ key: 'demo-cli', label: 'Demo CLI', portKey: 'demoProxy', defaultPort: 23100 }])
-      },
-      runtime: {
-        getDriver: vi.fn((platform, capability) => {
-          expect(platform).toBe('demo-cli');
-          expect(capability).toBe('proxy');
-          return { status };
-        })
-      },
+      registry, runtime: { getDriver }, httpRequest,
       config: { ports: { demoProxy: 23101 } }
     });
-
     expect(entries).toEqual([expect.objectContaining({
-      platform: expect.objectContaining({ key: 'demo-cli' }),
-      state: { running: true, port: 23100 },
-      port: 23101
+      platform, state: { running: true, port: 23100 }, port: 23101
     })]);
-    expect(status).toHaveBeenCalledTimes(1);
+    expect(httpRequest).toHaveBeenCalledWith('GET', '/api/custom/proxy/status');
+    expect(getDriver).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    { status: 200, data: {} },
+    { status: 500, data: { running: false } },
+    { status: 503, data: { error: { status: 'unavailable', error: 'backend unavailable' } } }
+  ])('never turns a failed or invalid backend response into stopped: %j', async (response) => {
+    const [entry] = await daemon._test.getProxyStatusEntries({
+      registry, config: {}, httpRequest: async () => response
+    });
+    expect(entry.state.status).not.toBe('ok');
+    expect(entry.state.status).toBeTruthy();
+    expect(entry.state.running).toBeUndefined();
+  });
+
+  test('reports an unreachable backend as a query failure', async () => {
+    const [entry] = await daemon._test.getProxyStatusEntries({
+      registry, config: {}, httpRequest: async () => { throw new Error('ECONNREFUSED'); }
+    });
+    expect(entry.state).toMatchObject({ status: 'failed', error: 'ECONNREFUSED' });
+  });
+
+  test('accepts a wrapped backend response and preserves a genuinely stopped state', async () => {
+    const [entry] = await daemon._test.getProxyStatusEntries({
+      registry, config: {}, httpRequest: async () => ({ status: 200, data: { status: 'ok', data: { running: false, port: 23100 } } })
+    });
+    expect(entry.state).toEqual({ running: false, port: 23100 });
+  });
+
+  test('uses the running daemon port and HTTPS arguments', () => {
+    expect(daemon._test.getUIConnectionOptions({ pm2_env: { CC_TOOL_PORT: '23102', args: ['ui', '--daemon', '--https'] } }, { ports: { webUI: 19999 } }))
+      .toEqual({ port: 23102, useHttps: true });
+    expect(daemon._test.getUIConnectionOptions(null, { ports: { webUI: 19998 } }))
+      .toEqual({ port: 19998, useHttps: false });
+  });
+
+  test('reads all six manifest endpoints from the real router in a separate process', async () => {
+    const { spawn } = require('child_process');
+    const { createPlatformRegistry } = require('../../../src/platforms/registry');
+    const backendRegistry = createPlatformRegistry({ userFile: {}, pathOverlay: {} });
+    const routerPath = require.resolve('../../../src/server/api/platform-routes');
+    const genericRouterPath = require.resolve('../../../src/server/api/platforms');
+    const registryPath = require.resolve('../../../src/platforms/registry');
+    const child = spawn(process.execPath, ['-e', `
+      const express = require('express');
+      const { createPlatformRegistry } = require(${JSON.stringify(registryPath)});
+      const registry = createPlatformRegistry({ userFile: {}, pathOverlay: {} });
+      const runtime = { getDriver: (key, capability) => capability === 'proxy' ? {
+        status: () => ({ status: 'ok', data: { running: key === 'omp' || key === 'codex', port: registry.resolve(key).defaultPort } })
+      } : null };
+      const app = express();
+      app.use('/api/platforms', require(${JSON.stringify(genericRouterPath)})({ registry, runtime }));
+      app.use('/api', require(${JSON.stringify(routerPath)})({ registry, runtime }));
+      const server = app.listen(0, '127.0.0.1', () => process.send(server.address().port));
+    `], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+    try {
+      const port = await new Promise((resolve, reject) => {
+        child.once('message', resolve);
+        child.once('error', reject);
+        child.once('exit', (code) => reject(new Error('Backend exited: ' + code)));
+      });
+      const entries = await daemon._test.getProxyStatusEntries({ registry: backendRegistry, config: { ports: { webUI: port } } });
+      expect(entries).toHaveLength(6);
+      for (const entry of entries) {
+        expect(entry.state).toEqual({
+          running: entry.platform.key === 'omp' || entry.platform.key === 'codex',
+          port: entry.platform.defaultPort
+        });
+      }
+    } finally {
+      const exited = new Promise(resolve => child.once('exit', resolve));
+      child.kill();
+      await exited;
+    }
   });
 });

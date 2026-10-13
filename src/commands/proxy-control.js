@@ -1,5 +1,6 @@
 const chalk = require('chalk');
 const http = require('http');
+const https = require('https');
 const { loadConfig } = require('../config/loader');
 const { normalizePlatformKey } = require('../shared/platforms');
 
@@ -38,7 +39,7 @@ function getPlatformInfo(channel, registry = getDefaultRegistry()) {
   };
 }
 
-function createHttpRequest(loadConfigImpl = loadConfig) {
+function createHttpRequest(loadConfigImpl = loadConfig, { useHttps = false, ca } = {}) {
   return function request(method, requestPath, data = null) {
     const config = loadConfigImpl();
     const port = config.ports?.webUI || 19999;
@@ -56,9 +57,18 @@ function createHttpRequest(loadConfigImpl = loadConfig) {
         },
         timeout: 5000
       };
+      if (useHttps) {
+        // This client only connects to localhost. Trust the daemon's generated
+        // certificate when available (Windows may use a PFX instead of PEM).
+        options.ca = ca;
+        options.rejectUnauthorized = Boolean(ca);
+      }
 
-      const req = http.request(options, (res) => {
+      const req = (useHttps ? https : http).request(options, (res) => {
         let responseData = '';
+
+        res.on('error', reject);
+        res.on('aborted', () => reject(new Error('Response connection closed unexpectedly')));
 
         res.on('data', (chunk) => {
           responseData += chunk;
@@ -86,8 +96,8 @@ function createHttpRequest(loadConfigImpl = loadConfig) {
   };
 }
 
-function createProxyControl({ registry = getDefaultRegistry(), httpRequest: request, loadConfig: loadConfigImpl, sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
-  const requestImpl = request || createHttpRequest(loadConfigImpl || loadConfig);
+function createProxyControl({ registry = getDefaultRegistry(), httpRequest: request, loadConfig: loadConfigImpl, connection, sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms)) } = {}) {
+  const requestImpl = request || createHttpRequest(loadConfigImpl || loadConfig, connection);
 
   function resolve(channel) {
     const info = getPlatformInfo(channel, registry);

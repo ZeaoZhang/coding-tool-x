@@ -12,7 +12,8 @@ const {
   formatPortToolIssue
 } = require('../utils/port-helper');
 const { hasHostFlag } = require('../utils/cli-flags');
-const { getPlatformRegistry, getPlatformRuntime } = require('../platforms/runtime');
+const { getPlatformRegistry } = require('../platforms/runtime');
+const { createProxyControl } = require('./proxy-control');
 const PM2_APP_NAME = 'cc-tool';
 const STARTUP_LOG_FILE = 'cc-tool-out.log';
 const PM2_RUNTIME_ENV_KEYS = [
@@ -279,40 +280,48 @@ function getPlatformPort(platform, config = {}) {
   return configured || platform.defaultPort || null;
 }
 
-async function getProxyStatusEntries({ registry = getPlatformRegistry(), runtime = getPlatformRuntime(), config = loadConfig() } = {}) {
-  const entries = [];
-  for (const platform of listProxyPlatforms(registry)) {
+function getUIConnectionOptions(existing, config = loadConfig()) {
+  const env = existing?.pm2_env || {};
+  const port = Number(env.CC_TOOL_PORT || env.env?.CC_TOOL_PORT || config.ports?.webUI || 19999);
+  const args = Array.isArray(env.args) ? env.args : String(env.args || '').split(/\s+/);
+  return { port, useHttps: args.includes('--https') };
+}
+
+async function getProxyStatusEntries({ registry = getPlatformRegistry(), config = loadConfig(), httpRequest, connection } = {}) {
+  // Servers live in the UI daemon. Loading a driver here creates a separate
+  // singleton in the CLI process whose status will always be stopped.
+  const control = createProxyControl({ registry, loadConfig: () => config, httpRequest, connection });
+  return Promise.all(listProxyPlatforms(registry).map(async (platform) => {
     const context = {
       platform: platform.key,
       capability: 'proxy',
       operation: 'status'
     };
     try {
-      const driver = runtime && typeof runtime.getDriver === 'function'
-        ? runtime.getDriver(platform.key, 'proxy')
-        : null;
-      if (!driver || (typeof driver.status === 'string' && driver.status !== 'ok')) {
-        entries.push({ platform, state: { status: 'unsupported', ...context }, port: getPlatformPort(platform, config) });
-        continue;
+      if (platform.capabilities?.proxy === 'unsupported' || platform.capabilities?.proxy === false) {
+        return { platform, state: { status: 'unsupported', ...context }, port: getPlatformPort(platform, config) };
       }
-      if (typeof driver.status !== 'function') {
-        entries.push({ platform, state: { status: 'unsupported', ...context }, port: getPlatformPort(platform, config) });
-        continue;
+      const { response } = await control.status(platform.key);
+      const result = response.data;
+      if (!Number.isInteger(response.status) || response.status < 200 || response.status >= 300) {
+        const failure = result?.error;
+        if (failure && typeof failure === 'object') {
+          return { platform, state: { ...failure, status: failure.status && failure.status !== 'ok' ? failure.status : 'failed', ...context }, port: getPlatformPort(platform, config) };
+        }
+        throw new Error(typeof failure === 'string' ? failure : `HTTP ${response.status}`);
       }
-      const result = await Promise.resolve(driver.status());
-      // Proxy drivers use the shared Driver contract and wrap successful
-      // service status payloads in { status: 'ok', data }. Keep compatibility
-      // with legacy drivers that return the service payload directly.
+      // The API normally unwraps the Driver result. Accept wrapped payloads
+      // too, but never interpret an invalid response as a stopped proxy.
       const state = result && result.status === 'ok'
         ? (result.data && typeof result.data === 'object' ? result.data : {})
         : result;
       if (state && typeof state.status === 'string' && state.status !== 'ok') {
-        entries.push({ platform, state: { ...state, ...context }, port: getPlatformPort(platform, config) });
-      } else {
-        entries.push({ platform, state: state || {}, port: getPlatformPort(platform, config) });
+        return { platform, state: { ...state, ...context }, port: getPlatformPort(platform, config) };
       }
+      if (!state || typeof state.running !== 'boolean') throw new Error('Invalid proxy status response');
+      return { platform, state, port: getPlatformPort(platform, config) };
     } catch (error) {
-      entries.push({
+      return {
         platform,
         state: {
           status: 'failed',
@@ -320,10 +329,9 @@ async function getProxyStatusEntries({ registry = getPlatformRegistry(), runtime
           error: error && error.message ? error.message : String(error)
         },
         port: getPlatformPort(platform, config)
-      });
+      };
     }
-  }
-  return entries;
+  }));
 }
 
 function getManagedPorts(config = loadConfig(), registry = getPlatformRegistry()) {
@@ -739,6 +747,12 @@ async function handleStatus() {
 
     const existing = await getCCToolProcess();
     const config = loadConfig();
+    const connection = getUIConnectionOptions(existing, config);
+    const protocol = connection.useHttps ? 'https' : 'http';
+    if (connection.useHttps && PATHS.config) {
+      const certPath = path.join(PATHS.config, 'https', 'localhost-cert.pem');
+      if (fs.existsSync(certPath)) connection.ca = fs.readFileSync(certPath);
+    }
 
     console.log(chalk.bold.cyan('\n╔======================================╗'));
     console.log(chalk.bold.cyan('║        Coding-Tool 服务状态         ║'));
@@ -748,7 +762,7 @@ async function handleStatus() {
     console.log(chalk.bold('[UI] Web UI 服务:'));
     if (existing && existing.pm2_env.status === 'online') {
       console.log(chalk.green('  [OK] 状态: 运行中'));
-      console.log(chalk.gray(`  [NET] 地址: http://localhost:${config.ports?.webUI || 19999}`));
+      console.log(chalk.gray(`  [NET] 地址: ${protocol}://localhost:${connection.port}`));
       console.log(chalk.gray(`  [KEY] 进程 ID: ${existing.pid}`));
       console.log(chalk.gray(`  [TIMER]  运行时长: ${formatUptime(existing.pm2_env.pm_uptime)}`));
       console.log(chalk.gray(`  [SAVE] 内存使用: ${formatMemory(existing.monit?.memory)}`));
@@ -757,8 +771,11 @@ async function handleStatus() {
       console.log(chalk.gray('  [ERROR] 状态: 未运行'));
     }
 
-    // 代理服务状态由 Registry 中声明的 proxy driver 提供
-    const proxyStatuses = await getProxyStatusEntries({ config });
+    // Query the drivers in the running backend through manifest-declared APIs.
+    const proxyStatuses = await getProxyStatusEntries({
+      config: { ...config, ports: { ...config.ports, webUI: connection.port } },
+      connection
+    });
 
     console.log(chalk.bold('\n[PROXY] 代理服务:'));
     for (const entry of proxyStatuses) {
@@ -835,6 +852,7 @@ module.exports = {
     shouldTreatPortOwnershipAsReady,
     getManagedPorts,
     getProxyStatusEntries,
+    getUIConnectionOptions,
     listProxyPlatforms,
     shouldStopPM2Process
   }
