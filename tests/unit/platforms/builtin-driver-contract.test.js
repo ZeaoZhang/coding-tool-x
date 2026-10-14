@@ -39,7 +39,7 @@ describe('built-in channel Driver contract', () => {
       requireImpl: requested => requested === servicePath ? serviceFor(platform) : null
     });
 
-    for (const operation of ['list', 'getEnabled', 'create', 'update', 'remove', 'syncCurrent', 'applyNativeConfig', 'getEffectiveApiKey', 'disableAll']) {
+    for (const operation of ['list', 'getEnabled', 'create', 'update', 'remove', 'syncCurrent', 'applyNativeConfig', 'getEffectiveApiKey', 'disableAll', 'poolStatus']) {
       expect(typeof driver[operation]).toBe('function');
     }
   });

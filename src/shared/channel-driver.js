@@ -92,6 +92,7 @@ function createChannelDriver({
   formatCliChannelDetails,
   dashboardChannelShape = 'object',
   modelListType,
+  schedulerStateProvider,
   ...context
 } = {}) {
   let service;
@@ -245,6 +246,17 @@ function createChannelDriver({
     ? call('markRecentlyUsed', 'markChannelAsRecentlyUsed', [id], sanitizeChannel)
     : invalid(platform, capability, 'markRecentlyUsed', new Error('Channel id is required'));
   driver.saveOrder = order => call('saveOrder', 'saveChannelOrder', [order]);
+  driver.poolStatus = () => {
+    try {
+      const readSchedulerState = schedulerStateProvider
+        || require('../server/services/channel-scheduler').getSchedulerState;
+      return ok(platform, capability, 'poolStatus', {
+        scheduler: readSchedulerState(platform)
+      });
+    } catch (error) {
+      return failed(platform, capability, 'poolStatus', error);
+    }
+  };
 
   return driver;
 }

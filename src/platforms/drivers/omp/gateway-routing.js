@@ -165,6 +165,122 @@ function mergeGroupField(channels = [], field) {
   return result;
 }
 
+function collectRoutingGroups(channels = []) {
+  const enabled = channels.filter(channel => (
+    channel
+    && channel.enabled !== false
+    && (channel.baseUrl || normalizeText(channel.authMode) === 'oauth')
+  ));
+  const groups = new Map();
+  enabled.forEach((channel) => {
+    const key = getGroupKey(channel);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(channel);
+  });
+  return groups;
+}
+
+function getGroupUnsupportedReason(groupChannels, gateway = {}) {
+  const template = groupChannels[0];
+  if (!SUPPORTED_PROVIDER_APIS.has(getProviderApi(template))) {
+    return 'unsupported-provider-api';
+  }
+  const authMode = normalizeText(template.authMode) || 'api_key';
+  const supportedOAuthIds = new Set(
+    Array.isArray(gateway.supportedOAuthChannelIds) ? gateway.supportedOAuthChannelIds : []
+  );
+  const oauthGatewayUnavailable = authMode === 'oauth' && groupChannels.some(channel => (
+    !normalizeText(channel.baseUrl)
+    || !normalizeText(channel.apiKey)
+    || normalizeText(channel.transport || channel.providerConfig?.transport) !== 'pi-native'
+    || !supportedOAuthIds.has(channel.id)
+  ));
+  return oauthGatewayUnavailable ? 'oauth-auth-gateway-unavailable' : '';
+}
+
+function getDeclaredModelIds(channel = {}) {
+  const result = [];
+  const seen = new Set();
+  const append = (raw) => {
+    const id = normalizeText(typeof raw === 'string' ? raw : (raw?.id || raw?.name));
+    const key = id.toLowerCase();
+    if (!id || seen.has(key)) return;
+    seen.add(key);
+    result.push(id);
+  };
+  (Array.isArray(channel.models) ? channel.models : []).forEach(append);
+  (Array.isArray(channel.allowedModels) ? channel.allowedModels : []).forEach(append);
+  append(channel.model);
+  return result;
+}
+
+function normalizeOmpModelId(value) {
+  return normalizeText(value).replace(/:(minimal|low|medium|high|xhigh|max|off)$/i, '');
+}
+
+function channelSupportsOmpModel(channel = {}, modelId = '') {
+  const requested = normalizeOmpModelId(modelId).toLowerCase();
+  if (!requested) return true;
+  const declared = getDeclaredModelIds(channel)
+    .map(normalizeOmpModelId)
+    .filter(Boolean)
+    .map(value => value.toLowerCase());
+  return declared.length === 0 || declared.includes(requested);
+}
+
+function buildOmpRoutingSummary(channels = [], gateway = {}) {
+  const groups = [];
+  const unsupportedChannels = [];
+  collectRoutingGroups(channels).forEach((groupChannels) => {
+    try {
+      assertCompatibleGroup(groupChannels);
+    } catch {
+      groupChannels.forEach(channel => unsupportedChannels.push({
+        id: channel.id,
+        name: channel.name,
+        reason: 'incompatible-routing-group'
+      }));
+      return;
+    }
+    const reason = getGroupUnsupportedReason(groupChannels, gateway);
+    if (reason) {
+      groupChannels.forEach(channel => unsupportedChannels.push({
+        id: channel.id,
+        name: channel.name,
+        reason
+      }));
+      return;
+    }
+
+    const modelChannels = new Map();
+    const unrestrictedChannelIds = [];
+    groupChannels.forEach((channel) => {
+      const modelIds = getDeclaredModelIds(channel);
+      if (modelIds.length === 0) {
+        unrestrictedChannelIds.push(channel.id);
+        return;
+      }
+      modelIds.forEach((modelId) => {
+        const key = normalizeOmpModelId(modelId).toLowerCase();
+        if (!key) return;
+        if (!modelChannels.has(key)) modelChannels.set(key, { id: modelId, channelIds: [] });
+        modelChannels.get(key).channelIds.push(channel.id);
+      });
+    });
+
+    groups.push({
+      routingGroup: getRoutingGroup(groupChannels[0]),
+      providerKey: getProviderKey(groupChannels[0]),
+      providerApi: getProviderApi(groupChannels[0]),
+      channelIds: groupChannels.map(channel => channel.id),
+      channels: groupChannels.map(channel => ({ id: channel.id, name: channel.name || channel.id })),
+      unrestrictedChannelIds,
+      models: [...modelChannels.values()]
+    });
+  });
+  return { groups, unsupportedChannels };
+}
+
 function buildManagedBaseUrl(host, port, routeToken) {
   return `http://${host}:${port}/omp/${routeToken}`;
 }
@@ -180,17 +296,7 @@ function prepareManagedOmpChannels(channels = [], gateway = {}) {
     throw new Error('OMP gateway secret is required before managed providers can be generated');
   }
 
-  const enabled = channels.filter(channel => (
-    channel
-    && channel.enabled !== false
-    && (channel.baseUrl || normalizeText(channel.authMode) === 'oauth')
-  ));
-  const groups = new Map();
-  enabled.forEach((channel) => {
-    const key = getGroupKey(channel);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(channel);
-  });
+  const groups = collectRoutingGroups(channels);
 
   const providerCounts = new Map();
   groups.forEach((groupChannels) => {
@@ -205,35 +311,16 @@ function prepareManagedOmpChannels(channels = [], gateway = {}) {
   groups.forEach((groupChannels, groupKey) => {
     assertCompatibleGroup(groupChannels);
     const template = groupChannels[0];
-    if (!SUPPORTED_PROVIDER_APIS.has(getProviderApi(template))) {
+    const unsupportedReason = getGroupUnsupportedReason(groupChannels, gateway);
+    if (unsupportedReason) {
       groupChannels.forEach(channel => unsupportedChannels.push({
         id: channel.id,
         name: channel.name,
-        reason: 'unsupported-provider-api'
+        reason: unsupportedReason
       }));
       return;
     }
     const authMode = normalizeText(template.authMode) || 'api_key';
-    const transport = normalizeText(template.transport || template.providerConfig?.transport);
-    const supportedOAuthIds = new Set(
-      Array.isArray(gateway.supportedOAuthChannelIds) ? gateway.supportedOAuthChannelIds : []
-    );
-    const oauthGatewayUnavailable = authMode === 'oauth' && (
-      groupChannels.some(channel => (
-        !normalizeText(channel.baseUrl)
-        || !normalizeText(channel.apiKey)
-        || normalizeText(channel.transport || channel.providerConfig?.transport) !== 'pi-native'
-        || !supportedOAuthIds.has(channel.id)
-      ))
-    );
-    if (oauthGatewayUnavailable) {
-      groupChannels.forEach(channel => unsupportedChannels.push({
-        id: channel.id,
-        name: channel.name,
-        reason: 'oauth-auth-gateway-unavailable'
-      }));
-      return;
-    }
 
     const providerId = normalizeProviderId(getProviderKey(template));
     const routeToken = stableToken(secret, 'route', groupKey);
@@ -294,6 +381,9 @@ function resolveOmpGatewayRoute(pathname, channels, gateway) {
 }
 
 module.exports = {
+  buildOmpRoutingSummary,
+  channelSupportsOmpModel,
+  normalizeOmpModelId,
   prepareManagedOmpChannels,
   resolveOmpGatewayRoute,
   getRoutingGroup,

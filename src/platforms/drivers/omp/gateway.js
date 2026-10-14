@@ -1,15 +1,26 @@
 'use strict';
 
+const { memoryPressureMiddleware, rejectUpgradeUnderPressure } = require('../../../server/services/memory-pressure');
+
 const crypto = require('crypto');
 const { downstreamHeaders } = require('../../../shared/proxy-transport');
 const http = require('http');
 const https = require('https');
 const httpProxy = require('http-proxy');
 const { URL } = require('url');
-const { allocateChannel, releaseChannel } = require('../../../server/services/channel-scheduler');
+const {
+  allocateChannel,
+  releaseChannel,
+  getSchedulerState
+} = require('../../../server/services/channel-scheduler');
 const { recordSuccess, recordFailure } = require('../../../server/services/channel-health');
-const { attachServerShutdownHandling, expediteServerShutdown } = require('../../../server/services/server-shutdown');
-const { resolveOmpGatewayRoute } = require('./gateway-routing');
+const { broadcastSchedulerState } = require('../../../server/websocket-server');
+const { attachServerShutdownHandling, expediteServerShutdown, PROXY_IDLE_TIMEOUT_MS } = require('../../../server/services/server-shutdown');
+const {
+  resolveOmpGatewayRoute,
+  channelSupportsOmpModel,
+  normalizeOmpModelId
+} = require('./gateway-routing');
 const { persistProxyRequestSnapshot } = require('../../../server/services/request-logger');
 
 const RETRYABLE_STATUS = new Set([401, 403, 429, 502, 503, 504]);
@@ -115,6 +126,7 @@ function rewriteCredential(headers, requestUrl, route, channel, options = {}) {
 }
 
 function readRequestBody(req) {
+  if (req.aborted || req.destroyed) return Promise.reject(createAbortError());
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
@@ -157,35 +169,40 @@ function readRequestBody(req) {
   });
 }
 
-function extractModelId(body, contentType = '') {
-  if (!body?.length || !String(contentType).includes('json')) return '';
-  try {
-    const parsed = JSON.parse(body.toString('utf8'));
-    if (typeof parsed.model === 'string') return parsed.model.trim();
-    if (parsed.model && typeof parsed.model === 'object') {
-      return String(parsed.model.id || parsed.model.name || '').trim();
+function extractModelId(body, contentType = '', requestUrl = '') {
+  if (body?.length && String(contentType).includes('json')) {
+    try {
+      const parsed = JSON.parse(body.toString('utf8'));
+      const bodyModel = typeof parsed.model === 'string'
+        ? parsed.model.trim()
+        : String(parsed.model?.id || parsed.model?.name || parsed.modelId || parsed.model_id || '').trim();
+      if (bodyModel) return bodyModel;
+    } catch {
+      // Some provider endpoints carry the model in the URL instead of JSON.
     }
-    return String(parsed.modelId || parsed.model_id || '').trim();
+  }
+
+  try {
+    const url = new URL(String(requestUrl || '/'), 'http://127.0.0.1');
+    const queryModel = url.searchParams.get('model')
+      || url.searchParams.get('model_id')
+      || url.searchParams.get('modelId');
+    if (queryModel?.trim()) return queryModel.trim();
+
+    // Gemini and Vertex encode the model in paths such as
+    // /v1beta/models/gemini-2.5-pro:generateContent.
+    const match = url.pathname.match(/(?:^|\/)models\/([^/:]+):[^/]+$/i);
+    if (match?.[1]) {
+      try {
+        return decodeURIComponent(match[1]).trim();
+      } catch {
+        return match[1].trim();
+      }
+    }
   } catch {
     return '';
   }
-}
-
-function normalizeModelId(value) {
-  return String(value || '').trim().replace(/:(minimal|low|medium|high|xhigh|max|off)$/i, '');
-}
-
-function channelSupportsModel(channel, modelId) {
-  const requested = normalizeModelId(modelId).toLowerCase();
-  if (!requested) return true;
-  const declared = [];
-  (Array.isArray(channel.allowedModels) ? channel.allowedModels : []).forEach(value => declared.push(value));
-  (Array.isArray(channel.models) ? channel.models : []).forEach((model) => {
-    declared.push(typeof model === 'string' ? model : (model?.id || model?.name));
-  });
-  if (channel.model) declared.push(channel.model);
-  const normalized = [...new Set(declared.map(normalizeModelId).filter(Boolean).map(value => value.toLowerCase()))];
-  return normalized.length === 0 || normalized.includes(requested);
+  return '';
 }
 
 function writeJson(res, statusCode, payload) {
@@ -253,6 +270,8 @@ function createOmpGateway(options = {}) {
   const getChannels = options.getChannels;
   const allocate = options.allocateChannel || allocateChannel;
   const release = options.releaseChannel || releaseChannel;
+  const readSchedulerState = options.getSchedulerState || getSchedulerState;
+  const publishSchedulerState = options.broadcastSchedulerState || broadcastSchedulerState;
   const onSuccess = options.recordSuccess || recordSuccess;
   const onFailure = options.recordFailure || recordFailure;
   const websocketProxy = httpProxy.createProxyServer({
@@ -269,6 +288,22 @@ function createOmpGateway(options = {}) {
   let inflightRequests = 0;
   const activeUpstreams = new Set();
 
+  function broadcastCurrentSchedulerState() {
+    try {
+      publishSchedulerState('omp', readSchedulerState('omp'));
+    } catch {
+      // Scheduler broadcasts are observational and must not interrupt a request.
+    }
+  }
+
+  function releaseAndBroadcast(channelId) {
+    try {
+      release(channelId, 'omp');
+    } finally {
+      broadcastCurrentSchedulerState();
+    }
+  }
+
   function gatewayDescriptor() {
     return { host, port, secret };
   }
@@ -282,7 +317,7 @@ function createOmpGateway(options = {}) {
     const channels = currentChannels();
     const candidateIds = route.channelIds.filter((channelId) => {
       const channel = channels.find(item => item.id === channelId);
-      return channel && channelSupportsModel(channel, modelId);
+      return channel && channelSupportsOmpModel(channel, modelId);
     });
     if (candidateIds.length === 0) {
       throw Object.assign(
@@ -290,7 +325,7 @@ function createOmpGateway(options = {}) {
         { statusCode: 422 }
       );
     }
-    return allocate({
+    const channel = await allocate({
       source: 'omp',
       enableSessionBinding: false,
       candidateIds,
@@ -298,9 +333,11 @@ function createOmpGateway(options = {}) {
       routingGroup: route.routingGroup,
       providerKey: route.providerKey,
       providerApi: route.providerApi,
-      modelId: normalizeModelId(modelId),
+      modelId: normalizeOmpModelId(modelId),
       signal
     });
+    if (channel) broadcastCurrentSchedulerState();
+    return channel;
   }
 
   function forwardAttempt(req, route, channel, body, signal) {
@@ -309,7 +346,7 @@ function createOmpGateway(options = {}) {
       const releaseOnce = () => {
         if (released) return;
         released = true;
-        release(channel.id, 'omp');
+        releaseAndBroadcast(channel.id);
       };
       if (signal?.aborted) {
         releaseOnce();
@@ -363,6 +400,9 @@ function createOmpGateway(options = {}) {
       });
 
       activeUpstreams.add(upstreamRequest);
+      upstreamRequest.setTimeout(PROXY_IDLE_TIMEOUT_MS, () => {
+        upstreamRequest.destroy(new Error('OMP upstream request timeout'));
+      });
       const abortUpstream = () => {
         const error = createAbortError();
         if (upstreamResponse) {
@@ -385,7 +425,7 @@ function createOmpGateway(options = {}) {
   async function handleProxyRequest(req, res, route, signal) {
     const body = await readRequestBody(req);
     if (signal?.aborted) throw createAbortError();
-    const modelId = extractModelId(body, req.headers['content-type']);
+    const modelId = extractModelId(body, req.headers['content-type'], route.upstreamPath);
     const attemptedIds = [];
     let lastError = null;
 
@@ -398,7 +438,7 @@ function createOmpGateway(options = {}) {
         break;
       }
       if (signal?.aborted) {
-        release(channel.id, 'omp');
+        releaseAndBroadcast(channel.id);
         lastError = createAbortError();
         break;
       }
@@ -409,7 +449,7 @@ function createOmpGateway(options = {}) {
         if (attempt === 0 && RETRYABLE_STATUS.has(result.statusCode)) {
           result.response.destroy();
           result.release();
-          onFailure(channel.id, 'omp');
+          if (!signal?.aborted) onFailure(channel.id, 'omp');
           lastError = Object.assign(new Error(`OMP upstream returned HTTP ${result.statusCode}`), {
             statusCode: result.statusCode
           });
@@ -427,7 +467,7 @@ function createOmpGateway(options = {}) {
             if (result.statusCode < 400 && !error) {
               onSuccess(channel.id, 'omp');
             } else {
-              onFailure(channel.id, 'omp');
+              if (!signal?.aborted) onFailure(channel.id, 'omp');
             }
             resolve();
           };
@@ -455,7 +495,7 @@ function createOmpGateway(options = {}) {
         if (error?.name === 'AbortError') {
           break;
         }
-        onFailure(channel.id, 'omp');
+        if (!signal?.aborted) onFailure(channel.id, 'omp');
       }
     }
 
@@ -514,6 +554,11 @@ function createOmpGateway(options = {}) {
       }
     });
 
+    req.proxyPlatform = 'omp';
+    let admitted = false;
+    memoryPressureMiddleware(req, res, () => { admitted = true; });
+    if (!admitted) return;
+
     inflightRequests++;
     const abortController = new AbortController();
     const abortDownstream = () => abortController.abort();
@@ -541,6 +586,7 @@ function createOmpGateway(options = {}) {
     const statusText = {
       401: 'Unauthorized',
       404: 'Not Found',
+      422: 'Unprocessable Entity',
       503: 'Service Unavailable'
     }[statusCode] || 'Bad Gateway';
     socket.end([
@@ -554,6 +600,8 @@ function createOmpGateway(options = {}) {
   }
 
   async function handleUpgrade(req, socket, head) {
+    req.proxyPlatform = 'omp';
+    if (rejectUpgradeUnderPressure(req, socket)) return;
     if (draining) {
       rejectUpgrade(socket, 503, 'OMP gateway is draining');
       return;
@@ -583,10 +631,22 @@ function createOmpGateway(options = {}) {
     route.upstreamPath = `${route.upstreamPath}${parsed.search}`;
 
     let channel;
+    const controller = new AbortController();
+    const abortWaiting = () => controller.abort();
+    socket.once('close', abortWaiting);
+    socket.once('error', abortWaiting);
     try {
-      channel = await allocateForRoute(route);
+      const modelId = extractModelId(null, '', route.upstreamPath);
+      channel = await allocateForRoute(route, [], modelId, controller.signal);
     } catch (error) {
-      rejectUpgrade(socket, 503, error.message || 'No compatible OMP channel is available');
+      rejectUpgrade(socket, error.statusCode || 503, error.message || 'No compatible OMP channel is available');
+      return;
+    } finally {
+      socket.removeListener('close', abortWaiting);
+      socket.removeListener('error', abortWaiting);
+    }
+    if (controller.signal.aborted || socket.destroyed) {
+      releaseAndBroadcast(channel.id);
       return;
     }
 
@@ -607,7 +667,7 @@ function createOmpGateway(options = {}) {
       if (!failed) {
         onSuccess(channel.id, 'omp');
       }
-      release(channel.id, 'omp');
+      releaseAndBroadcast(channel.id);
     };
     socket.once('close', releaseOnce);
     socket.once('error', (error) => {
@@ -631,7 +691,9 @@ function createOmpGateway(options = {}) {
       websocketProxy.ws(req, socket, head, {
         target: upstream.origin,
         changeOrigin: true,
-        secure: upstream.protocol === 'https:'
+        secure: upstream.protocol === 'https:',
+        proxyTimeout: PROXY_IDLE_TIMEOUT_MS,
+        timeout: 0
       });
     } catch (error) {
       markFailedOnce(error);

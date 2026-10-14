@@ -4,6 +4,12 @@
       <n-spin size="small" />
     </div>
     <div v-else>
+      <ChannelRoutingSummary
+        v-if="config.showRoutingSummary && state.routingSummary && state.channels.length > 0"
+        :summary="state.routingSummary"
+        :channels="state.channels"
+        :get-channel-inflight="getChannelInflight"
+      />
       <div v-if="state.channels.length === 0" class="empty-state">
         <n-empty :description="config.emptyDescription">
           <template v-if="config.showEmptyAction" #extra>
@@ -295,6 +301,7 @@ import {
 } from 'naive-ui'
 import { AddOutline } from '@vicons/ionicons5'
 import ChannelCard from './ChannelCard.vue'
+import ChannelRoutingSummary from './ChannelRoutingSummary.vue'
 import ModelRedirectEditor from './ModelRedirectEditor.vue'
 import ChannelAuthSection from './ChannelAuthSection.vue'
 import channelPanelFactories from './channelPanelFactories'

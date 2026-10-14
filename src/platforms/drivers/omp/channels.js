@@ -2,6 +2,7 @@
 
 const { createChannelDriver } = require('../../../shared/channel-driver');
 const { ok, failed } = require('../../../shared/driver-result');
+const { buildOmpRoutingSummary } = require('./gateway-routing');
 
 function createDriver(context = {}) {
   const driver = createChannelDriver({
@@ -28,6 +29,32 @@ function createDriver(context = {}) {
   driver.syncManagedProviderExtension = (...args) => (
     driver._service().syncManagedProviderExtension(...args)
   );
+  const getPoolStatus = driver.poolStatus;
+  driver.poolStatus = () => {
+    try {
+      const service = driver._service();
+      const modeState = service.loadManagedOmpModeState?.();
+      const routingSummary = channels => buildOmpRoutingSummary(
+        Array.isArray(channels) ? channels : channels?.channels || [],
+        modeState?.gateway || {}
+      );
+      const result = getPoolStatus();
+      if (result?.status !== 'ok') return result;
+      const channels = service.getChannels();
+      if (channels && typeof channels.then === 'function') {
+        return channels.then(value => ok('omp', 'channels', 'poolStatus', {
+          ...result.data,
+          routingSummary: routingSummary(value)
+        })).catch(error => failed('omp', 'channels', 'poolStatus', error));
+      }
+      return ok('omp', 'channels', 'poolStatus', {
+        ...result.data,
+        routingSummary: routingSummary(channels)
+      });
+    } catch (error) {
+      return failed('omp', 'channels', 'poolStatus', error);
+    }
+  };
   driver.catalogMetadata = (input = {}) => {
     const operation = 'catalogMetadata';
     const body = input && typeof input === 'object' && Object.prototype.hasOwnProperty.call(input, 'body')

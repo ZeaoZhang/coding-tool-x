@@ -7,6 +7,7 @@ const {
   fetchGeminiChannels,
   fetchOpenCodeChannels,
   fetchOmpChannels,
+  fetchOmpPoolStatus,
   fetchOmpCatalogMetadata,
   fetchOmpChannelModels,
   fetchOpenCodeChannelModels,
@@ -24,6 +25,7 @@ const {
   fetchGeminiChannels: vi.fn(),
   fetchOpenCodeChannels: vi.fn(),
   fetchOmpChannels: vi.fn(),
+  fetchOmpPoolStatus: vi.fn(),
   fetchOmpCatalogMetadata: vi.fn(),
   fetchOmpChannelModels: vi.fn(),
   fetchOpenCodeChannelModels: vi.fn(),
@@ -44,6 +46,7 @@ vi.mock('../../../api/channels', async () => ({
   getGeminiChannels: fetchGeminiChannels,
   getOpenCodeChannels: fetchOpenCodeChannels,
   getOmpChannels: fetchOmpChannels,
+  getPlatformChannelPoolStatus: fetchOmpPoolStatus,
   fetchOmpCatalogMetadata,
   fetchOmpChannelModels,
   fetchOpenCodeChannelModels,
@@ -68,6 +71,7 @@ describe('channel panel model catalogs', () => {
     fetchChannelModels.mockReset()
     fetchCodexChannels.mockReset().mockResolvedValue([{ id: 'codex-1' }])
     fetchOmpChannels.mockReset().mockResolvedValue([{ id: 'omp-1' }])
+    fetchOmpPoolStatus.mockReset().mockResolvedValue({ routingSummary: { groups: [] } })
     fetchGeminiChannels.mockReset().mockResolvedValue([{ id: 'gemini-1' }])
     fetchOpenCodeChannels.mockReset().mockResolvedValue([{ id: 'opencode-1' }])
     getAllModelsByToolType.mockImplementation(toolType => ({
@@ -127,6 +131,19 @@ describe('channel panel model catalogs', () => {
       authProviderMeta: null
     })
     expect(fetchOmpChannels).toHaveBeenCalledTimes(1)
+  })
+
+  it('enables the shared routing summary and explains how compatible channels share a group', async () => {
+    const config = channelPanelFactories.omp()
+    const routingField = config.formSections
+      .flatMap(section => section.fields)
+      .find(field => field.key === 'routingGroup')
+
+    expect(config.showRoutingSummary).toBe(true)
+    await expect(config.api.fetchRoutingSummary()).resolves.toEqual({ routingSummary: { groups: [] } })
+    expect(fetchOmpPoolStatus).toHaveBeenCalledWith('omp')
+    expect(routingField.description).toContain('相同 Provider')
+    expect(routingField.description).toContain('API 协议')
   })
 
   it('keeps DSH credentials and model fields in basic information', () => {

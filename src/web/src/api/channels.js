@@ -9,6 +9,13 @@ export async function getPlatformChannels(platform) {
   return response.data
 }
 
+export async function getPlatformChannelPoolStatus(platform) {
+  const response = await client.get(`${platformChannelPath(platform)}/pool/status`, {
+    params: { source: normalizePlatformKey(platform) }
+  })
+  return response.data
+}
+
 export async function createPlatformChannel(platform, payload) {
   const response = await client.post(platformChannelPath(platform), payload)
   return response.data

@@ -106,10 +106,13 @@ describe('OMP gateway data plane', () => {
     const allocateChannel = vi.fn(async () => channel);
     const releaseChannel = vi.fn();
     const recordSuccess = vi.fn();
+    const broadcastSchedulerState = vi.fn();
     const gateway = createOmpGateway({
       getChannels: () => [channel],
       allocateChannel,
       releaseChannel,
+      getSchedulerState: () => ({ channels: [{ id: channel.id, inflight: 1 }] }),
+      broadcastSchedulerState,
       recordSuccess,
       recordFailure: vi.fn()
     });
@@ -154,7 +157,81 @@ describe('OMP gateway data plane', () => {
         candidateIds: ['channel-a']
       }));
       expect(releaseChannel).toHaveBeenCalledTimes(1);
+      expect(broadcastSchedulerState).toHaveBeenCalledTimes(2);
+      expect(broadcastSchedulerState).toHaveBeenCalledWith('omp', {
+        channels: [{ id: channel.id, inflight: 1 }]
+      });
       expect(recordSuccess).toHaveBeenCalledWith('channel-a', 'omp');
+    } finally {
+      await gateway.stop();
+      await close(upstream);
+    }
+  });
+
+  it('selects a channel from the model embedded in Gemini and Vertex request paths', async () => {
+    const upstream = http.createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+    const upstreamPort = await listen(upstream);
+    const channels = [
+      {
+        id: 'openai-model',
+        name: 'OpenAI model',
+        providerKey: 'shared-provider',
+        providerApi: 'google-generative-ai',
+        routingGroup: 'shared',
+        baseUrl: `http://127.0.0.1:${upstreamPort}/v1beta`,
+        apiKey: 'upstream-key',
+        enabled: true,
+        models: [{ id: 'gemini-2.5-flash' }]
+      },
+      {
+        id: 'vertex-model',
+        name: 'Vertex model',
+        providerKey: 'shared-provider',
+        providerApi: 'google-generative-ai',
+        routingGroup: 'shared',
+        baseUrl: `http://127.0.0.1:${upstreamPort}/v1beta`,
+        apiKey: 'upstream-key',
+        enabled: true,
+        models: [{ id: 'gemini-2.5-pro' }]
+      }
+    ];
+    const allocateChannel = vi.fn(async ({ candidateIds }) => channels.find(channel => channel.id === candidateIds[0]));
+    const secret = 'url-model-routing-secret';
+    const gateway = createOmpGateway({
+      getChannels: () => channels,
+      allocateChannel,
+      releaseChannel: vi.fn(),
+      getSchedulerState: () => ({ channels: [] }),
+      broadcastSchedulerState: vi.fn(),
+      recordSuccess: vi.fn(),
+      recordFailure: vi.fn()
+    });
+
+    try {
+      const status = await gateway.start({ port: 0, secret });
+      const route = prepareManagedOmpChannels(channels, {
+        host: '127.0.0.1',
+        port: status.port,
+        secret
+      }).routes[0];
+      const response = await request({
+        port: status.port,
+        path: `/omp/${route.token}/v1beta/models/gemini-2.5-pro:generateContent`,
+        headers: {
+          authorization: `Bearer ${route.capability}`,
+          'content-type': 'application/json'
+        },
+        body: Buffer.from('{}')
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(allocateChannel).toHaveBeenCalledWith(expect.objectContaining({
+        candidateIds: ['vertex-model'],
+        modelId: 'gemini-2.5-pro'
+      }));
     } finally {
       await gateway.stop();
       await close(upstream);
@@ -288,10 +365,13 @@ describe('OMP gateway data plane', () => {
     };
     const releaseChannel = vi.fn();
     const secret = 'abort-gateway-secret';
+    const allocateChannel = vi.fn(async () => channel);
     const gateway = createOmpGateway({
       getChannels: () => [channel],
-      allocateChannel: vi.fn(async () => channel),
+      allocateChannel,
       releaseChannel,
+      getSchedulerState: () => ({ channels: [] }),
+      broadcastSchedulerState: vi.fn(),
       recordSuccess: vi.fn(),
       recordFailure: vi.fn()
     });
@@ -498,10 +578,13 @@ describe('OMP gateway data plane', () => {
     };
     const secret = 'websocket-gateway-secret';
     const releaseChannel = vi.fn();
+    const allocateChannel = vi.fn(async () => channel);
     const gateway = createOmpGateway({
       getChannels: () => [channel],
-      allocateChannel: vi.fn(async () => channel),
+      allocateChannel,
       releaseChannel,
+      getSchedulerState: () => ({ channels: [] }),
+      broadcastSchedulerState: vi.fn(),
       recordSuccess: vi.fn(),
       recordFailure: vi.fn()
     });
@@ -516,7 +599,7 @@ describe('OMP gateway data plane', () => {
 
       const reply = await new Promise((resolve, reject) => {
         const ws = new WebSocket(
-          `ws://127.0.0.1:${status.port}/omp/${route.token}/realtime`,
+          `ws://127.0.0.1:${status.port}/omp/${route.token}/realtime?model=gpt-5-codex`,
           { headers: { authorization: `Bearer ${route.capability}` } }
         );
         ws.once('open', () => ws.send('ping'));
@@ -529,9 +612,13 @@ describe('OMP gateway data plane', () => {
 
       expect(reply).toBe('ping');
       expect(upgrade).toEqual({
-        url: '/v1/realtime',
+        url: '/v1/realtime?model=gpt-5-codex',
         authorization: 'Bearer codex-upstream-key'
       });
+      expect(allocateChannel).toHaveBeenCalledWith(expect.objectContaining({
+        candidateIds: ['codex-a'],
+        modelId: 'gpt-5-codex'
+      }));
       await vi.waitFor(() => expect(releaseChannel).toHaveBeenCalledTimes(1));
     } finally {
       await gateway.stop();

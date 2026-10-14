@@ -35,4 +35,55 @@ describe('OMP channels Driver', () => {
     expect(getCatalogMetadata).toHaveBeenCalledWith({ providerKey: 'deepseek' });
   });
 
+  test('returns a credential-free model routing summary beside the scheduler snapshot', () => {
+    const channels = [
+      {
+        id: 'fast',
+        name: 'Fast',
+        providerKey: 'openai-main',
+        providerApi: 'openai-responses',
+        routingGroup: 'main',
+        baseUrl: 'https://fast.example/v1',
+        apiKey: 'upstream-secret',
+        enabled: true,
+        models: [{ id: 'gpt-5' }]
+      },
+      {
+        id: 'backup',
+        name: 'Backup',
+        providerKey: 'openai-main',
+        providerApi: 'openai-responses',
+        routingGroup: 'main',
+        baseUrl: 'https://backup.example/v1',
+        apiKey: 'another-secret',
+        enabled: true,
+        allowedModels: ['gpt-5']
+      }
+    ];
+    const driver = createDriver({
+      schedulerStateProvider: () => ({ channels: [{ id: 'fast', inflight: 2, maxConcurrency: 4 }], pending: 0 }),
+      requireImpl: () => ({
+        getChannels: () => channels,
+        loadManagedOmpModeState: () => null
+      })
+    });
+
+    const result = driver.poolStatus();
+    expect(result).toMatchObject({
+      status: 'ok',
+      operation: 'poolStatus',
+      data: {
+        scheduler: { channels: [{ id: 'fast', inflight: 2, maxConcurrency: 4 }] },
+        routingSummary: {
+          groups: [{
+            routingGroup: 'main',
+            models: [{ id: 'gpt-5', channelIds: ['fast', 'backup'] }]
+          }]
+        }
+      }
+    });
+    expect(JSON.stringify(result)).not.toContain('upstream-secret');
+    expect(JSON.stringify(result)).not.toContain('another-secret');
+  });
+
 });

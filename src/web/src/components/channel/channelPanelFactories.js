@@ -48,6 +48,7 @@ import {
 } from '../../api/channels'
 import {
   getOmpChannels,
+  getPlatformChannelPoolStatus,
   createOmpChannel,
   updateOmpChannel,
   deleteOmpChannel,
@@ -1895,6 +1896,7 @@ const channelPanelFactories = {
     type: 'omp',
     displayName: 'OMP',
     schedulerSource: 'omp',
+    showRoutingSummary: true,
     storageKeys: {
       localCollapse: 'ompChannelCollapse',
       collapseConfigKey: 'omp',
@@ -1968,7 +1970,7 @@ const channelPanelFactories = {
             label: '路由组',
             type: 'text',
             placeholder: '相同路由组的兼容渠道可动态切换',
-            description: '留空时按渠道 ID 隔离'
+            description: '相同 Provider、API 协议和认证方式的渠道填写相同路由组后共用一个入口；需保持模型映射兼容。留空时按渠道 ID 隔离。'
           },
           buildBalanceCredentialField(),
           buildBalanceUserIdField(),
@@ -2262,6 +2264,7 @@ const channelPanelFactories = {
           authProviderMeta: Array.isArray(data) ? null : (data.authProviderMeta || null)
         }
       },
+      fetchRoutingSummary: () => getPlatformChannelPoolStatus('omp'),
       syncCurrent: syncCurrentOmpChannel,
       create: async (form) => {
         const authPayload = buildOmpAuthPayload(form)

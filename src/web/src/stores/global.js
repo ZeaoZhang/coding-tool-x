@@ -164,6 +164,12 @@ export const useGlobalStore = defineStore('global', () => {
     return key ? schedulerStateByPlatform[key] : null
   }
 
+  function setSchedulerState(platform, scheduler) {
+    const key = ensurePlatformState(platform)
+    if (!key || !scheduler || typeof scheduler !== 'object') return
+    schedulerStateByPlatform[key] = scheduler
+  }
+
   function getSourceLogs(platform) {
     const key = ensurePlatformState(platform)
     return key ? logsBySource[key] : []
@@ -699,6 +705,7 @@ export const useGlobalStore = defineStore('global', () => {
     getProxyState,
     getChannels,
     getSchedulerState,
+    setSchedulerState,
     handleProxyStateUpdate,
     hydrateFromDashboard,
     startProxy,
