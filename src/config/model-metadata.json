@@ -1,7 +1,7 @@
 {
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
-  "lastUpdated": "2026-10-09",
+  "lastUpdated": "2026-10-14",
   "defaultModels": {
     "claude": [
       "claude-opus-4-7",
@@ -82,7 +82,8 @@
       "gemini-3.1-flash-lite",
       "gemini-3.1-flash-live-preview",
       "gemini-3.1-pro-preview-customtools",
-      "gemini-2.5-computer-use-preview-10-2025"
+      "gemini-2.5-computer-use-preview-10-2025",
+      "gemini-4-argon"
     ]
   },
   "defaultSpeedTestModels": {
@@ -2385,6 +2386,32 @@
       "provider": "google",
       "reasoning": true,
       "sourceId": "google/gemini-3.8-flash",
+      "supportsTools": true,
+      "toolTypes": [
+        "gemini",
+        "opencode",
+        "omp"
+      ]
+    },
+    "gemini-4-argon": {
+      "id": "gemini-4-argon",
+      "input": [
+        "text",
+        "image"
+      ],
+      "limit": {
+        "context": 1048576,
+        "output": 32768
+      },
+      "name": "Gemini 4 Argon",
+      "pricing": {
+        "cacheRead": 0.1,
+        "input": 2,
+        "output": 10
+      },
+      "provider": "google",
+      "reasoning": true,
+      "sourceId": "google/gemini-4-argon",
       "supportsTools": true,
       "toolTypes": [
         "gemini",
