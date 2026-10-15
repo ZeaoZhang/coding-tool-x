@@ -19,6 +19,10 @@ describe('Codex channels Driver', () => {
       apiKey: 'secret', wireApi: 'responses', extra: { enabled: true }
     })).toMatchObject({ status: 'ok', data: { id: 'codex-1' } });
     expect(calls[0]).toEqual(['Provider', 'provider-a', 'https://codex.example', 'secret', 'responses', { enabled: true }]);
+    driver.createFromCli({
+      name: 'My Provider', baseUrl: 'https://codex.example', apiKey: 'secret', wireApi: 'responses'
+    });
+    expect(calls[1][1]).toBe('my-provider');
     expect(driver.syncCurrent()).toMatchObject({ status: 'ok', operation: 'syncCurrent', data: { added: 1 } });
   });
 

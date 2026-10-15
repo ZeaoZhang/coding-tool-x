@@ -17,6 +17,35 @@ test('accepts a valid generic platform manifest', () => {
   expect(result.errors).toEqual([]);
 });
 
+test('validates declarative CLI channel creation configuration', () => {
+  const base = {
+    key: 'demo-cli',
+    label: 'Demo CLI',
+    command: 'demo',
+    capabilities: {},
+    channelCli: {
+      supportsCliCreate: true,
+      createQuestions: [
+        { type: 'input', name: 'name', message: 'Name:', validation: 'required' },
+        { type: 'input', name: 'baseUrl', message: 'URL:', validation: 'http_url' }
+      ]
+    }
+  };
+
+  expect(validateManifest(base).valid).toBe(true);
+  expect(validateManifest({
+    ...base,
+    channelCli: { supportsCliCreate: true }
+  }).valid).toBe(false);
+  expect(validateManifest({
+    ...base,
+    channelCli: {
+      supportsCliCreate: true,
+      createQuestions: [{ type: 'input', name: 'name', message: 'Name:', validate: 'required' }]
+    }
+  }).valid).toBe(false);
+});
+
 test('accepts declarative native config snapshots for a generic CLI', () => {
   const result = validateManifest({
     key: 'demo-cli',

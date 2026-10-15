@@ -228,59 +228,6 @@ function channelSupportsOmpModel(channel = {}, modelId = '') {
   return declared.length === 0 || declared.includes(requested);
 }
 
-function buildOmpRoutingSummary(channels = [], gateway = {}) {
-  const groups = [];
-  const unsupportedChannels = [];
-  collectRoutingGroups(channels).forEach((groupChannels) => {
-    try {
-      assertCompatibleGroup(groupChannels);
-    } catch {
-      groupChannels.forEach(channel => unsupportedChannels.push({
-        id: channel.id,
-        name: channel.name,
-        reason: 'incompatible-routing-group'
-      }));
-      return;
-    }
-    const reason = getGroupUnsupportedReason(groupChannels, gateway);
-    if (reason) {
-      groupChannels.forEach(channel => unsupportedChannels.push({
-        id: channel.id,
-        name: channel.name,
-        reason
-      }));
-      return;
-    }
-
-    const modelChannels = new Map();
-    const unrestrictedChannelIds = [];
-    groupChannels.forEach((channel) => {
-      const modelIds = getDeclaredModelIds(channel);
-      if (modelIds.length === 0) {
-        unrestrictedChannelIds.push(channel.id);
-        return;
-      }
-      modelIds.forEach((modelId) => {
-        const key = normalizeOmpModelId(modelId).toLowerCase();
-        if (!key) return;
-        if (!modelChannels.has(key)) modelChannels.set(key, { id: modelId, channelIds: [] });
-        modelChannels.get(key).channelIds.push(channel.id);
-      });
-    });
-
-    groups.push({
-      routingGroup: getRoutingGroup(groupChannels[0]),
-      providerKey: getProviderKey(groupChannels[0]),
-      providerApi: getProviderApi(groupChannels[0]),
-      channelIds: groupChannels.map(channel => channel.id),
-      channels: groupChannels.map(channel => ({ id: channel.id, name: channel.name || channel.id })),
-      unrestrictedChannelIds,
-      models: [...modelChannels.values()]
-    });
-  });
-  return { groups, unsupportedChannels };
-}
-
 function buildManagedBaseUrl(host, port, routeToken) {
   return `http://${host}:${port}/omp/${routeToken}`;
 }
@@ -381,7 +328,6 @@ function resolveOmpGatewayRoute(pathname, channels, gateway) {
 }
 
 module.exports = {
-  buildOmpRoutingSummary,
   channelSupportsOmpModel,
   normalizeOmpModelId,
   prepareManagedOmpChannels,

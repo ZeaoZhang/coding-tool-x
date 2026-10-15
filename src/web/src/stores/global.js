@@ -2,7 +2,8 @@ import { defineStore } from 'pinia'
 import { ref, reactive, computed, toRef } from 'vue'
 import axios from 'axios'
 import { requestKey, requestSingleflight } from '../api/request-singleflight'
-import { getPlatformApiPrefix, isLegacyPlatformKey, createPlatformApiError } from '../api/client'
+import { createPlatformApiError } from '../api/client'
+import { getPlatformRouteUrl } from '../api/platforms'
 import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
 const ADVANCED_CONFIG_FLAG = '__ccAdvancedConfigBound__'
 let ws = null
@@ -162,12 +163,6 @@ export const useGlobalStore = defineStore('global', () => {
   function getSchedulerState(platform) {
     const key = ensurePlatformState(platform)
     return key ? schedulerStateByPlatform[key] : null
-  }
-
-  function setSchedulerState(platform, scheduler) {
-    const key = ensurePlatformState(platform)
-    if (!key || !scheduler || typeof scheduler !== 'object') return
-    schedulerStateByPlatform[key] = scheduler
   }
 
   function getSourceLogs(platform) {
@@ -502,14 +497,14 @@ export const useGlobalStore = defineStore('global', () => {
     const keys = resolveEnabledKeys().filter(key => hasPlatformCapability(key, 'proxy'))
     try {
       const responses = await Promise.all(keys.map((key) => {
-        const prefix = getPlatformApiPrefix(key)
-        return globalRequest(
-          'proxy-status',
-          key,
-          `/api${prefix}/proxy/status`,
-          {},
-          { data: {} }
-        )
+        return getPlatformRouteUrl(key, 'proxy', 'status')
+          .then(endpoint => globalRequest(
+            'proxy-status',
+            key,
+            `/api${endpoint}`,
+            {},
+            { data: {} }
+          ))
       }))
       responses.forEach((response, index) => {
         const payload = response?.data || {}
@@ -548,23 +543,23 @@ export const useGlobalStore = defineStore('global', () => {
   async function _loadChannels(keys) {
     try {
       const responses = await Promise.all(keys.map(async (key) => {
-        const prefix = getPlatformApiPrefix(key)
+        const channelEndpoint = await getPlatformRouteUrl(key, 'channels', 'list')
         const channelResponse = globalRequest(
           'channels',
           key,
-          `/api${prefix}/channels`,
+          `/api${channelEndpoint}`,
           {},
           { data: { channels: [] } }
         )
-        const poolResponse = isLegacyPlatformKey(key)
-          ? globalRequest(
+        const poolResponse = getPlatformRouteUrl(key, 'channels', 'poolStatus')
+          .then(endpoint => globalRequest(
             'channel-pool',
             key,
-            `/api${prefix}/channels/pool/status?source=${encodeURIComponent(key)}`,
+            `/api${endpoint}`,
             {},
             { data: null }
-          )
-          : Promise.resolve({ data: null })
+          ))
+          .catch(() => ({ data: null }))
         return {
           key,
           channelResponse: await channelResponse,
@@ -600,7 +595,8 @@ export const useGlobalStore = defineStore('global', () => {
     }
     const proxyRef = getProxyState(key)
     if (!proxyRef) throw createPlatformApiError(key, 'not_found')
-    const response = await axios.post(`/api${getPlatformApiPrefix(key)}/proxy/start`)
+    const endpoint = await getPlatformRouteUrl(key, 'proxy', 'start')
+    const response = await axios.post(`/api${endpoint}`)
     if (response.data.success) {
       proxyRef.value.running = true
       proxyRef.value.activeChannel = response.data.activeChannel
@@ -616,7 +612,8 @@ export const useGlobalStore = defineStore('global', () => {
     }
     const proxyRef = getProxyState(key)
     if (!proxyRef) throw createPlatformApiError(key, 'not_found')
-    const response = await axios.post(`/api${getPlatformApiPrefix(key)}/proxy/stop`)
+    const endpoint = await getPlatformRouteUrl(key, 'proxy', 'stop')
+    const response = await axios.post(`/api${endpoint}`)
     proxyRef.value.running = false
     proxyRef.value.activeChannel = null
     proxyRef.value.startTime = null
@@ -705,7 +702,6 @@ export const useGlobalStore = defineStore('global', () => {
     getProxyState,
     getChannels,
     getSchedulerState,
-    setSchedulerState,
     handleProxyStateUpdate,
     hydrateFromDashboard,
     startProxy,

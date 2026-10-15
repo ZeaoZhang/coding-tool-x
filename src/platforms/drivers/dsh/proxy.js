@@ -12,10 +12,6 @@ function createDriver(context = {}) {
       status: 'getDshProxyStatus',
       start: 'startDshProxyServer',
       stop: 'stopDshProxyServer'
-    },
-    cliMetadata: {
-      managedProviderConfig: true,
-      defaultPort: 20093
     }
   });
 }

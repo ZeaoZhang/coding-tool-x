@@ -48,7 +48,6 @@ import {
 } from '../../api/channels'
 import {
   getOmpChannels,
-  getPlatformChannelPoolStatus,
   createOmpChannel,
   updateOmpChannel,
   deleteOmpChannel,
@@ -472,7 +471,6 @@ const channelPanelFactories = {
   dsh: () => ({
     type: 'dsh',
     displayName: 'DSH',
-    schedulerSource: 'dsh',
     storageKeys: {
       localCollapse: 'dshChannelCollapse',
       collapseConfigKey: 'dsh',
@@ -667,7 +665,6 @@ const channelPanelFactories = {
   claude: () => ({
     type: 'claude',
     displayName: 'Claude',
-    schedulerSource: 'claude',
     storageKeys: {
       localCollapse: 'claudeChannelCollapse',
       collapseConfigKey: 'claude',
@@ -1026,7 +1023,6 @@ const channelPanelFactories = {
   codex: () => ({
     type: 'codex',
     displayName: 'Codex',
-    schedulerSource: 'codex',
     storageKeys: {
       localCollapse: 'codexChannelCollapse',
       collapseConfigKey: 'codex',
@@ -1297,7 +1293,6 @@ const channelPanelFactories = {
   gemini: () => ({
     type: 'gemini',
     displayName: 'Gemini',
-    schedulerSource: 'gemini',
     storageKeys: {
       localCollapse: 'geminiChannelCollapse',
       collapseConfigKey: 'gemini',
@@ -1562,7 +1557,6 @@ const channelPanelFactories = {
   opencode: () => ({
     type: 'opencode',
     displayName: 'OpenCode',
-    schedulerSource: 'opencode',
     storageKeys: {
       localCollapse: 'opencodeChannelCollapse',
       collapseConfigKey: 'opencode',
@@ -1895,8 +1889,6 @@ const channelPanelFactories = {
   omp: () => ({
     type: 'omp',
     displayName: 'OMP',
-    schedulerSource: 'omp',
-    showRoutingSummary: true,
     storageKeys: {
       localCollapse: 'ompChannelCollapse',
       collapseConfigKey: 'omp',
@@ -2264,7 +2256,6 @@ const channelPanelFactories = {
           authProviderMeta: Array.isArray(data) ? null : (data.authProviderMeta || null)
         }
       },
-      fetchRoutingSummary: () => getPlatformChannelPoolStatus('omp'),
       syncCurrent: syncCurrentOmpChannel,
       create: async (form) => {
         const authPayload = buildOmpAuthPayload(form)

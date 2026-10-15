@@ -222,7 +222,7 @@ function createDriver(context = {}) {
 
   // Keep the aggregate DSH API driver compatible with the manifest consistency
   // contract. Actual descriptor requests are still dispatched by capability.
-  for (const operation of ['list', 'current', 'enabled', 'create', 'update', 'remove', 'applyToSettings', 'sync', 'order', 'models', 'probeModels', 'speedTest']) {
+  for (const operation of ['list', 'current', 'enabled', 'poolStatus', 'create', 'update', 'remove', 'applyToSettings', 'sync', 'order', 'models', 'probeModels', 'speedTest']) {
     driver[operation] = (...args) => channels[operation](...args);
   }
   for (const operation of ['status', 'start', 'stop']) {

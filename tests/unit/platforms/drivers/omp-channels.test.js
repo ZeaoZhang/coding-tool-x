@@ -35,55 +35,40 @@ describe('OMP channels Driver', () => {
     expect(getCatalogMetadata).toHaveBeenCalledWith({ providerKey: 'deepseek' });
   });
 
-  test('returns a credential-free model routing summary beside the scheduler snapshot', () => {
-    const channels = [
-      {
-        id: 'fast',
-        name: 'Fast',
-        providerKey: 'openai-main',
-        providerApi: 'openai-responses',
-        routingGroup: 'main',
-        baseUrl: 'https://fast.example/v1',
-        apiKey: 'upstream-secret',
-        enabled: true,
-        models: [{ id: 'gpt-5' }]
-      },
-      {
-        id: 'backup',
-        name: 'Backup',
-        providerKey: 'openai-main',
-        providerApi: 'openai-responses',
-        routingGroup: 'main',
-        baseUrl: 'https://backup.example/v1',
-        apiKey: 'another-secret',
-        enabled: true,
-        allowedModels: ['gpt-5']
-      }
-    ];
-    const driver = createDriver({
-      schedulerStateProvider: () => ({ channels: [{ id: 'fast', inflight: 2, maxConcurrency: 4 }], pending: 0 }),
-      requireImpl: () => ({
-        getChannels: () => channels,
-        loadManagedOmpModeState: () => null
-      })
+  test('adapts generic create payloads and derives the provider API in the platform Driver', () => {
+    const createChannel = vi.fn(input => input);
+    const driver = createDriver({ requireImpl: () => ({ createChannel }) });
+
+    const result = driver.create({
+      name: 'Claude upstream',
+      baseUrl: 'https://example.test',
+      apiKey: 'secret',
+      gatewaySourceType: 'claude'
     });
 
-    const result = driver.poolStatus();
-    expect(result).toMatchObject({
-      status: 'ok',
-      operation: 'poolStatus',
-      data: {
-        scheduler: { channels: [{ id: 'fast', inflight: 2, maxConcurrency: 4 }] },
-        routingSummary: {
-          groups: [{
-            routingGroup: 'main',
-            models: [{ id: 'gpt-5', channelIds: ['fast', 'backup'] }]
-          }]
-        }
-      }
-    });
-    expect(JSON.stringify(result)).not.toContain('upstream-secret');
-    expect(JSON.stringify(result)).not.toContain('another-secret');
+    expect(result.status).toBe('ok');
+    expect(createChannel).toHaveBeenCalledWith(
+      'Claude upstream',
+      'https://example.test',
+      'secret',
+      expect.objectContaining({
+        gatewaySourceType: 'claude',
+        providerApi: 'anthropic-messages',
+        wireApi: 'openai',
+        enabled: true,
+        models: []
+      })
+    );
+  });
+
+  test('accepts the generic API reset payload in its Driver', () => {
+    const health = require('../../../../src/server/services/channel-health');
+    const resetChannelHealth = vi.spyOn(health, 'resetChannelHealth').mockImplementation(() => {});
+    const driver = createDriver({ requireImpl: () => ({}) });
+
+    expect(driver.resetHealth({ channelId: 'omp-channel' })).toEqual({ channelId: 'omp-channel', reset: true });
+    expect(resetChannelHealth).toHaveBeenCalledWith('omp-channel', 'omp');
+    resetChannelHealth.mockRestore();
   });
 
 });

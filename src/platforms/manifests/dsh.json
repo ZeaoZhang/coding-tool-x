@@ -15,6 +15,11 @@
   "portKey": "dshProxy",
   "defaultPort": 20093,
   "proxyMode": "managed",
+  "channelCli": {
+    "supportsCliCreate": false,
+    "supportsCliToggle": true,
+    "createUnavailableMessage": "提示: DSH 渠道请通过 Web UI 或 API 添加。"
+  },
   "proxyLabels": {
     "serviceLabel": "DSH 动态代理",
     "proxyLabel": "动态切换",
@@ -195,6 +200,14 @@
         "path": "/channels/enabled",
         "capability": "channels",
         "operation": "enabled",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "GET",
+        "path": "/channels/pool/status",
+        "capability": "channels",
+        "operation": "poolStatus",
         "request": "default",
         "response": "default"
       },

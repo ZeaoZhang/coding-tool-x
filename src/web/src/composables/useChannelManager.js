@@ -77,7 +77,6 @@ export default function useChannelManager(config) {
   const state = reactive({
     channels: [],
     channelMeta: null,
-    routingSummary: null,
     balances: {},
     loading: false,
     balanceLoading: false,
@@ -183,21 +182,6 @@ export default function useChannelManager(config) {
     return loadPromise
   }
 
-  async function loadRoutingSummary() {
-    if (typeof config.api.fetchRoutingSummary !== 'function') return
-    try {
-      const result = await config.api.fetchRoutingSummary()
-      state.routingSummary = result?.routingSummary || null
-      if (result?.scheduler && typeof globalStore.setSchedulerState === 'function'
-        && !globalStore.getSchedulerState(config.schedulerSource)) {
-        globalStore.setSchedulerState(config.schedulerSource, result.scheduler)
-      }
-    } catch (error) {
-      state.routingSummary = null
-      console.warn(`${config.displayName} routing summary could not be loaded:`, error)
-    }
-  }
-
   async function _loadChannels({ silent = false, skipBalance = false } = {}) {
     if (!silent) {
       channelMetaRefreshAttempt = 0
@@ -209,7 +193,6 @@ export default function useChannelManager(config) {
       const normalized = normalizeChannelFetchResult(result)
       state.channels = [...normalized.channels]
       state.channelMeta = normalized.meta
-      await loadRoutingSummary()
       await applyChannelOrder()
       // 应用实时健康状态
       updateChannelHealth()

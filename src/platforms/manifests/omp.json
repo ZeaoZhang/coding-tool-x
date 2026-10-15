@@ -9,6 +9,7 @@
   "defaultEnabled": true,
   "sortOrder": 40,
   "modelConfig": { "catalogKey": "codex" },
+  "channelModelType": "openai_compatible",
   "auth": {
     "modes": ["api_key", "oauth", "none"],
     "oauth": { "adapter": "omp", "policy": "mixed" }
@@ -21,6 +22,11 @@
   "portKey": "ompProxy",
   "defaultPort": 20092,
   "proxyMode": "managed",
+  "channelCli": {
+    "supportsCliCreate": false,
+    "supportsCliToggle": true,
+    "createUnavailableMessage": "提示: OMP 渠道请通过 Web UI 或 API 添加后，再在这里启停调度。"
+  },
   "proxyLabels": {
     "serviceLabel": "OMP 动态切换",
     "proxyLabel": "动态切换",
@@ -255,25 +261,9 @@
       },
       {
         "method": "GET",
-        "path": "/channels/current",
-        "capability": "channels",
-        "operation": "current",
-        "request": "default",
-        "response": "default"
-      },
-      {
-        "method": "GET",
         "path": "/channels/pool/status",
         "capability": "channels",
         "operation": "poolStatus",
-        "request": "default",
-        "response": "default"
-      },
-      {
-        "method": "GET",
-        "path": "/channels/best-for-restore",
-        "capability": "channels",
-        "operation": "bestForRestore",
         "request": "default",
         "response": "default"
       },

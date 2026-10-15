@@ -17,12 +17,37 @@ const PUBLIC_FIELDS = Object.freeze([
   'defaultPort',
   'portLabel',
   'apiPrefix',
+  'apiRoutes',
   'modelCatalogKey',
   'logLayout',
   'promptLabel',
   'resourceTypes',
   'resourceActions'
 ]);
+
+const DEFAULT_API_ROUTES = Object.freeze([
+  { method: 'GET', path: '/projects', capability: 'projects', operation: 'listProjects' },
+  { method: 'GET', path: '/sessions/:projectName', capability: 'sessions', operation: 'listSessions' },
+  { method: 'GET', path: '/channels', capability: 'channels', operation: 'list' },
+  { method: 'POST', path: '/channels', capability: 'channels', operation: 'create' },
+  { method: 'PUT', path: '/channels/:channelId', capability: 'channels', operation: 'update' },
+  { method: 'DELETE', path: '/channels/:channelId', capability: 'channels', operation: 'remove' },
+  { method: 'GET', path: '/proxy/status', capability: 'proxy', operation: 'status' }
+]);
+
+function publicApiRoutes(api) {
+  const routes = Array.isArray(api?.routes) ? api.routes : DEFAULT_API_ROUTES;
+  return routes
+    .filter(route => route && typeof route === 'object' && !Array.isArray(route))
+    .filter(route => typeof route.path === 'string' && route.path.startsWith('/')
+      && typeof route.capability === 'string' && typeof route.operation === 'string')
+    .map(route => ({
+      method: String(route.method || 'GET').toUpperCase(),
+      path: route.path,
+      capability: route.capability,
+      operation: route.operation
+    }));
+}
 
 function publicCapabilities(capabilities) {
   if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities)) {
@@ -67,6 +92,10 @@ function toPublicDefinition(definition) {
     if (field === 'resourceActions') {
       const resourceActions = publicResourceActions(definition.resourceActions);
       if (resourceActions) result.resourceActions = resourceActions;
+      continue;
+    }
+    if (field === 'apiRoutes') {
+      result.apiRoutes = publicApiRoutes(definition.api);
       continue;
     }
     if (field === 'apiPrefix') {

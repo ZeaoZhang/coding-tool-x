@@ -28,16 +28,9 @@ const MODEL_TYPE_ALIASES = Object.freeze({
   google: 'gemini'
 });
 
-function resolveModelListType(platform, channel = {}, configuredType = '') {
+function resolveModelListType(channel = {}, configuredType = '') {
   const explicitType = String(configuredType || channel?.gatewaySourceType || '').trim().toLowerCase();
-  if (MODEL_TYPE_ALIASES[explicitType]) return MODEL_TYPE_ALIASES[explicitType];
-
-  switch (platform) {
-    case 'claude': return 'claude';
-    case 'gemini': return 'gemini';
-    case 'codex': return 'openai_compatible';
-    default: return 'openai_compatible';
-  }
+  return MODEL_TYPE_ALIASES[explicitType] || 'openai_compatible';
 }
 
 function isSecretKey(key) {
@@ -131,7 +124,12 @@ function createChannelDriver({
     }
   };
   const driver = { platform, capability };
-  driver.getCliMetadata = () => ({ ...cliMetadata });
+  driver.getCliMetadata = () => ({
+    supportsCliCreate: false,
+    supportsCliToggle: false,
+    ...(context.manifest?.channelCli || {}),
+    ...cliMetadata
+  });
   driver.formatCliChannelDetails = typeof formatCliChannelDetails === 'function'
     ? channel => formatCliChannelDetails(channel)
     : () => [];
@@ -159,7 +157,7 @@ function createChannelDriver({
   driver.listModels = async (channel, options = {}) => {
     try {
       const { fetchModelsFromProvider } = require('../server/services/model-detector');
-      const channelType = resolveModelListType(platform, channel, modelListType);
+      const channelType = resolveModelListType(channel, modelListType);
       const data = await fetchModelsFromProvider(channel, channelType, options);
       return ok(platform, capability, 'listModels', data);
     } catch (error) {
@@ -173,7 +171,7 @@ function createChannelDriver({
       const channel = await findChannelById(channelId);
       if (!channel) return invalid(platform, capability, operation, new Error(`Channel not found: ${channelId}`));
       const { fetchModelsFromProvider } = require('../server/services/model-detector');
-      const channelType = resolveModelListType(platform, channel, modelListType);
+      const channelType = resolveModelListType(channel, modelListType);
       const data = await fetchModelsFromProvider(channel, channelType, options);
       return ok(platform, capability, operation, data);
     } catch (error) {
@@ -185,7 +183,7 @@ function createChannelDriver({
     const channel = input && typeof input === 'object' ? input : {};
     try {
       const { probeModelAvailability, getModelPriority } = require('../server/services/model-detector');
-      const channelType = resolveModelListType(platform, channel, modelListType);
+      const channelType = resolveModelListType(channel, modelListType);
       const probe = await probeModelAvailability(channel, channelType, {
         forceRefresh: channel.forceRefresh === true || channel.force === true,
         preferredModels: Array.isArray(channel.preferredModels) ? channel.preferredModels : [],
@@ -212,7 +210,7 @@ function createChannelDriver({
       const channel = await findChannelById(channelId);
       if (!channel) return invalid(platform, capability, operation, new Error(`Channel not found: ${channelId}`));
       const { testChannelSpeed } = require('../server/services/speed-test');
-      const channelType = resolveModelListType(platform, channel, modelListType);
+      const channelType = resolveModelListType(channel, modelListType);
       const data = await testChannelSpeed(channel, body?.timeout, channelType, { authSourceType: platform });
       return ok(platform, capability, operation, data);
     } catch (error) {

@@ -30,6 +30,16 @@ describe('platform catalog and generic routes', () => {
           iconToken: 'terminal',
           color: '#000',
           promptLabel: 'Demo prompt',
+          api: {
+            routes: [{
+              method: 'POST',
+              path: '/channels/sync-now',
+              capability: 'channels',
+              operation: 'sync',
+              request: 'private-codec',
+              response: 'private-codec'
+            }]
+          },
           resourceTypes: {
             skills: true,
             commands: false,
@@ -49,11 +59,39 @@ describe('platform catalog and generic routes', () => {
       key: 'demo-cli',
       label: 'Demo',
       promptLabel: 'Demo prompt',
+      apiRoutes: [{
+        method: 'POST',
+        path: '/channels/sync-now',
+        capability: 'channels',
+        operation: 'sync'
+      }],
       resourceTypes: { skills: true, commands: false },
       capabilities: { sessions: true }
     }));
     expect(response.body.platforms[0]).not.toHaveProperty('paths');
     expect(response.body.platforms[0]).not.toHaveProperty('driverIds');
+    expect(response.body.platforms[0].apiRoutes[0]).not.toHaveProperty('request');
+    expect(response.body.platforms[0].apiRoutes[0]).not.toHaveProperty('response');
+  });
+
+  it('publishes generic channel routes when a manifest uses the default route set', async () => {
+    const publicDefinition = createPlatformRouter._test.toPublicDefinition({
+      key: 'demo-cli',
+      capabilities: { channels: 'generic-openai-compatible' }
+    });
+
+    expect(publicDefinition.apiRoutes).toContainEqual({
+      method: 'GET',
+      path: '/channels',
+      capability: 'channels',
+      operation: 'list'
+    });
+    expect(publicDefinition.apiRoutes).toContainEqual({
+      method: 'PUT',
+      path: '/channels/:channelId',
+      capability: 'channels',
+      operation: 'update'
+    });
   });
 
   it('returns an explicit 404 for an unsupported capability', async () => {

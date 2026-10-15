@@ -39,11 +39,14 @@ function getChannelServices(cliType, runtime = getPlatformRuntime()) {
 
   return {
     ...metadata,
-    getAllChannels: () => {
-      const value = unwrapChannels('list');
+    getAllChannels: async () => {
+      const value = await unwrapChannels('list');
       return Array.isArray(value) ? value : (value?.channels || []);
     },
-    createChannel: input => unwrapChannels('create', input),
+    createChannel: input => {
+      const create = channelsDriver?.createFromCli || channelsDriver?.create;
+      return typeof create === 'function' ? unwrapDriverResult(create(input)) : null;
+    },
     updateChannel: (id, patch) => unwrapChannels('update', id, patch),
     activateChannel: id => unwrapChannels('applyNativeConfig', id),
     getBestChannelForRestore: () => unwrapChannels('getBestChannelForRestore'),
@@ -78,6 +81,7 @@ async function handleChannelManagement() {
     return;
   }
 
+  const channels = await services.getAllChannels();
   if (channels.length === 0) {
     console.log(chalk.yellow('还没有添加任何渠道'));
     if (services.createUnavailableMessage) {
@@ -102,14 +106,21 @@ async function handleChannelManagement() {
     return;
   }
 
-  const supportsMultiToggle = typeof services.updateChannel === 'function';
+  const supportsMultiToggle = services.supportsCliToggle === true
+    && typeof services.updateChannel === 'function';
 
   if (supportsMultiToggle) {
     await handleChannelToggle(channels, services, cliType);
     return;
   }
 
-  await handleLegacySwitch(channels, services);
+  if (typeof services.activateChannel === 'function') {
+    await handleLegacySwitch(channels, services);
+    return;
+  }
+
+  console.log(chalk.yellow('当前平台未声明 CLI 渠道切换能力。'));
+  await inquirer.prompt([{ type: 'input', name: 'continue', message: '按回车返回...' }]);
 }
 
 /**
@@ -125,7 +136,7 @@ async function handleAddChannel() {
   const cliType = normalizePlatformKey(config.currentCliType || 'claude');
   const services = getChannelServices(cliType);
 
-  if (!services || services.supportsCliCreate === false || typeof services.createChannel !== 'function') {
+  if (!services || services.supportsCliCreate !== true || typeof services.createChannel !== 'function') {
     console.log(chalk.red(
       `${services?.createUnavailableMessage || `当前 CLI 类型 (${cliType}) 暂不支持添加渠道`}\n`
     ));
@@ -133,75 +144,31 @@ async function handleAddChannel() {
     return;
   }
 
-  const answers = await inquirer.prompt([
-    {
-      type: 'input',
-      name: 'name',
-      message: '渠道名称:',
-      validate: (input) => {
-        if (!input.trim()) {
-          return '渠道名称不能为空';
-        }
-        return true;
-      },
-    },
-    {
-      type: 'input',
-      name: 'baseUrl',
-      message: 'Base URL:',
-      validate: (input) => {
-        if (!input.trim()) {
-          return 'Base URL 不能为空';
-        }
-        // 简单的 URL 验证
-        if (!input.startsWith('http://') && !input.startsWith('https://')) {
-          return 'Base URL 必须以 http:// 或 https:// 开头';
-        }
-        return true;
-      },
-    },
-    {
-      type: 'input',
-      name: 'apiKey',
-      message: 'API Key:',
-      validate: (input) => {
-        if (!input.trim()) {
-          return 'API Key 不能为空';
-        }
-        return true;
-      },
-    },
-    {
-      type: 'input',
-      name: 'websiteUrl',
-      message: '网站地址（可选，直接回车跳过）:',
-    },
-  ]);
+  const configuredQuestions = Array.isArray(services.createQuestions)
+    ? services.createQuestions
+    : [];
+  if (!configuredQuestions.length) {
+    console.log(chalk.red('当前平台未配置 CLI 渠道创建表单。'));
+    await inquirer.prompt([{ type: 'input', name: 'continue', message: '按回车返回...' }]);
+    return;
+  }
 
-  const extraQuestions = services.createQuestions || [];
-  const extraAnswers = extraQuestions.length > 0
-    ? await inquirer.prompt(extraQuestions)
-    : {};
-
-  const websiteUrl = answers.websiteUrl.trim() || undefined;
-  const createInput = {
-    ...services.createDefaults,
-    ...answers,
-    ...extraAnswers,
-    name: answers.name.trim(),
-    baseUrl: answers.baseUrl.trim(),
-    apiKey: answers.apiKey.trim(),
-    websiteUrl,
-    providerKey: answers.name.trim().toLowerCase().replace(/\s+/g, '-'),
-    extra: {
-      ...services.createDefaults,
-      ...extraAnswers,
-      websiteUrl
+  const answers = await inquirer.prompt(buildChannelCreateQuestions(configuredQuestions));
+  const createInput = { ...(services.createDefaults || {}) };
+  for (const question of configuredQuestions) {
+    const value = answers[question.name];
+    if (typeof value === 'string') {
+      const normalized = value.trim();
+      if (normalized || Object.prototype.hasOwnProperty.call(services.createDefaults || {}, question.name)) {
+        createInput[question.name] = normalized;
+      }
+    } else if (value !== undefined) {
+      createInput[question.name] = value;
     }
-  };
+  }
 
   try {
-    const channel = services.createChannel(createInput);
+    const channel = await services.createChannel(createInput);
 
     console.log(chalk.green(`\n[OK] 渠道添加成功: ${channel.name}\n`));
     console.log(chalk.gray('提示: 使用"渠道管理"功能来启用此渠道\n'));
@@ -233,32 +200,38 @@ async function handleChannelStatus() {
   console.log(chalk.bold.cyan('║          调度状态查看          ║'));
   console.log(chalk.bold.cyan('╚=======================================╝\n'));
 
-  try {
-    const { getSchedulerState } = require('../server/services/channel-scheduler');
-    const sources = buildSchedulerSources();
+  const runtime = getPlatformRuntime();
+  for (const source of buildSchedulerSources()) {
+    console.log(chalk.bold(`\n[${source.label}]`));
+    const driver = runtime?.getDriver?.(source.key, 'channels');
+    if (typeof driver?.poolStatus !== 'function') {
+      console.log(chalk.yellow('该平台未提供调度状态。'));
+      continue;
+    }
 
-    sources.forEach((source) => {
-      const state = getSchedulerState(source.key);
-      console.log(chalk.bold(`\n[${source.label}]`));
+    try {
+      const result = await unwrapDriverResult(driver.poolStatus());
+      const state = result?.scheduler || result || {};
       console.log(chalk.gray(`排队中: ${state.pending || 0}`));
 
       if (!state.channels || state.channels.length === 0) {
         console.log(chalk.yellow('暂无调度数据或未启用渠道。'));
-      } else {
-        state.channels.forEach((channel, index) => {
-          const concurrency = channel.maxConcurrency ?? '∞';
-          const healthText = channel.health?.statusText || '健康';
-          const healthColor = channel.health?.statusColor || '#18a058';
-          console.log(
-            `${chalk.cyan(String(index + 1).padStart(2, '0'))}. ${chalk.bold(channel.name)} ` +
-            chalk.gray(`并发 ${channel.inflight}/${concurrency} | 权重 ${channel.weight || 1}`)
-          );
-          console.log(`    健康状态: ${chalk.hex(healthColor)(healthText)}`);
-        });
+        continue;
       }
-    });
-  } catch (error) {
-    console.log(chalk.red('无法读取调度状态: ' + error.message));
+
+      state.channels.forEach((channel, index) => {
+        const concurrency = channel.maxConcurrency ?? '∞';
+        const healthText = channel.health?.statusText || '健康';
+        const healthColor = channel.health?.statusColor || '#18a058';
+        console.log(
+          `${chalk.cyan(String(index + 1).padStart(2, '0'))}. ${chalk.bold(channel.name)} ` +
+          chalk.gray(`并发 ${channel.inflight}/${concurrency} | 权重 ${channel.weight || 1}`)
+        );
+        console.log(`    健康状态: ${chalk.hex(healthColor)(healthText)}`);
+      });
+    } catch (error) {
+      console.log(chalk.red('无法读取调度状态: ' + error.message));
+    }
   }
 
   await inquirer.prompt([{ type: 'input', name: 'continue', message: '按回车返回...' }]);
@@ -270,9 +243,29 @@ module.exports = {
   handleChannelStatus,
   _test: {
     buildSchedulerSources,
-    getChannelServices
+    getChannelServices,
+    buildChannelCreateQuestions
   }
 };
+
+function buildChannelCreateQuestions(configuredQuestions = []) {
+  return configuredQuestions.map(({ validation, validationMessage, ...question }) => {
+    if (!validation) return question;
+    return {
+      ...question,
+      validate: value => {
+        const normalized = String(value ?? '').trim();
+        if (validation === 'required' && !normalized) {
+          return validationMessage || '此项不能为空';
+        }
+        if (validation === 'http_url' && !/^https?:\/\//i.test(normalized)) {
+          return validationMessage || '请输入以 http:// 或 https:// 开头的地址';
+        }
+        return true;
+      }
+    };
+  });
+}
 
 /**
  * 统一的多渠道选择处理
@@ -337,10 +330,10 @@ async function handleChannelToggle(channels, services, cliType) {
   }
 
   if (hasChanged) {
-    broadcastSchedulerSnapshot(normalizedCliType);
+    broadcastSchedulerSnapshot(cliType);
   }
 
-  await handleAdvancedConfig(services, normalizedCliType);
+  await handleAdvancedConfig(services, cliType);
 
   console.log(
     chalk.cyan(
@@ -368,7 +361,7 @@ async function handleAdvancedConfig(services, cliType) {
   if (!adjust) return;
 
   while (true) {
-    const latestChannels = services.getAllChannels();
+    const latestChannels = await services.getAllChannels();
     if (!latestChannels.length) {
       console.log(chalk.red('暂无渠道可供调整'));
       return;

@@ -9,6 +9,7 @@
   "defaultEnabled": true,
   "sortOrder": 20,
   "modelConfig": { "catalogKey": "codex" },
+  "channelModelType": "openai_compatible",
   "auth": {
     "modes": ["api_key", "oauth", "none"],
     "oauth": { "adapter": "codex", "policy": "single-enabled", "quota": "codex" }
@@ -20,6 +21,16 @@
   "apiBasePath": "/api/codex/proxy",
   "portKey": "codexProxy",
   "defaultPort": 20089,
+  "channelCli": {
+    "supportsCliCreate": true,
+    "supportsCliToggle": true,
+    "createDefaults": { "wireApi": "responses" },
+    "createQuestions": [
+      { "type": "input", "name": "name", "message": "渠道名称:", "validation": "required", "validationMessage": "渠道名称不能为空" },
+      { "type": "input", "name": "baseUrl", "message": "Base URL:", "validation": "http_url", "validationMessage": "Base URL 必须以 http:// 或 https:// 开头" },
+      { "type": "input", "name": "apiKey", "message": "API Key:", "validation": "required", "validationMessage": "API Key 不能为空" }
+    ]
+  },
   "pathResolverId": "codex",
   "resourceTypes": {
     "skills": true,
@@ -238,25 +249,9 @@
       },
       {
         "method": "GET",
-        "path": "/channels/current",
-        "capability": "channels",
-        "operation": "current",
-        "request": "default",
-        "response": "default"
-      },
-      {
-        "method": "GET",
         "path": "/channels/pool/status",
         "capability": "channels",
         "operation": "poolStatus",
-        "request": "default",
-        "response": "default"
-      },
-      {
-        "method": "GET",
-        "path": "/channels/best-for-restore",
-        "capability": "channels",
-        "operation": "bestForRestore",
         "request": "default",
         "response": "default"
       },

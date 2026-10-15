@@ -1,6 +1,7 @@
 'use strict';
 
 const implementation = require('./channels-implementation');
+const { getSchedulerState } = require('../../../server/services/channel-scheduler');
 
 function resultFor(request, status, data, error) {
   const route = request?.route || {};
@@ -69,17 +70,12 @@ function createDriver(context = {}) {
   const driver = {
     platform: 'dsh',
     capability: 'channels',
-    getCliMetadata: () => ({
-      supportsCliCreate: false,
-      supportsCliToggle: true,
-      managedProviderConfig: true,
-      defaultPort: 20093,
-      createUnavailableMessage: '提示: DSH 渠道请通过 Web UI 或 API 添加。'
-    }),
+    getCliMetadata: () => ({ ...(context.manifest?.channelCli || {}) }),
     list: request => withResult(request, 'list', () => implementation.getChannels()),
     getChannels: () => implementation.getChannels().channels,
     getEnabled: request => withResult(request, 'enabled', () => ({ channels: implementation.getEnabledChannels() })),
     getEnabledChannels: () => implementation.getEnabledChannels(),
+    poolStatus: request => withResult(request, 'poolStatus', () => ({ scheduler: getSchedulerState('dsh') })),
     current: request => withResult(request, 'current', () => implementation.getCurrentChannel()),
     create: request => withResult(request, 'create', () => {
       const channel = implementation.createChannel(bodyOf(request));

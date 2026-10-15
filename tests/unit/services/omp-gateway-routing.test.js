@@ -1,5 +1,4 @@
 const {
-  buildOmpRoutingSummary,
   prepareManagedOmpChannels
 } = require('../../../src/platforms/drivers/omp/gateway-routing');
 
@@ -93,61 +92,6 @@ describe('OMP gateway routing', () => {
 
     expect(first).toEqual(second);
     expect(new Set(first).size).toBe(2);
-  });
-
-  it('summarizes model-to-channel routing and leaves channel concurrency shared', () => {
-    const summary = buildOmpRoutingSummary([
-      {
-        id: 'channel-fast',
-        name: 'Fast',
-        providerKey: 'openai',
-        providerApi: 'openai-responses',
-        routingGroup: 'shared',
-        baseUrl: 'https://fast.example/v1',
-        enabled: true,
-        models: [{ id: 'gpt-5' }, { id: 'gpt-5-mini' }]
-      },
-      {
-        id: 'channel-backup',
-        name: 'Backup',
-        providerKey: 'openai',
-        providerApi: 'openai-responses',
-        routingGroup: 'shared',
-        baseUrl: 'https://backup.example/v1',
-        enabled: true,
-        allowedModels: ['gpt-5']
-      },
-      {
-        id: 'channel-unrestricted',
-        name: 'Unrestricted',
-        providerKey: 'openai',
-        providerApi: 'openai-responses',
-        routingGroup: 'shared',
-        baseUrl: 'https://any.example/v1',
-        enabled: true
-      },
-      {
-        id: 'disabled',
-        name: 'Disabled',
-        providerKey: 'openai',
-        providerApi: 'openai-responses',
-        routingGroup: 'shared',
-        baseUrl: 'https://disabled.example/v1',
-        enabled: false
-      }
-    ]);
-
-    expect(summary.groups).toHaveLength(1);
-    expect(summary.groups[0]).toMatchObject({
-      routingGroup: 'shared',
-      channelIds: ['channel-fast', 'channel-backup', 'channel-unrestricted'],
-      unrestrictedChannelIds: ['channel-unrestricted']
-    });
-    expect(summary.groups[0].models).toEqual([
-      { id: 'gpt-5', channelIds: ['channel-fast', 'channel-backup'] },
-      { id: 'gpt-5-mini', channelIds: ['channel-fast'] }
-    ]);
-    expect(JSON.stringify(summary)).not.toContain('https://');
   });
 
   it('never copies credential query parameters from an upstream base URL', () => {

@@ -55,6 +55,37 @@ const API_ROUTE_DESCRIPTOR_SCHEMA = {
 
 const API_ROUTE_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 
+const CLI_CHANNEL_QUESTION_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['type', 'name', 'message'],
+  properties: {
+    type: { enum: ['input', 'password', 'number', 'confirm', 'list'] },
+    name: { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9_]*$' },
+    message: { type: 'string', minLength: 1 },
+    default: { type: ['string', 'number', 'boolean', 'null'] },
+    validation: { enum: ['required', 'http_url'] },
+    validationMessage: { type: 'string', minLength: 1 },
+    choices: {
+      type: 'array',
+      items: {
+        anyOf: [
+          { type: 'string' },
+          {
+            type: 'object',
+            additionalProperties: false,
+            required: ['name', 'value'],
+            properties: {
+              name: { type: 'string' },
+              value: { type: ['string', 'number', 'boolean', 'null'] }
+            }
+          }
+        ]
+      }
+    }
+  }
+};
+
 const CAPABILITY_OPERATIONS = Object.freeze({
   api: new Set([
     'getConfig',
@@ -124,6 +155,17 @@ const schema = {
     defaultPort: { type: 'integer', minimum: 1 },
     proxyMode: { enum: ['standard', 'managed'] },
     proxyLabels: { type: 'object', additionalProperties: { type: 'string' } },
+    channelCli: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        supportsCliCreate: { type: 'boolean' },
+        supportsCliToggle: { type: 'boolean' },
+        createUnavailableMessage: { type: 'string' },
+        createDefaults: { type: 'object', additionalProperties: true },
+        createQuestions: { type: 'array', items: CLI_CHANNEL_QUESTION_SCHEMA, uniqueItems: true }
+      }
+    },
     modelConfig: {
       type: 'object',
       additionalProperties: false,
@@ -131,6 +173,7 @@ const schema = {
         catalogKey: { type: 'string', pattern: '^[a-z0-9][a-z0-9_-]*$' }
       }
     },
+    channelModelType: { enum: ['claude', 'codex', 'gemini', 'openai_compatible'] },
     agentCapabilities: {
       type: 'object',
       additionalProperties: false,
@@ -297,7 +340,16 @@ const schema = {
       }
     },
     capabilities: { type: 'object', additionalProperties: { enum: [...DRIVER_IDS] } }
-  }
+  },
+  allOf: [{
+    if: {
+      properties: { channelCli: { properties: { supportsCliCreate: { const: true } }, required: ['supportsCliCreate'] } },
+      required: ['channelCli']
+    },
+    then: {
+      properties: { channelCli: { required: ['createQuestions'], properties: { createQuestions: { minItems: 1 } } } }
+    }
+  }]
 };
 
 const validate = new Ajv({ allErrors: true, strict: false }).compile(schema);

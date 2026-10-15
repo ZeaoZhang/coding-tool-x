@@ -60,14 +60,27 @@ describe('channels command helpers', () => {
     ]);
   });
 
-  test('routes omp channel services through Runtime Drivers', () => {
+  test('routes omp channel services through Runtime Drivers', async () => {
     const { _test } = require('../../../src/commands/channels');
     const services = _test.getChannelServices('omp');
 
     expect(services.supportsCliCreate).toBe(false);
     expect(services.managedProviderConfig).toBe(true);
-    expect(services.getAllChannels()).toEqual([{ id: 'omp-1', name: 'OMP One' }]);
+    await expect(services.getAllChannels()).resolves.toEqual([{ id: 'omp-1', name: 'OMP One' }]);
     expect(services.getProxyStatus()).toEqual({ running: true });
+  });
+
+  test('builds create prompts and validation from platform configuration', () => {
+    const { _test } = require('../../../src/commands/channels');
+    const [name, baseUrl] = _test.buildChannelCreateQuestions([
+      { type: 'input', name: 'name', message: 'Name:', validation: 'required' },
+      { type: 'input', name: 'baseUrl', message: 'URL:', validation: 'http_url' }
+    ]);
+
+    expect(name.validate('  ')).toBe('此项不能为空');
+    expect(name.validate('Provider')).toBe(true);
+    expect(baseUrl.validate('https://example.test')).toBe(true);
+    expect(baseUrl.validate('example.test')).toContain('http://');
   });
 
   test('keeps platform implementation out of the channel command', () => {

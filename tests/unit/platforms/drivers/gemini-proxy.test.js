@@ -197,6 +197,7 @@ test('excludes OAuth channels and injects the allocated API key into requests', 
   expect(response.statusCode).toBe(200);
   expect(allocationOptions).toEqual({
     source: 'gemini',
+    signal: expect.any(AbortSignal),
     enableSessionBinding: false,
     excludeChannelIds: ['oauth-channel']
   });
@@ -214,6 +215,9 @@ test('excludes OAuth channels and injects the allocated API key into requests', 
     end: vi.fn()
   };
 
+  expect(capturedRequest.rawBody).toBeNull();
+  // Invoke the transport hook with a fresh in-flight body fixture.
+  capturedRequest.rawBody = Buffer.from('{}');
   proxyEvents.proxyReq(proxyReq, capturedRequest);
 
   expect(headers.authorization).toBe('Bearer upstream-key');

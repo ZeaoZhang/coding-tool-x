@@ -3,6 +3,7 @@
 const { createChannelDriver } = require('../../../shared/channel-driver');
 
 function createDriver(context = {}) {
+  const { resetChannelHealth } = require('../../../server/services/channel-health');
   const driver = createChannelDriver({
     ...context,
     platform: 'codex',
@@ -15,11 +16,22 @@ function createDriver(context = {}) {
         return [name, providerKey, baseUrl, apiKey, wireApi, { ...channelExtra, ...extra }];
       })()
       : [input, ...rest],
-    cliMetadata: { supportsCliCreate: true, supportsCliToggle: true, defaultPort: 20089, createDefaults: { wireApi: 'responses' } },
-    modelListType: 'openai_compatible',
+    modelListType: context.manifest?.channelModelType || 'openai_compatible',
     formatCliChannelDetails: channel => channel.providerKey
       ? [`provider ${channel.providerKey}`]
       : []
+  });
+  const saveOrder = driver.saveOrder;
+  driver.saveOrder = input => saveOrder(input?.order || input);
+  driver.resetHealth = input => {
+    const channelId = typeof input === 'string' ? input : input?.channelId || input?.body?.channelId;
+    if (!channelId) throw new Error('Channel id is required');
+    resetChannelHealth(channelId, 'codex');
+    return { channelId, reset: true };
+  };
+  driver.createFromCli = input => driver.create({
+    ...input,
+    providerKey: String(input?.providerKey || input?.name || '').trim().toLowerCase().replace(/\s+/g, '-')
   });
   const auth = require('../../channel-auth-service');
   driver.getAuth = context => auth.getChannelAuth('codex', { channelId: context?.params?.channelId || context?.query?.channelId || '' });

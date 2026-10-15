@@ -2,59 +2,72 @@
 
 const { createChannelDriver } = require('../../../shared/channel-driver');
 const { ok, failed } = require('../../../shared/driver-result');
-const { buildOmpRoutingSummary } = require('./gateway-routing');
+
+function providerApiForChannel(channel = {}, input = {}) {
+  if (channel.providerApi) return channel.providerApi;
+  if (channel.gatewaySourceType === 'claude') return 'anthropic-messages';
+  if (channel.gatewaySourceType === 'gemini') return 'google-generative-ai';
+  if (channel.gatewaySourceType === 'codex') return 'responses';
+  return input.wireApi || 'openai-completions';
+}
+
+function createChannelArgs(input, rest) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return [input, ...rest];
+  const { name, baseUrl, apiKey, extra, ...fields } = input;
+  const inputFields = { ...fields, ...(extra || {}) };
+  const channel = {
+    wireApi: 'openai',
+    providerKey: '',
+    authMode: 'api_key',
+    oauthProviderId: '',
+    transport: '',
+    routingGroup: '',
+    gatewaySourceType: 'openai_compatible',
+    enabled: true,
+    model: null,
+    allowedModels: [],
+    speedTestModel: null,
+    presetId: null,
+    websiteUrl: '',
+    balanceToken: '',
+    balanceUserId: null,
+    models: [],
+    modelMetadataMode: 'auto',
+    modelBindings: [],
+    providerConfig: {},
+    ...inputFields
+  };
+  channel.enabled = channel.enabled !== false;
+  channel.allowedModels = Array.isArray(channel.allowedModels) ? channel.allowedModels : [];
+  channel.models = Array.isArray(channel.models) ? channel.models : [];
+  channel.modelBindings = Array.isArray(channel.modelBindings) ? channel.modelBindings : [];
+  channel.providerApi = providerApiForChannel(channel, inputFields);
+  return [name, baseUrl, apiKey, channel];
+}
 
 function createDriver(context = {}) {
+  const { resetChannelHealth } = require('../../../server/services/channel-health');
   const driver = createChannelDriver({
     ...context,
     platform: 'omp',
     servicePath: './omp/channels-implementation',
     localServicePath: '../platforms/drivers/omp/channels-implementation',
     syncMethod: 'syncCurrentOmpChannel',
-    createArgs: (input, rest) => typeof input === 'object'
-      ? (() => {
-        const { name, baseUrl, apiKey, extra, ...channelExtra } = input;
-        return [name, baseUrl, apiKey, { ...channelExtra, ...extra }];
-      })()
-      : [input, ...rest],
-    cliMetadata: {
-      supportsCliCreate: false,
-      supportsCliToggle: true,
-      managedProviderConfig: true,
-      defaultPort: 20092,
-      createUnavailableMessage: '提示: OMP 渠道请通过 Web UI 或 API 添加后，再在这里启停调度。'
-    },
+    modelListType: context.manifest?.channelModelType || 'openai_compatible',
+    createArgs: createChannelArgs,
     dashboardChannelShape: 'array'
   });
+  const saveOrder = driver.saveOrder;
+  driver.saveOrder = input => saveOrder(input?.order || input);
+  driver.resetHealth = input => {
+    const channelId = typeof input === 'string' ? input : input?.channelId || input?.body?.channelId;
+    if (!channelId) throw new Error('Channel id is required');
+    resetChannelHealth(channelId, 'omp');
+    return { channelId, reset: true };
+  };
   driver.syncManagedProviderExtension = (...args) => (
     driver._service().syncManagedProviderExtension(...args)
   );
-  const getPoolStatus = driver.poolStatus;
-  driver.poolStatus = () => {
-    try {
-      const service = driver._service();
-      const modeState = service.loadManagedOmpModeState?.();
-      const routingSummary = channels => buildOmpRoutingSummary(
-        Array.isArray(channels) ? channels : channels?.channels || [],
-        modeState?.gateway || {}
-      );
-      const result = getPoolStatus();
-      if (result?.status !== 'ok') return result;
-      const channels = service.getChannels();
-      if (channels && typeof channels.then === 'function') {
-        return channels.then(value => ok('omp', 'channels', 'poolStatus', {
-          ...result.data,
-          routingSummary: routingSummary(value)
-        })).catch(error => failed('omp', 'channels', 'poolStatus', error));
-      }
-      return ok('omp', 'channels', 'poolStatus', {
-        ...result.data,
-        routingSummary: routingSummary(channels)
-      });
-    } catch (error) {
-      return failed('omp', 'channels', 'poolStatus', error);
-    }
-  };
   driver.catalogMetadata = (input = {}) => {
     const operation = 'catalogMetadata';
     const body = input && typeof input === 'object' && Object.prototype.hasOwnProperty.call(input, 'body')

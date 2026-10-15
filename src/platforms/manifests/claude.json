@@ -9,6 +9,7 @@
   "defaultEnabled": true,
   "sortOrder": 10,
   "modelConfig": { "catalogKey": "claude" },
+  "channelModelType": "claude",
   "auth": {
     "modes": ["api_key", "oauth", "none"],
     "oauth": { "adapter": "claude", "policy": "single-enabled", "quota": "claude" }
@@ -20,6 +21,16 @@
   "apiBasePath": "/api/proxy",
   "portKey": "proxy",
   "defaultPort": 20088,
+  "channelCli": {
+    "supportsCliCreate": true,
+    "supportsCliToggle": true,
+    "createQuestions": [
+      { "type": "input", "name": "name", "message": "渠道名称:", "validation": "required", "validationMessage": "渠道名称不能为空" },
+      { "type": "input", "name": "baseUrl", "message": "Base URL:", "validation": "http_url", "validationMessage": "Base URL 必须以 http:// 或 https:// 开头" },
+      { "type": "input", "name": "apiKey", "message": "API Key:", "validation": "required", "validationMessage": "API Key 不能为空" },
+      { "type": "input", "name": "websiteUrl", "message": "网站地址（可选，直接回车跳过）:" }
+    ]
+  },
   "resourceTypes": {
     "skills": true,
     "commands": true,

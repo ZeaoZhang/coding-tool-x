@@ -9,6 +9,7 @@
   "defaultEnabled": false,
   "sortOrder": 50,
   "modelConfig": { "catalogKey": "gemini" },
+  "channelModelType": "gemini",
   "auth": {
     "modes": ["api_key", "oauth", "none"],
     "oauth": { "adapter": "gemini", "policy": "single-enabled", "quota": "gemini" }
@@ -20,6 +21,22 @@
   "apiBasePath": "/api/gemini/proxy",
   "portKey": "geminiProxy",
   "defaultPort": 20090,
+  "channelCli": {
+    "supportsCliCreate": true,
+    "supportsCliToggle": true,
+    "createDefaults": { "model": "gemini-2.5-pro" },
+    "createQuestions": [
+      { "type": "input", "name": "name", "message": "渠道名称:", "validation": "required", "validationMessage": "渠道名称不能为空" },
+      { "type": "input", "name": "baseUrl", "message": "Base URL:", "validation": "http_url", "validationMessage": "Base URL 必须以 http:// 或 https:// 开头" },
+      { "type": "input", "name": "apiKey", "message": "API Key:", "validation": "required", "validationMessage": "API Key 不能为空" },
+      {
+        "type": "input",
+        "name": "model",
+        "message": "模型名称 (默认: gemini-2.5-pro):",
+        "default": "gemini-2.5-pro"
+      }
+    ]
+  },
   "pathResolverId": "gemini",
   "resourceTypes": {
     "skills": true,
@@ -237,25 +254,9 @@
       },
       {
         "method": "GET",
-        "path": "/channels/current",
-        "capability": "channels",
-        "operation": "current",
-        "request": "default",
-        "response": "default"
-      },
-      {
-        "method": "GET",
         "path": "/channels/pool/status",
         "capability": "channels",
         "operation": "poolStatus",
-        "request": "default",
-        "response": "default"
-      },
-      {
-        "method": "GET",
-        "path": "/channels/best-for-restore",
-        "capability": "channels",
-        "operation": "bestForRestore",
         "request": "default",
         "response": "default"
       },

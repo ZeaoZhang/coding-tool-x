@@ -1,30 +1,42 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 
-const { axiosGet, axiosPost, axiosCreate, enabledKeys, catalog } = vi.hoisted(() => ({
-  axiosGet: vi.fn(),
-  axiosPost: vi.fn(),
-  axiosCreate: vi.fn(() => ({
-    get: vi.fn(),
-    post: vi.fn(),
-    interceptors: { response: { use: vi.fn() } }
-  })),
-  enabledKeys: { value: ['alpha-cli', 'beta-cli'] },
-  catalog: { value: [
-    {
-      key: 'alpha-cli',
-      capabilities: { proxy: true, channels: true }
-    },
-    {
-      key: 'beta-cli',
-      capabilities: { proxy: true, channels: true }
-    },
-    {
-      key: 'no-proxy-cli',
-      capabilities: { channels: true }
-    }
-  ] }
-}))
+const { axiosGet, axiosPost, axiosCreate, enabledKeys, catalog, baseApiRoutes } = vi.hoisted(() => {
+  const apiRoutes = [
+    { capability: 'channels', operation: 'list', path: '/channels' },
+    { capability: 'proxy', operation: 'status', path: '/proxy/status' },
+    { capability: 'proxy', operation: 'start', path: '/proxy/start' },
+    { capability: 'proxy', operation: 'stop', path: '/proxy/stop' }
+  ]
+  return {
+    axiosGet: vi.fn(),
+    axiosPost: vi.fn(),
+    axiosCreate: vi.fn(() => ({
+      get: vi.fn(),
+      post: vi.fn(),
+      interceptors: { response: { use: vi.fn() } }
+    })),
+    enabledKeys: { value: ['alpha-cli', 'beta-cli'] },
+    catalog: { value: [
+      {
+        key: 'alpha-cli',
+        capabilities: { proxy: true, channels: true },
+        apiRoutes: apiRoutes.map(route => ({ ...route }))
+      },
+      {
+        key: 'beta-cli',
+        capabilities: { proxy: true, channels: true },
+        apiRoutes: apiRoutes.map(route => ({ ...route }))
+      },
+      {
+        key: 'no-proxy-cli',
+        capabilities: { channels: true },
+        apiRoutes: apiRoutes.map(route => ({ ...route }))
+      }
+    ] },
+    baseApiRoutes: apiRoutes
+  }
+})
 
 vi.mock('axios', () => ({
   default: { create: axiosCreate, get: axiosGet, post: axiosPost }
@@ -34,6 +46,16 @@ vi.mock('../../composables/useEnabledCliPlatforms', () => ({
     catalog,
     enabledKeys,
     getPlatform: key => catalog.value.find(platform => platform.key === key) || null
+  })
+}))
+vi.mock('../../api/platforms', () => ({
+  getPlatformRouteUrl: vi.fn(async (platform, capability, operation) => {
+    const definition = catalog.value.find(item => item.key === platform)
+    const route = definition?.apiRoutes?.find(item => (
+      item.capability === capability && item.operation === operation
+    ))
+    if (!route) throw new Error(`Unsupported ${platform} ${capability} operation: ${operation}`)
+    return `/platforms/${platform}${route.path}`
   })
 }))
 
@@ -50,6 +72,9 @@ describe('global keyed platform requests', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     enabledKeys.value = ['alpha-cli', 'beta-cli']
+    catalog.value.forEach(platform => {
+      platform.apiRoutes = baseApiRoutes.map(route => ({ ...route }))
+    })
     axiosGet.mockReset()
     axiosPost.mockReset()
     axiosGet.mockImplementation(async url => responseFor(url))
@@ -83,6 +108,24 @@ describe('global keyed platform requests', () => {
       '/api/platforms/alpha-cli/channels',
       '/api/platforms/no-proxy-cli/channels'
     ])
+  })
+
+  it('loads scheduler state only when the platform manifest declares that route', async () => {
+    catalog.value[0].apiRoutes.push({
+      capability: 'channels',
+      operation: 'poolStatus',
+      path: '/channels/pool/status'
+    })
+    const store = useGlobalStore()
+
+    await store.loadChannels()
+
+    expect(axiosGet.mock.calls.map(([url]) => url)).toContain(
+      '/api/platforms/alpha-cli/channels/pool/status'
+    )
+    expect(axiosGet.mock.calls.map(([url]) => url)).not.toContain(
+      '/api/platforms/beta-cli/channels/pool/status'
+    )
   })
 
   it('does not request or hydrate hidden platform state', async () => {

@@ -1,92 +1,83 @@
-import { client, getPlatformApiPrefix, normalizePlatformKey } from './client'
+import { client, normalizePlatformKey } from './client'
+import {
+  callPlatformRoute,
+  clearPlatformRouteCache,
+  getPlatformRouteUrl
+} from './platforms'
 
-function platformChannelPath(platform) {
-  return `${getPlatformApiPrefix(platform)}/channels`
+export { callPlatformRoute, clearPlatformRouteCache, getPlatformRouteUrl }
+
+function channelOperation(platform, operation, options) {
+  return callPlatformRoute(platform, 'channels', operation, options)
 }
 
-export async function getPlatformChannels(platform) {
-  const response = await client.get(platformChannelPath(platform))
-  return response.data
+export function getPlatformChannels(platform) {
+  return channelOperation(platform, 'list')
 }
 
-export async function getPlatformChannelPoolStatus(platform) {
-  const response = await client.get(`${platformChannelPath(platform)}/pool/status`, {
-    params: { source: normalizePlatformKey(platform) }
+export function createPlatformChannel(platform, payload) {
+  return channelOperation(platform, 'create', { body: payload })
+}
+
+export function updatePlatformChannel(platform, channelId, payload) {
+  return channelOperation(platform, 'update', {
+    pathParams: { channelId },
+    body: payload
   })
-  return response.data
 }
 
-export async function createPlatformChannel(platform, payload) {
-  const response = await client.post(platformChannelPath(platform), payload)
-  return response.data
+export function deletePlatformChannel(platform, channelId) {
+  return channelOperation(platform, 'remove', { pathParams: { channelId } })
 }
 
-export async function updatePlatformChannel(platform, channelId, payload) {
-  const response = await client.put(`${platformChannelPath(platform)}/${encodeURIComponent(channelId)}`, payload)
-  return response.data
-}
-
-export async function deletePlatformChannel(platform, channelId) {
-  const response = await client.delete(`${platformChannelPath(platform)}/${encodeURIComponent(channelId)}`)
-  return response.data
-}
-
-// DSH channels
-export async function getDshChannels() {
+export function getDshChannels() {
   return getPlatformChannels('dsh')
 }
 
-export async function createDshChannel(payload) {
+export function createDshChannel(payload) {
   return createPlatformChannel('dsh', payload)
 }
 
-export async function updateDshChannel(channelId, payload) {
+export function updateDshChannel(channelId, payload) {
   return updatePlatformChannel('dsh', channelId, payload)
 }
 
-export async function deleteDshChannel(channelId) {
+export function deleteDshChannel(channelId) {
   return deletePlatformChannel('dsh', channelId)
 }
 
-export async function syncCurrentDshChannel() {
-  const response = await client.post('/dsh/channels/sync')
-  return response.data
+export function syncCurrentDshChannel() {
+  return channelOperation('dsh', 'sync')
 }
 
-export async function applyDshChannelToSettings(channelId) {
-  const response = await client.post(`/dsh/channels/${encodeURIComponent(channelId)}/apply`)
-  return response.data
+export function applyDshChannelToSettings(channelId) {
+  return channelOperation('dsh', 'applyToSettings', { pathParams: { channelId } })
 }
 
-export async function testDshChannelSpeed(channelId, timeout = 20000) {
-  const response = await client.post(`/dsh/channels/${encodeURIComponent(channelId)}/speed-test`, { timeout })
-  return response.data
+export function testDshChannelSpeed(channelId, timeout = 20000) {
+  return channelOperation('dsh', 'speedTest', { pathParams: { channelId }, body: { timeout } })
 }
 
-export async function fetchDshChannelModels(channelId, { forceRefresh = false } = {}) {
-  const response = await client.get(`/dsh/channels/${encodeURIComponent(channelId)}/models`, {
-    params: forceRefresh ? { forceRefresh: 'true' } : {}
+export function fetchDshChannelModels(channelId, { forceRefresh = false } = {}) {
+  return channelOperation('dsh', 'models', {
+    pathParams: { channelId },
+    query: forceRefresh ? { forceRefresh: 'true' } : undefined
   })
-  return response.data
 }
 
-export async function getChannelAuth(tool, channelId = '') {
-  const path = channelId
-    ? `${platformChannelPath(tool)}/auth?channelId=${encodeURIComponent(channelId)}`
-    : `${platformChannelPath(tool)}/auth`
-  const response = await client.get(path)
-  return response.data
+export function getChannelAuth(platform, channelId = '') {
+  return channelOperation(platform, 'getAuth', { query: channelId ? { channelId } : undefined })
 }
 
-export async function syncLocalChannelAuth(tool, channelId = '') {
-  const response = await client.post(`${platformChannelPath(tool)}/auth/sync-local`, channelId ? { channelId } : {})
-  return response.data
+export function syncLocalChannelAuth(platform, channelId = '') {
+  return channelOperation(platform, 'syncLocalAuth', { body: channelId ? { channelId } : {} })
 }
 
-export async function fetchChannelAuthQuota(tool, channelId, refresh = false) {
-  const suffix = refresh ? '?refresh=true' : ''
-  const response = await client.get(`${platformChannelPath(tool)}/${encodeURIComponent(channelId)}/auth/quota${suffix}`)
-  return response.data
+export function fetchChannelAuthQuota(platform, channelId, refresh = false) {
+  return channelOperation(platform, 'getAuthQuota', {
+    pathParams: { channelId },
+    query: refresh ? { refresh: 'true' } : undefined
+  })
 }
 
 function matchesChannelAuthCandidate(channel, candidate, candidates) {
@@ -184,62 +175,44 @@ export async function inspectOAuthChannelAuth(platform, channelId) {
   }
 }
 
-// Claude channels
-export async function getChannels() {
-  const response = await client.get('/channels')
-  return response.data
+export function getChannels() {
+  return getPlatformChannels('claude')
 }
 
-export async function getCurrentChannel() {
-  const response = await client.get('/channels/current')
-  return response.data
+export function getCurrentChannel() {
+  return channelOperation('claude', 'current')
 }
 
-export async function syncCurrentClaudeChannel() {
-  const response = await client.post('/channels/sync-current')
-  return response.data
+export function syncCurrentClaudeChannel() {
+  return channelOperation('claude', 'sync')
 }
 
-export async function createChannel(name, baseUrl, apiKey, websiteUrl, extra = {}) {
-  const payload = {
-    name,
-    baseUrl,
-    apiKey,
-    websiteUrl,
-    ...extra
-  }
-  const response = await client.post('/channels', payload)
-  return response.data
+export function createChannel(name, baseUrl, apiKey, websiteUrl, extra = {}) {
+  return createPlatformChannel('claude', { name, baseUrl, apiKey, websiteUrl, ...extra })
 }
 
-export async function updateChannel(id, updates) {
-  const response = await client.put(`/channels/${id}`, updates)
-  return response.data
+export function updateChannel(id, updates) {
+  return updatePlatformChannel('claude', id, updates)
 }
 
-export async function deleteChannel(id) {
-  const response = await client.delete(`/channels/${id}`)
-  return response.data
+export function deleteChannel(id) {
+  return deletePlatformChannel('claude', id)
 }
 
-export async function applyChannelToSettings(id) {
-  const response = await client.post(`/channels/${id}/apply-to-settings`)
-  return response.data
+export function applyChannelToSettings(id) {
+  return channelOperation('claude', 'applyToSettings', { pathParams: { channelId: id } })
 }
 
-export async function resetChannelHealth(id) {
-  const response = await client.post(`/channels/${id}/reset-health`)
-  return response.data
+export function resetChannelHealth(id) {
+  return channelOperation('claude', 'resetHealth', { pathParams: { channelId: id }, body: { channelId: id } })
 }
 
-export async function getBestChannelForRestore() {
-  const response = await client.get('/channels/best-for-restore')
-  return response.data
+export function getBestChannelForRestore() {
+  return channelOperation('claude', 'bestForRestore')
 }
 
-export async function saveChannelOrder(order) {
-  const response = await client.post('/channels/order', { order })
-  return response.data
+export function saveChannelOrder(order) {
+  return channelOperation('claude', 'order', { body: { order } })
 }
 
 export async function getChannelBalances(source) {
@@ -248,411 +221,246 @@ export async function getChannelBalances(source) {
 }
 
 export async function refreshChannelBalance(source, channelId) {
-  const response = await client.post(`/channel-balances/${source}/${channelId}/refresh`)
+  const response = await client.post(`/channel-balances/${encodeURIComponent(source)}/${encodeURIComponent(channelId)}/refresh`)
   return response.data
 }
 
-// Codex channels
-export async function getCodexChannels() {
-  const response = await client.get('/codex/channels')
-  return response.data
+export function getCodexChannels() {
+  return getPlatformChannels('codex')
 }
 
-export async function getEnabledCodexChannels() {
-  const response = await client.get('/codex/channels/enabled')
-  return response.data
+export function getEnabledCodexChannels() {
+  return channelOperation('codex', 'enabled')
 }
 
-export async function syncCurrentCodexChannel() {
-  const response = await client.post('/codex/channels/sync-current')
-  return response.data
+export function syncCurrentCodexChannel() {
+  return channelOperation('codex', 'sync')
 }
 
-export async function createCodexChannel(name, providerKey, baseUrl, apiKey, websiteUrl, extra = {}) {
-  const response = await client.post('/codex/channels', {
-    name,
-    providerKey,
-    baseUrl,
-    apiKey,
-    websiteUrl,
-    ...extra
+export function createCodexChannel(name, providerKey, baseUrl, apiKey, websiteUrl, extra = {}) {
+  return createPlatformChannel('codex', { name, providerKey, baseUrl, apiKey, websiteUrl, ...extra })
+}
+
+export function updateCodexChannel(channelId, updates) {
+  return updatePlatformChannel('codex', channelId, updates)
+}
+
+export function deleteCodexChannel(channelId) {
+  return deletePlatformChannel('codex', channelId)
+}
+
+export function saveCodexChannelOrder(order) {
+  return channelOperation('codex', 'order', { body: { order } })
+}
+
+export function applyCodexChannelToSettings(channelId) {
+  return channelOperation('codex', 'applyToSettings', { pathParams: { channelId } })
+}
+
+export function resetCodexChannelHealth(channelId) {
+  return channelOperation('codex', 'resetHealth', { pathParams: { channelId }, body: { channelId } })
+}
+
+export function getGeminiChannels() {
+  return getPlatformChannels('gemini')
+}
+
+export function getEnabledGeminiChannels() {
+  return channelOperation('gemini', 'enabled')
+}
+
+export function syncCurrentGeminiChannel() {
+  return channelOperation('gemini', 'sync')
+}
+
+export function createGeminiChannel(name, baseUrl, apiKey, model, websiteUrl, extra = {}) {
+  return createPlatformChannel('gemini', { name, baseUrl, apiKey, model, websiteUrl, ...extra })
+}
+
+export function getChannelPoolStatus() {
+  return channelOperation('claude', 'poolStatus')
+}
+
+export function updateGeminiChannel(channelId, updates) {
+  return updatePlatformChannel('gemini', channelId, updates)
+}
+
+export function deleteGeminiChannel(channelId) {
+  return deletePlatformChannel('gemini', channelId)
+}
+
+export function saveGeminiChannelOrder(order) {
+  return channelOperation('gemini', 'order', { body: { order } })
+}
+
+export function resetGeminiChannelHealth(channelId) {
+  return channelOperation('gemini', 'resetHealth', { pathParams: { channelId }, body: { channelId } })
+}
+
+export function testClaudeChannelSpeed(channelId, timeout = 20000) {
+  return channelOperation('claude', 'speedTest', { pathParams: { channelId }, body: { timeout } })
+}
+
+export function fetchChannelModels(channelId, channelType = 'claude') {
+  return channelOperation(channelType || 'claude', 'models', {
+    pathParams: { channelId },
+    query: channelType ? { type: channelType } : undefined
   })
-  return response.data
 }
 
-export async function updateCodexChannel(channelId, updates) {
-  const response = await client.put(`/codex/channels/${channelId}`, updates)
-  return response.data
+export function testCodexChannelSpeed(channelId, timeout = 20000) {
+  return channelOperation('codex', 'speedTest', { pathParams: { channelId }, body: { timeout } })
 }
 
-export async function deleteCodexChannel(channelId) {
-  const response = await client.delete(`/codex/channels/${channelId}`)
-  return response.data
+export function testGeminiChannelSpeed(channelId, timeout = 20000) {
+  return channelOperation('gemini', 'speedTest', { pathParams: { channelId }, body: { timeout } })
 }
 
-export async function saveCodexChannelOrder(order) {
-  const response = await client.post('/codex/channels/order', { order })
-  return response.data
+export function fetchCodexChannelModels(channelId) {
+  return channelOperation('codex', 'models', { pathParams: { channelId } })
 }
 
-export async function applyCodexChannelToSettings(channelId) {
-  const response = await client.post(`/codex/channels/${channelId}/apply-to-settings`)
-  return response.data
+export function fetchGeminiChannelModels(channelId) {
+  return channelOperation('gemini', 'models', { pathParams: { channelId } })
 }
 
-export async function resetCodexChannelHealth(channelId) {
-  const response = await client.post(`/codex/channels/${channelId}/reset-health`)
-  return response.data
-}
-
-// Gemini channels
-export async function getGeminiChannels() {
-  const response = await client.get('/gemini/channels')
-  return response.data
-}
-
-export async function getEnabledGeminiChannels() {
-  const response = await client.get('/gemini/channels/enabled')
-  return response.data
-}
-
-export async function syncCurrentGeminiChannel() {
-  const response = await client.post('/gemini/channels/sync-current')
-  return response.data
-}
-
-export async function createGeminiChannel(name, baseUrl, apiKey, model, websiteUrl, extra = {}) {
-  const response = await client.post('/gemini/channels', {
-    name,
-    baseUrl,
-    apiKey,
-    model,
-    websiteUrl,
-    ...extra
-  })
-  return response.data
-}
-
-export async function getChannelPoolStatus() {
-  const response = await client.get('/channels/pool/status')
-  return response.data
-}
-
-export async function updateGeminiChannel(channelId, updates) {
-  const response = await client.put(`/gemini/channels/${channelId}`, updates)
-  return response.data
-}
-
-export async function deleteGeminiChannel(channelId) {
-  const response = await client.delete(`/gemini/channels/${channelId}`)
-  return response.data
-}
-
-export async function saveGeminiChannelOrder(order) {
-  const response = await client.post('/gemini/channels/order', { order })
-  return response.data
-}
-
-export async function resetGeminiChannelHealth(channelId) {
-  const response = await client.post(`/gemini/channels/${channelId}/reset-health`)
-  return response.data
-}
-
-// ========== 速度测试 API ==========
-
-/**
- * 测试单个 Claude 渠道速度
- */
-export async function testClaudeChannelSpeed(channelId, timeout = 20000) {
-  const response = await client.post(`/channels/${channelId}/speed-test`, { timeout })
-  return response.data
-}
-
-/**
- * 获取渠道可用模型列表
- */
-export async function fetchChannelModels(channelId, channelType = 'claude') {
-  const requestConfig = channelType
-    ? { params: { type: channelType } }
-    : undefined
-  const response = await client.get(`/channels/${channelId}/models`, requestConfig)
-  return response.data
-}
-
-
-export async function testCodexChannelSpeed(channelId, timeout = 20000) {
-  const response = await client.post(`/codex/channels/${channelId}/speed-test`, { timeout })
-  return response.data
-}
-
-
-export async function testGeminiChannelSpeed(channelId, timeout = 20000) {
-  const response = await client.post(`/gemini/channels/${channelId}/speed-test`, { timeout })
-  return response.data
-}
-
-
-export async function fetchCodexChannelModels(channelId) {
-  const response = await client.get(`/codex/channels/${channelId}/models`)
-  return response.data
-}
-
-/**
- * 获取 Gemini 渠道可用模型列表
- */
-export async function fetchGeminiChannelModels(channelId) {
-  const response = await client.get(`/gemini/channels/${channelId}/models`)
-  return response.data
-}
-
-// ============================================
-// OpenCode Channel APIs
-// ============================================
-
-export async function getOpenCodeChannels() {
-  const response = await client.get('/opencode/channels')
-  return response.data
+export function getOpenCodeChannels() {
+  return getPlatformChannels('opencode')
 }
 
 export async function getEnabledOpenCodeChannels() {
   const data = await getOpenCodeChannels()
-  return {
-    channels: (data.channels || []).filter(ch => ch.enabled !== false)
-  }
+  return { channels: (data.channels || []).filter(channel => channel.enabled !== false) }
 }
 
-export async function syncCurrentOpenCodeChannel() {
-  const response = await client.post('/opencode/channels/sync-current')
-  return response.data
+export function syncCurrentOpenCodeChannel() {
+  return channelOperation('opencode', 'sync')
 }
 
-export async function createOpenCodeChannel(name, baseUrl, apiKey, extra = {}) {
-  const response = await client.post('/opencode/channels', {
-    name,
-    baseUrl,
-    apiKey,
-    wireApi: extra.wireApi || 'openai',
-    gatewaySourceType: extra.gatewaySourceType || 'codex',
-    enabled: extra.enabled !== false,
-    weight: extra.weight || 1,
-    maxConcurrency: extra.maxConcurrency || null,
-    model: extra.model || null,
-    modelRedirects: extra.modelRedirects || [],
-    speedTestModel: extra.speedTestModel || null,
-    presetId: extra.presetId || null,
-    providerKey: extra.providerKey || '',
-    websiteUrl: extra.websiteUrl || '',
-    allowedModels: extra.allowedModels || [],
-    authMode: extra.authMode || 'api_key',
-    authRef: extra.authRef,
-    authSource: extra.authSource,
-    authStatus: extra.authStatus,
-    oauthProviderId: extra.oauthProviderId || '',
-    balanceToken: extra.balanceToken || '',
-    balanceUserId: extra.balanceUserId || null
+export function createOpenCodeChannel(name, baseUrl, apiKey, extra = {}) {
+  return createPlatformChannel('opencode', { name, baseUrl, apiKey, ...extra })
+}
+
+export function updateOpenCodeChannel(channelId, updates) {
+  return updatePlatformChannel('opencode', channelId, updates)
+}
+
+export function deleteOpenCodeChannel(channelId) {
+  return deletePlatformChannel('opencode', channelId)
+}
+
+export function saveOpenCodeChannelOrder(order) {
+  return channelOperation('opencode', 'order', { body: { order } })
+}
+
+export function resetOpenCodeChannelHealth(channelId) {
+  return channelOperation('opencode', 'resetHealth', { pathParams: { channelId }, body: { channelId } })
+}
+
+export function testOpenCodeChannelSpeed(channelId, timeout = 20000) {
+  return channelOperation('opencode', 'speedTest', { pathParams: { channelId }, body: { timeout } })
+}
+
+export function fetchOpenCodeChannelModels(channelId, { forceRefresh = false } = {}) {
+  return channelOperation('opencode', 'models', {
+    pathParams: { channelId },
+    query: forceRefresh ? { forceRefresh: 'true' } : undefined
   })
-  return response.data
 }
 
-export async function updateOpenCodeChannel(channelId, updates) {
-  const response = await client.put(`/opencode/channels/${channelId}`, updates)
-  return response.data
+export function probeOpenCodeChannelModels({ baseUrl, apiKey, gatewaySourceType }) {
+  return channelOperation('opencode', 'probeModels', { body: { baseUrl, apiKey, gatewaySourceType } })
 }
 
-export async function deleteOpenCodeChannel(channelId) {
-  const response = await client.delete(`/opencode/channels/${channelId}`)
-  return response.data
+export function getOpenCodeProxyStatus() {
+  return callPlatformRoute('opencode', 'proxy', 'status')
 }
 
-export async function saveOpenCodeChannelOrder(order) {
-  const response = await client.post('/opencode/channels/order', { order })
-  return response.data
+export function startOpenCodeProxy() {
+  return callPlatformRoute('opencode', 'proxy', 'start')
 }
 
-export async function resetOpenCodeChannelHealth(channelId) {
-  const response = await client.post(`/opencode/channels/${channelId}/reset-health`)
-  return response.data
+export function stopOpenCodeProxy() {
+  return callPlatformRoute('opencode', 'proxy', 'stop')
 }
 
-export async function testOpenCodeChannelSpeed(channelId, timeout = 20000) {
-  const response = await client.post(`/opencode/channels/${channelId}/speed-test`, { timeout })
-  return response.data
-}
-
-export async function fetchOpenCodeChannelModels(channelId, { forceRefresh = false } = {}) {
-  const response = await client.get(`/opencode/channels/${channelId}/models`, {
-    params: forceRefresh ? { forceRefresh: 'true' } : {}
-  })
-  return response.data
-}
-
-export async function probeOpenCodeChannelModels({ baseUrl, apiKey, gatewaySourceType }) {
-  const response = await client.post('/opencode/channels/probe-models', { baseUrl, apiKey, gatewaySourceType })
-  return response.data
-}
-
-// OpenCode Proxy APIs
-export async function getOpenCodeProxyStatus() {
-  const response = await client.get('/opencode/proxy/status')
-  return response.data
-}
-
-export async function startOpenCodeProxy() {
-  const response = await client.post('/opencode/proxy/start')
-  return response.data
-}
-
-export async function stopOpenCodeProxy() {
-  const response = await client.post('/opencode/proxy/stop')
-  return response.data
-}
-
-// ============================================
-// OMP Channel APIs
-// ============================================
-
-export async function getOmpChannels() {
-  const response = await client.get('/omp/channels')
-  return response.data
+export function getOmpChannels() {
+  return getPlatformChannels('omp')
 }
 
 export async function getEnabledOmpChannels() {
   const data = await getOmpChannels()
   return {
     ...data,
-    channels: (data.channels || []).filter(ch => ch.enabled !== false)
+    channels: (data.channels || []).filter(channel => channel.enabled !== false)
   }
 }
 
-export async function syncCurrentOmpChannel() {
-  const response = await client.post('/omp/channels/sync-current')
-  return response.data
+export function syncCurrentOmpChannel() {
+  return channelOperation('omp', 'sync')
 }
 
-export async function createOmpChannel(name, baseUrl, apiKey, extra = {}) {
-  const gatewaySourceType = extra.gatewaySourceType || 'openai_compatible';
-  let providerApi = extra.providerApi;
-  if (!providerApi) {
-    if (gatewaySourceType === 'claude') {
-      providerApi = 'anthropic-messages';
-    } else if (gatewaySourceType === 'gemini') {
-      providerApi = 'google-generative-ai';
-    } else if (gatewaySourceType === 'codex') {
-      providerApi = 'responses';
-    } else {
-      providerApi = extra.wireApi || 'openai-completions';
-    }
-  }
-  const response = await client.post('/omp/channels', {
-    name,
-    baseUrl,
-    apiKey,
-    wireApi: extra.wireApi || 'openai',
-    providerApi,
-    providerKey: extra.providerKey || '',
-    authMode: extra.authMode || 'api_key',
-    authRef: extra.authRef,
-    authSource: extra.authSource,
-    authStatus: extra.authStatus,
-    oauthProviderId: extra.oauthProviderId || '',
-    transport: extra.transport || '',
-    routingGroup: extra.routingGroup || '',
-    gatewaySourceType,
-    enabled: extra.enabled !== false,
-    model: extra.model || null,
-    allowedModels: extra.allowedModels || [],
-    speedTestModel: extra.speedTestModel || null,
-    presetId: extra.presetId || null,
-    websiteUrl: extra.websiteUrl || '',
-    balanceToken: extra.balanceToken || '',
-    balanceUserId: extra.balanceUserId || null,
-    models: Array.isArray(extra.models) ? extra.models : [],
-    modelMetadataMode: extra.modelMetadataMode || 'auto',
-    modelBindings: Array.isArray(extra.modelBindings) ? extra.modelBindings : [],
-    providerConfig: extra.providerConfig || {}
+export function createOmpChannel(name, baseUrl, apiKey, extra = {}) {
+  return createPlatformChannel('omp', { name, baseUrl, apiKey, ...extra })
+}
+
+export function updateOmpChannel(channelId, updates) {
+  return updatePlatformChannel('omp', channelId, updates)
+}
+
+export function deleteOmpChannel(channelId) {
+  return deletePlatformChannel('omp', channelId)
+}
+
+export function saveOmpChannelOrder(order) {
+  return channelOperation('omp', 'order', { body: { order } })
+}
+
+export function resetOmpChannelHealth(channelId) {
+  return channelOperation('omp', 'resetHealth', { pathParams: { channelId }, body: { channelId } })
+}
+
+export function updateChannelForPlatform(platform, channelId, updates) {
+  return updatePlatformChannel(platform, channelId, updates)
+}
+
+export function testOmpChannelSpeed(channelId, timeout = 20000) {
+  return channelOperation('omp', 'speedTest', { pathParams: { channelId }, body: { timeout } })
+}
+
+export function fetchOmpChannelModels(channelId, { forceRefresh = false } = {}) {
+  return channelOperation('omp', 'models', {
+    pathParams: { channelId },
+    query: forceRefresh ? { forceRefresh: 'true' } : undefined
   })
-  return response.data
 }
 
-export async function updateOmpChannel(channelId, updates) {
-  const response = await client.put(`/omp/channels/${channelId}`, updates)
-  return response.data
-}
-
-export async function deleteOmpChannel(channelId) {
-  const response = await client.delete(`/omp/channels/${channelId}`)
-  return response.data
-}
-
-export async function saveOmpChannelOrder(order) {
-  const response = await client.post('/omp/channels/order', { order })
-  return response.data
-}
-
-export async function resetOmpChannelHealth(channelId) {
-  const response = await client.post(`/omp/channels/${channelId}/reset-health`)
-  return response.data
-}
-
-export async function updateChannelForPlatform(platform, channelId, updates) {
-  const key = normalizePlatformKey(platform)
-  const legacyUpdaters = {
-    claude: updateChannel,
-    codex: updateCodexChannel,
-    gemini: updateGeminiChannel,
-    opencode: updateOpenCodeChannel,
-    omp: updateOmpChannel
-  }
-  const updater = legacyUpdaters[key]
-  return updater
-    ? updater(channelId, updates)
-    : updatePlatformChannel(key, channelId, updates)
-}
-
-export async function testOmpChannelSpeed(channelId, timeout = 20000) {
-  const response = await client.post(`/omp/channels/${channelId}/speed-test`, { timeout })
-  return response.data
-}
-
-export async function fetchOmpChannelModels(channelId, { forceRefresh = false } = {}) {
-  const response = await client.get(`/omp/channels/${channelId}/models`, {
-    params: forceRefresh ? { forceRefresh: 'true' } : {}
+export function probeOmpChannelModels(config, { forceRefresh = false } = {}) {
+  return channelOperation('omp', 'probeModels', {
+    body: { ...config, forceRefresh }
   })
-  return response.data
 }
 
-export async function probeOmpChannelModels(config, { forceRefresh = false } = {}) {
-  const response = await client.post('/omp/channels/probe-models', { ...config, forceRefresh })
-  return response.data
-}
-
-export async function fetchOmpCatalogMetadata(providerKey, channelModels = {}, { forceRefresh = false } = {}) {
-  const response = await client.post('/omp/channels/catalog-metadata', {
-    providerKey,
-    forceRefresh,
-    ...channelModels
+export function fetchOmpCatalogMetadata(providerKey, channelModels = {}, { forceRefresh = false } = {}) {
+  return channelOperation('omp', 'catalogMetadata', {
+    body: { providerKey, forceRefresh, ...channelModels }
   })
-  return response.data
 }
 
-export async function getOmpAuthProviders({ forceRefresh = false } = {}) {
-  const response = await client.get('/omp/config/auth-providers', {
-    params: forceRefresh ? { forceRefresh: 'true' } : {}
+export function getOmpAuthProviders({ forceRefresh = false } = {}) {
+  return callPlatformRoute('omp', 'api', 'getConfigAuthProviders', {
+    query: forceRefresh ? { forceRefresh: 'true' } : undefined
   })
-  return response.data
 }
 
-export async function getOmpProxyStatus() {
-  const response = await client.get('/omp/proxy/status')
-  return response.data
+export function getOmpProxyStatus() {
+  return callPlatformRoute('omp', 'proxy', 'status')
 }
 
-export async function startOmpProxy() {
-  const response = await client.post('/omp/proxy/start')
-  return response.data
+export function startOmpProxy() {
+  return callPlatformRoute('omp', 'proxy', 'start')
 }
 
-export async function stopOmpProxy() {
-  const response = await client.post('/omp/proxy/stop')
-  return response.data
+export function stopOmpProxy() {
+  return callPlatformRoute('omp', 'proxy', 'stop')
 }

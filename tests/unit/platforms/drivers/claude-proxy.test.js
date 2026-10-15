@@ -53,7 +53,7 @@ function getFreePort() {
   });
 }
 
-function request(port) {
+function request(port, payload = JSON.stringify({ model: 'claude-3-5-sonnet' })) {
   return new Promise((resolve, reject) => {
     const req = http.request({
       host: '127.0.0.1',
@@ -69,11 +69,12 @@ function request(port) {
       res.on('data', chunk => chunks.push(chunk));
       res.on('end', () => resolve({
         statusCode: res.statusCode,
+        headers: res.headers,
         body: Buffer.concat(chunks).toString('utf8')
       }));
     });
     req.on('error', reject);
-    req.end(JSON.stringify({ model: 'claude-3-5-sonnet' }));
+    req.end(payload);
   });
 }
 
@@ -127,6 +128,7 @@ beforeEach(async () => {
   });
   stub(STATS_PATH, { recordRequest: vi.fn() });
   stub(REQUEST_LOGGER_PATH, {
+    isProxyRequestLoggingEnabled: vi.fn(() => false),
     persistProxyRequestSnapshot: vi.fn(),
     persistClaudeRequestTemplate: vi.fn()
   });
@@ -227,10 +229,51 @@ test('excludes OAuth channels and injects the allocated API key into requests', 
     end: vi.fn()
   };
 
+  expect(capturedRequest.rawBody).toBeNull();
+  // Invoke the transport hook with a fresh in-flight body fixture.
+  capturedRequest.rawBody = Buffer.from('{}');
   proxyEvents.proxyReq(proxyReq, capturedRequest);
 
   expect(headers.authorization).toBe('Bearer upstream-key');
   expect(headers['x-api-key']).toBe('upstream-key');
   expect(proxyReq.removeHeader).toHaveBeenCalledWith('authorization');
   expect(proxyReq.end).toHaveBeenCalled();
+});
+
+
+test('does not build or persist a Claude request snapshot when diagnostic logging is disabled', async () => {
+  const started = await claudeProxy.startProxyServer();
+  expect((await request(started.port)).statusCode).toBe(200);
+  const logger = require(REQUEST_LOGGER_PATH);
+  expect(logger.isProxyRequestLoggingEnabled).toHaveBeenCalled();
+  expect(logger.persistProxyRequestSnapshot).not.toHaveBeenCalled();
+  expect(logger.persistClaudeRequestTemplate).toHaveBeenCalled();
+});
+
+test('persists a single parsed body without a duplicate raw body when diagnostic logging is enabled', async () => {
+  const logger = require(REQUEST_LOGGER_PATH);
+  logger.isProxyRequestLoggingEnabled.mockReturnValue(true);
+  const started = await claudeProxy.startProxyServer();
+  expect((await request(started.port)).statusCode).toBe(200);
+  const [source, snapshot] = logger.persistProxyRequestSnapshot.mock.calls[0];
+  expect(source).toBe('claude');
+  expect(snapshot.request.body).toBeTruthy();
+  expect(snapshot.request.rawBody).toBeUndefined();
+});
+
+
+test('rejects pressure before parsing JSON or allocating a channel', async () => {
+  const pressure = require('../../../../src/server/services/memory-pressure');
+  const memoryUsage = vi.spyOn(process, 'memoryUsage').mockReturnValue({ rss: 380 * 1024 * 1024 });
+  try {
+    const started = await claudeProxy.startProxyServer();
+    const response = await request(started.port, '{ invalid JSON');
+    expect(response.statusCode).toBe(503);
+    expect(response.headers['retry-after']).toBe('5');
+    expect(JSON.parse(response.body).error.type).toBe('overloaded_error');
+    expect(allocationOptions).toBeNull();
+  } finally {
+    memoryUsage.mockRestore();
+    pressure.stopMemoryPressureMonitor();
+  }
 });

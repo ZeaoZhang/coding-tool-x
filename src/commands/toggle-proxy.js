@@ -188,13 +188,17 @@ async function handleStartProxy(cliType, services) {
   console.log(chalk.bold.cyan('\n╔=======================================╗'));
   const toolName = getPlatformLabel(cliType);
   const defaultPort = services.defaultPort;
+  const labels = services.proxyLabels || {};
+  const serviceLabel = labels.serviceLabel || `${toolName} 代理服务`;
+  const proxyLabel = labels.proxyLabel || '动态切换';
+  const addressLabel = labels.addressLabel || (services.managedProviderConfig ? '网关地址' : '代理地址');
 
   console.log(chalk.cyan('动态切换功能说明:'));
   if (services.managedProviderConfig) {
-    console.log(chalk.gray('• 开启后会启动 OMP 专用本地网关，并把受管 provider 指向该网关'));
-    console.log(chalk.gray(`• 可以通过 Web UI 或"渠道管理"功能调整启用的 ${toolName} 路由组`));
-    console.log(chalk.gray('• 同路由组内由 coding-tool-x 动态选择渠道，跨模型 fallback 仍由 OMP 处理'));
-    console.log(chalk.gray(`• OMP 网关地址: http://127.0.0.1:${defaultPort}\n`));
+    console.log(chalk.gray(`• 开启后会启动${serviceLabel}，并将平台原生 provider 指向本地网关`));
+    console.log(chalk.gray(`• 可以通过 Web UI 或"渠道管理"功能调整启用的 ${toolName} 渠道`));
+    console.log(chalk.gray('• 网关按平台路由设置分发请求，模型 fallback 仍由平台处理'));
+    console.log(chalk.gray(`• ${addressLabel}: http://127.0.0.1:${defaultPort}\n`));
   } else {
     console.log(chalk.gray('• 开启后会在本地启动一个代理服务'));
     console.log(chalk.gray(`• 可以在不重启 ${toolName} 的情况下动态管理渠道`));
@@ -204,8 +208,8 @@ async function handleStartProxy(cliType, services) {
 
   console.log(chalk.yellow('[WARN]  重要提示:'));
   if (services.managedProviderConfig) {
-    console.log(chalk.yellow('• 启用后会写入指向本地网关的 OMP models.yml provider 配置'));
-    console.log(chalk.yellow('• 关闭后会保留当前渠道的直连 provider，不会清理 OMP 原生 auth.json\n'));
+    console.log(chalk.yellow('• 启用后会写入指向本地网关的受管 provider 配置'));
+    console.log(chalk.yellow('• 关闭时会由平台 Driver 按原生配置策略完成交接\n'));
   } else {
     console.log(chalk.yellow('• 开启期间请勿关闭 CLI 终端窗口'));
     console.log(chalk.yellow('• 如果异常关闭导致代理失效，请运行: ctx reset'));
@@ -228,18 +232,18 @@ async function handleStartProxy(cliType, services) {
 
   try {
     console.log(chalk.cyan(services.managedProviderConfig
-      ? '\n[START] 正在启用 OMP models.yml 受管 provider...\n'
+      ? `\n[START] 正在启用${serviceLabel}...\n`
       : '\n[START] 正在启动代理服务...\n'));
 
     // 启动代理服务器
     const proxyResult = await services.startProxyServer();
 
     if (!proxyResult.success) {
-      throw new Error(services.managedProviderConfig ? 'OMP 受管 provider 启用失败' : '代理服务器启动失败');
+      throw new Error(services.managedProviderConfig ? `${serviceLabel}启用失败` : '代理服务器启动失败');
     }
 
     if (services.managedProviderConfig) {
-      console.log(chalk.green('[OK] OMP models.yml 受管 provider 已启用'));
+      console.log(chalk.green(`[OK] ${labels.startedMessage || `${serviceLabel}已启用`}`));
       (proxyResult.warnings || []).forEach((warning) => {
         console.log(chalk.yellow(`[WARN]  ${warning}`));
       });
@@ -259,9 +263,9 @@ async function handleStartProxy(cliType, services) {
       }
     }
 
-    console.log(chalk.cyan(services.managedProviderConfig ? '\n[TIP] OMP 动态切换已启用！' : '\n[TIP] 动态切换已启用！'));
+    console.log(chalk.cyan(`\n[TIP] ${labels.startedMessage || `${proxyLabel}已启用`}！`));
     if (services.managedProviderConfig) {
-      console.log(chalk.gray('   现在可以通过"渠道管理"功能调整已启用的 OMP provider，并重新同步 models.yml\n'));
+      console.log(chalk.gray(`   现在可以通过"渠道管理"功能调整已启用的 ${toolName} 渠道\n`));
     } else {
       console.log(chalk.gray(`   现在可以通过"渠道管理"功能快速调整，无需重启 ${toolName}\n`));
     }
@@ -297,11 +301,14 @@ async function handleStopProxy(cliType, services) {
 
   const toolName = getPlatformLabel(cliType);
   const proxyStatus = services.getProxyStatus();
+  const labels = services.proxyLabels || {};
+  const serviceLabel = labels.serviceLabel || `${toolName} 代理服务`;
+  const proxyLabel = labels.proxyLabel || '动态切换';
 
   console.log(chalk.cyan('当前状态:'));
   if (services.managedProviderConfig) {
-    console.log(chalk.gray(`• 动态切换: ${chalk.green('已启用')}`));
-    console.log(chalk.gray(`• 配置模式: ${proxyStatus.mode || 'models-yml-provider-config'}`));
+    console.log(chalk.gray(`• ${proxyLabel}: ${chalk.green(labels.runningText || '已启用')}`));
+    console.log(chalk.gray(`• 配置模式: ${proxyStatus.mode || '平台受管 provider 配置'}`));
   } else {
     console.log(chalk.gray(`• 代理服务: ${chalk.green('运行中')}`));
     console.log(chalk.gray(`• 代理端口: ${proxyStatus.port}`));
@@ -310,8 +317,8 @@ async function handleStopProxy(cliType, services) {
 
   console.log(chalk.yellow('关闭后:'));
   if (services.managedProviderConfig) {
-    console.log(chalk.gray('• OMP 将保留当前渠道的单一、直连 models.yml provider'));
-    console.log(chalk.gray(`• 之后调整 ${toolName} provider 或模型会立即同步到 OMP\n`));
+    console.log(chalk.gray(`• ${serviceLabel}会按平台 Driver 策略交接原生 provider 配置`));
+    console.log(chalk.gray(`• 之后调整 ${toolName} 渠道或模型将按平台配置策略生效\n`));
   } else {
     console.log(chalk.gray('• 代理服务将被停止'));
     console.log(chalk.gray('• 配置将恢复为当前激活渠道的单渠道模式'));
@@ -334,13 +341,13 @@ async function handleStopProxy(cliType, services) {
 
   try {
     console.log(chalk.cyan(services.managedProviderConfig
-      ? '\n[STOP]  正在切换 OMP 到单渠道直连模式...\n'
+      ? `\n[STOP]  正在停止${serviceLabel}...\n`
       : '\n[STOP]  正在停止代理服务...\n'));
 
     // 停止代理服务器
     await services.stopProxyServer();
     console.log(chalk.green(services.managedProviderConfig
-      ? '[OK] OMP 已切换到单渠道直连模式'
+      ? (labels.stoppedMessage || `${serviceLabel}已停止`)
       : '[OK] 代理服务已停止'));
 
     // 恢复配置文件
@@ -364,9 +371,9 @@ async function handleStopProxy(cliType, services) {
       console.log(chalk.green('[OK] 已清理代理接管状态'));
     }
 
-    console.log(chalk.cyan(services.managedProviderConfig ? '\n[TIP] OMP 动态切换已关闭' : '\n[TIP] 动态切换已关闭'));
+    console.log(chalk.cyan(`\n[TIP] ${labels.stoppedMessage || `${proxyLabel}已关闭`}`));
     if (services.managedProviderConfig) {
-      console.log(chalk.gray('   当前渠道保持直连；后续渠道和模型修改会立即同步到 OMP\n'));
+      console.log(chalk.gray(`   ${toolName} 渠道配置已交由平台 Driver 处理\n`));
     } else {
       console.log(chalk.gray(`   现在调整渠道需要重启 ${toolName} 才能生效\n`));
     }

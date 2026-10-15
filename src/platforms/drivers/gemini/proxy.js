@@ -8,8 +8,7 @@ function createDriver(context = {}) {
     platform: 'gemini',
     servicePath: './gemini/proxy-implementation',
     localServicePath: '../platforms/drivers/gemini/proxy-implementation',
-    exports: { status: 'getGeminiProxyStatus', start: 'startGeminiProxyServer', stop: 'stopGeminiProxyServer' },
-    cliMetadata: { defaultPort: 20090 }
+    exports: { status: 'getGeminiProxyStatus', start: 'startGeminiProxyServer', stop: 'stopGeminiProxyServer' }
   });
 }
 
