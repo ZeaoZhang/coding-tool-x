@@ -3,6 +3,8 @@
 const fs = require('fs');
 const path = require('path');
 const { StringDecoder } = require('string_decoder');
+const { createNativeLogCheckpoints, createPersistenceRetryState } = require('../../server/services/native-log-checkpoints');
+const MAX_EVENT_BATCH = 500;
 
 const JSONL_READ_CHUNK_BYTES = 64 * 1024;
 const CURSOR_ANCHOR_BYTES = 256;
@@ -34,6 +36,7 @@ function usageFieldPaths(prefix) {
     USAGE_FIELD_NAMES.forEach(name => paths.push(`${prefix}.${container}.${name}`));
   });
   ['total', 'usd', 'amount'].forEach(name => paths.push(`${prefix}.cost.${name}`));
+  ['read', 'readTokens', 'write', 'writeTokens'].forEach(name => paths.push(`${prefix}.cache.${name}`));
   return paths;
 }
 
@@ -825,6 +828,9 @@ function createIncrementalJsonlCursor({
   let fileStates = new Map();
   let recentEventIds = new Map();
   let initialized = false;
+  let overflow = null;
+  const persistence = createPersistenceRetryState();
+  const getOverflow = () => overflow || (overflow = createNativeLogCheckpoints());
 
   const rememberEvent = (eventId) => {
     if (!eventId) return true;
@@ -937,12 +943,22 @@ function createIncrementalJsonlCursor({
     return false;
   };
 
-  const collectEvent = (rawEvent, filePath, events, shouldEmit) => {
+  const collectEvent = (rawEvent, filePath, events, shouldEmit, forcePersist = false) => {
     if (!rawEvent) return;
     const event = normalizeEvent(rawEvent, filePath);
     if (!event || !event.id || !acceptEvent(event)) return;
-    if (!rememberEvent(event.id)) return;
-    if (shouldEmit) events.push(event);
+    if (recentEventIds.has(event.id)) { rememberEvent(event.id); return; }
+    if (shouldEmit) {
+      if (!forcePersist && events.length < MAX_EVENT_BATCH) events.push(event);
+      else {
+        try { getOverflow().enqueue(event); } catch (error) {
+          error.checkpointPersistenceFailure = true;
+          throw error;
+        }
+      }
+    }
+    // IDs become committed only after their event is accepted by memory or disk.
+    rememberEvent(event.id);
   };
 
   const appendLineText = (state, text) => {
@@ -998,13 +1014,21 @@ function createIncrementalJsonlCursor({
       state.entryIndex += 1;
       return;
     }
+    let parsedEvents;
     try {
       const parsed = parseLine(filePath, record, state, state.entryIndex);
-      const parsedEvents = Array.isArray(parsed) ? parsed : [parsed];
-      parsedEvents.forEach(event => collectEvent(event, filePath, events, shouldEmit));
+      parsedEvents = Array.isArray(parsed) ? parsed : [parsed];
     } catch (error) {
       stats.parseErrors += 1;
       onError(error, filePath);
+      parsedEvents = [];
+    }
+    for (let index = 0; index < parsedEvents.length; index++) {
+      try { collectEvent(parsedEvents[index], filePath, events, shouldEmit); } catch (error) {
+        state.retryEvents = parsedEvents.slice(index);
+        state.retryCompletesLine = true;
+        throw error;
+      }
     }
     state.lineText = '';
     state.lineParser = null;
@@ -1055,10 +1079,27 @@ function createIncrementalJsonlCursor({
           stats.readErrors += 1;
         }
         const chunk = scratch.subarray(0, bytesRead);
-        stats.bytesRead += bytesRead;
-        consumeText(filePath, state, state.decoder.write(chunk), events, shouldEmit, stats);
-        state.offset += bytesRead;
-        updateAnchors(state, chunk);
+        let start = 0;
+        while (start < chunk.length) {
+          const newline = chunk.indexOf(10, start);
+          const end = newline < 0 ? chunk.length : newline + 1;
+          const segment = chunk.subarray(start, end);
+          // Decode only consumed bytes. The unread suffix stays in the source,
+          // including any split UTF-8 sequence, rather than in an event queue.
+          try {
+            consumeText(filePath, state, state.decoder.write(segment), events, shouldEmit, stats);
+          } catch (error) {
+            // The decoder and usage parser already consumed this newline. Keep
+            // its exact events and defer the source watermark until retry succeeds.
+            state.retrySegmentBytes = segment.length;
+            throw error;
+          }
+          state.offset += segment.length;
+          stats.bytesRead += segment.length;
+          updateAnchors(state, segment);
+          start = end;
+          if (shouldEmit && events.length >= MAX_EVENT_BATCH && state.offset < stat.size) return 'paused';
+        }
         if (!complete) break;
       }
     } finally {
@@ -1068,7 +1109,43 @@ function createIncrementalJsonlCursor({
   };
 
   const read = () => {
+    if (!persistence.ready()) return [];
     const events = [];
+    try {
+      if (overflow?.diagnostics().pendingEvents) {
+        const batch = overflow.drain(MAX_EVENT_BATCH);
+        // A failed line still needs retry even after older pending rows drain.
+        if (![...fileStates.values()].some(state => state.retryEvents)) persistence.succeeded();
+        return batch;
+      }
+      for (const [filePath, state] of fileStates) {
+        if (!state.retryEvents) continue;
+        const retry = state.retryEvents;
+        for (let index = 0; index < retry.length; index++) {
+          try { collectEvent(retry[index], filePath, events, true, true); } catch (error) {
+            state.retryEvents = retry.slice(index);
+            throw error;
+          }
+        }
+        state.retryEvents = null;
+        if (state.retryCompletesLine) {
+          state.lineText = ''; state.lineParser = null; state.lineBytes = 0;
+          state.lineDiscarded = false; state.entryIndex += 1;
+        }
+        state.retryCompletesLine = false;
+        state.offset += state.retrySegmentBytes || 0;
+        state.retrySegmentBytes = 0;
+        state.size = state.offset;
+        try { setAnchors(filePath, state, state.offset); } catch (_) {}
+        const batch = overflow?.diagnostics().pendingEvents ? overflow.drain(MAX_EVENT_BATCH) : events;
+        persistence.succeeded();
+        return batch;
+      }
+    } catch (error) {
+      persistence.failed();
+      onError(error);
+      return events;
+    }
     const files = scanFiles();
     const currentFiles = new Set(files);
     const isInitialRead = !initialized;
@@ -1147,30 +1224,45 @@ function createIncrementalJsonlCursor({
 
       const shouldEmit = initialized;
       let readCompleted = false;
+      let paused = false;
       try {
-        if (!readChangedBytes(filePath, state, stat, events, shouldEmit, stats)) {
+        const result = readChangedBytes(filePath, state, stat, events, shouldEmit, stats);
+        paused = result === 'paused';
+        if (!result) {
           throw new Error('Native log read ended before the requested file range');
         }
-        const trailing = afterRead?.(filePath, state, { initialized, replaced: Boolean(replaced) });
+        const trailing = paused ? null : afterRead?.(filePath, state, { initialized, replaced: Boolean(replaced) });
         const trailingEvents = Array.isArray(trailing) ? trailing : [trailing];
-        trailingEvents.forEach(event => collectEvent(event, filePath, events, shouldEmit));
+        for (let index = 0; index < trailingEvents.length; index++) {
+          try { collectEvent(trailingEvents[index], filePath, events, shouldEmit); } catch (error) {
+            state.retryEvents = trailingEvents.slice(index);
+            state.retryCompletesLine = false;
+            throw error;
+          }
+        }
         readCompleted = true;
       } catch (error) {
+        if (error.checkpointPersistenceFailure) {
+          persistence.failed();
+          onError(error, filePath);
+          break;
+        }
         onError(error, filePath);
       }
       if (!readCompleted) continue;
-      state.size = stat.size;
+      state.size = paused ? state.offset : stat.size;
       state.dev = stat.dev;
       state.ino = stat.ino;
       state.mtimeMs = stat.mtimeMs;
       state.ctimeMs = stat.ctimeMs;
       state.baselineReady = true;
+      if (shouldEmit && events.length >= MAX_EVENT_BATCH) break;
     }
     for (const state of fileStates.values()) {
       if (skipInitialParse && !state.baselineReady) baselineReady = false;
     }
     initialized = baselineReady;
-    try { onDiagnostic({ ...stats, initialized }); } catch (_) {}
+    try { onDiagnostic({ ...stats, initialized, fileStates: fileStates.size, recentEventIds: recentEventIds.size, ...(overflow?.diagnostics() || {}), ...persistence.diagnostics() }); } catch (_) {}
     return events;
   };
 
@@ -1178,8 +1270,9 @@ function createIncrementalJsonlCursor({
     initialize() { read(); },
     readNewEvents: read,
     read,
-    reset() { fileStates = new Map(); recentEventIds = new Map(); initialized = false; },
-    close() { fileStates.clear(); recentEventIds.clear(); initialized = false; }
+    diagnostics() { return { fileStates: fileStates.size, recentEventIds: recentEventIds.size, ...(overflow?.diagnostics() || {}), ...persistence.diagnostics() }; },
+    reset() { fileStates = new Map(); recentEventIds = new Map(); overflow?.reset(); persistence.succeeded(); initialized = false; },
+    close() { fileStates.clear(); recentEventIds.clear(); overflow?.close(); persistence.succeeded(); initialized = false; }
   };
 }
 
@@ -1189,88 +1282,98 @@ function createScannedFileCursor({
   normalizeEvent,
   fsImpl = fs,
   skipInitialParse = false,
-  shouldParseFile = () => true
+  parseBaseline = false,
+  shouldParseFile = () => true,
+  onFilesRemoved = () => {},
+  onDiagnostic = () => {}
 }) {
-  let seenByFile = new Map();
+  const checkpoints = createNativeLogCheckpoints();
+  const persistence = createPersistenceRetryState();
   let fileStates = new Map();
   let initialized = false;
 
   const read = () => {
-    const events = [];
-    const files = scanFiles();
-    const isInitialRead = !initialized;
-    const currentFiles = new Set(files);
-    for (const filePath of fileStates.keys()) {
-      if (!currentFiles.has(filePath)) {
-        fileStates.delete(filePath);
-        seenByFile.delete(filePath);
-      }
-    }
-
-    for (const filePath of files) {
-      let stat;
-      try { stat = fsImpl.statSync(filePath); } catch (_) { continue; }
-      const previousState = fileStates.get(filePath);
-      const replaced = previousState
-        && (previousState.dev !== stat.dev
-          || previousState.ino !== stat.ino
-          || stat.size < previousState.size);
-      const changed = !previousState
-        || replaced
-        || previousState.size !== stat.size
-        || previousState.mtimeMs !== stat.mtimeMs
-        || previousState.ctimeMs !== stat.ctimeMs;
-      const unchanged = previousState && !changed;
-      if (!previousState || replaced) {
-        seenByFile.set(filePath, new Set());
-      }
-      if (unchanged) continue;
-      if (isInitialRead && skipInitialParse) {
-        try {
-          shouldParseFile(filePath, stat, { isInitialRead, previousState, skipInitialParse: true });
-        } catch (_) {
-          // Baseline setup must remain non-blocking; the next file change will retry.
+    if (!persistence.ready()) return [];
+    const previousFileStates = new Map(fileStates);
+    const wasInitialized = initialized;
+    try {
+      const result = checkpoints.transaction(() => {
+        if (checkpoints.diagnostics().pendingEvents) return checkpoints.drain(MAX_EVENT_BATCH);
+        const events = [];
+        const files = scanFiles();
+        const isInitialRead = !initialized;
+        const currentFiles = new Set(files);
+        for (const filePath of fileStates.keys()) {
+          if (!currentFiles.has(filePath)) {
+            fileStates.delete(filePath);
+            checkpoints.deleteScope(filePath);
+            onFilesRemoved(filePath);
+          }
         }
-        fileStates.set(filePath, {
-          dev: stat.dev,
-          ino: stat.ino,
-          size: stat.size,
-          mtimeMs: stat.mtimeMs,
-          ctimeMs: stat.ctimeMs
-        });
-        continue;
-      }
-      if (!shouldParseFile(filePath, stat, { isInitialRead, previousState, skipInitialParse: false })) continue;
-
-      let parsed;
-      try { parsed = parseFile(filePath) || []; } catch (_) { continue; }
-      fileStates.set(filePath, {
-        dev: stat.dev,
-        ino: stat.ino,
-        size: stat.size,
-        mtimeMs: stat.mtimeMs,
-        ctimeMs: stat.ctimeMs
+        for (const filePath of files) {
+          let stat;
+          try { stat = fsImpl.statSync(filePath); } catch (_) { continue; }
+          const previousState = fileStates.get(filePath);
+          const replaced = previousState
+            && (previousState.dev !== stat.dev || previousState.ino !== stat.ino || stat.size < previousState.size);
+          const changed = !previousState || replaced || previousState.size !== stat.size
+            || previousState.mtimeMs !== stat.mtimeMs || previousState.ctimeMs !== stat.ctimeMs;
+          if (!changed) continue;
+          if (replaced) checkpoints.deleteScope(filePath);
+          const baselineOnly = isInitialRead && skipInitialParse && !parseBaseline;
+          if (!shouldParseFile(filePath, stat, { isInitialRead, previousState, skipInitialParse: baselineOnly, persistenceRetry: persistence.diagnostics().persistenceBlocked })) continue;
+          if (!baselineOnly) {
+            try {
+              const parsed = parseFile(filePath) || [];
+              for (const raw of parsed) {
+                const event = normalizeEvent(raw, filePath);
+                if (!event || !event.id || !hasUsage(event.tokens)) continue;
+                try {
+                  if (checkpoints.get(filePath, event.id)) continue;
+                  checkpoints.set(filePath, event.id, true);
+                  if (!initialized) continue;
+                  if (events.length < MAX_EVENT_BATCH) events.push(event);
+                  else checkpoints.enqueue(event);
+                } catch (error) {
+                  error.checkpointPersistenceFailure = true;
+                  throw error;
+                }
+              }
+            } catch (error) {
+              // Generator parsers can fail during iteration. Source damage must
+              // not turn into global storage pressure; accepted prefix IDs still
+              // deduplicate the next scan, whose watermark remains uncommitted.
+              if (error.checkpointPersistenceFailure) throw error;
+              console.warn('[Native Logs] Failed to parse source:', filePath, error.message);
+              continue;
+            }
+          }
+          fileStates.set(filePath, {
+            dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs
+          });
+        }
+        initialized = true;
+        try { onDiagnostic({ files: files.length, fileStates: fileStates.size, initialized, ...checkpoints.diagnostics() }); } catch (_) {}
+        return events;
       });
-      const seen = seenByFile.get(filePath) || new Set();
-      seenByFile.set(filePath, seen);
-      for (const raw of parsed) {
-        const event = normalizeEvent(raw, filePath);
-        if (!event || !event.id || !hasUsage(event.tokens)) continue;
-        if (seen.has(event.id)) continue;
-        seen.add(event.id);
-        if (initialized) events.push(event);
-      }
+      persistence.succeeded();
+      return result;
+    } catch (error) {
+      fileStates = previousFileStates;
+      initialized = wasInitialized;
+      persistence.failed();
+      console.warn('[Native Logs] Checkpoint persistence failed:', error.message);
+      try { onDiagnostic({ fileStates: fileStates.size, ...checkpoints.diagnostics(), ...persistence.diagnostics() }); } catch (_) {}
+      return [];
     }
-    initialized = true;
-    return events;
   };
-
   return {
     initialize() { read(); },
     readNewEvents: read,
     read,
-    reset() { seenByFile = new Map(); fileStates = new Map(); initialized = false; },
-    close() { seenByFile.clear(); fileStates.clear(); initialized = false; }
+    diagnostics() { return { fileStates: fileStates.size, ...checkpoints.diagnostics(), ...persistence.diagnostics() }; },
+    reset() { checkpoints.reset(); persistence.succeeded(); fileStates = new Map(); initialized = false; },
+    close() { checkpoints.close(); persistence.succeeded(); fileStates.clear(); initialized = false; }
   };
 }
 

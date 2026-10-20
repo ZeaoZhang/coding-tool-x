@@ -42,7 +42,8 @@ function createDriver({ pathContext } = {}) {
         },
         read() { return this.readNewEvents(); },
         reset() { native.reset(); },
-        close() { native.reset(); }
+        close() { native.close(); },
+        diagnostics() { return native.diagnostics?.() || {}; }
       };
     },
     createCursor(options) { return this.createNativeLogCursor(options); }

@@ -20,7 +20,8 @@ const {
 const { persistProxyRequestSnapshot } = require('../../../server/services/request-logger');
 const { redirectModel, resolveTargetUrl, isChatCompletionsPath, ensureOpenAiStreamUsage } = require('../../../shared/proxy-utils');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('../../../server/services/proxy-runtime');
-const { bindProxyRequest, prepareProxyResponse } = require('../../../shared/proxy-transport');
+const { bindProxyRequest, prepareProxyResponse, proxyRequestLifecycle, bindChannelRelease } = require('../../../shared/proxy-transport');
+const { memoryPressureMiddleware } = require('../../../server/services/memory-pressure');
 const { attachServerShutdownHandling, expediteServerShutdown, PROXY_IDLE_TIMEOUT_MS } = require('../../../server/services/server-shutdown');
 
 let proxyServer = null;
@@ -73,6 +74,8 @@ async function startDshProxyServer(options = {}) {
   const app = express();
   const proxy = httpProxy.createProxyServer({});
 
+  app.use((req, res, next) => { req.proxyPlatform = 'dsh'; memoryPressureMiddleware(req, res, next); });
+  app.use(proxyRequestLifecycle);
   app.use((req, res, next) => shouldParseJson(req) ? jsonBodyParser(req, res, next) : next());
   app.use(async (req, res) => {
     let channel;
@@ -80,15 +83,14 @@ async function startDshProxyServer(options = {}) {
     try {
       channel = await allocateChannel({
         source: 'dsh',
+        signal: req.proxyAllocationSignal,
         providerApi: 'openai-completions',
         enableSessionBinding: false
       });
       req.selectedChannel = channel;
       release = releaseOnce(channel);
       req.__releaseChannel = release;
-      res.on('finish', release);
-      res.on('close', release);
-      res.on('error', release);
+      bindChannelRelease(req, res, release);
       if (res.destroyed || res.writableEnded) { release(); return; }
       broadcastSchedulerState('dsh', getSchedulerState('dsh'));
 
@@ -101,15 +103,16 @@ async function startDshProxyServer(options = {}) {
       }
       req.effectiveApiKey = apiKey;
 
+      let bodyChanged = false;
       if (req.body?.model) {
         const originalModel = req.body.model;
         const redirectedModel = redirectModel(originalModel, channel, { useTierFallback: false });
-        if (redirectedModel !== originalModel) req.body.model = redirectedModel;
+        if (redirectedModel !== originalModel) { req.body.model = redirectedModel; bodyChanged = true; }
       }
       if (shouldParseJson(req) && isChatCompletionsPath(req.url)) {
-        ensureOpenAiStreamUsage(req.body);
+        bodyChanged = ensureOpenAiStreamUsage(req.body) || bodyChanged;
       }
-      if (shouldParseJson(req) && req.body) {
+      if (bodyChanged) {
         req.rawBody = Buffer.from(JSON.stringify(req.body));
       }
 
@@ -128,7 +131,7 @@ async function startDshProxyServer(options = {}) {
       }, error => {
         release?.();
         if (!error) return;
-        recordFailure(channel.id, 'dsh', error);
+        if (!req.proxyAllocationSignal?.aborted) recordFailure(channel.id, 'dsh', error);
         if (!res.headersSent) {
           res.status(502).json({ error: { message: `Proxy error: ${error.message}`, type: 'proxy_error' } });
         }
@@ -175,7 +178,7 @@ async function startDshProxyServer(options = {}) {
       completed = true;
       requestMetadata.delete(req);
       if (error || Number(proxyRes.statusCode) >= 400) {
-        recordFailure(metadata.channelId, 'dsh', error || new Error(`DSH upstream HTTP ${proxyRes.statusCode}`));
+        if (!req.proxyAllocationSignal?.aborted) recordFailure(metadata.channelId, 'dsh', error || new Error(`DSH upstream HTTP ${proxyRes.statusCode}`));
       } else {
         recordSuccess(metadata.channelId, 'dsh');
       }
@@ -190,7 +193,7 @@ async function startDshProxyServer(options = {}) {
 
   proxy.on('error', (error, req, res) => {
     if (req?.selectedChannel) {
-      recordFailure(req.selectedChannel.id, 'dsh', error);
+      if (!req.proxyAllocationSignal?.aborted) recordFailure(req.selectedChannel.id, 'dsh', error);
       req.__releaseChannel?.();
     }
     if (res && !res.headersSent) res.status(502).json({ error: { message: `Proxy error: ${error.message}`, type: 'proxy_error' } });

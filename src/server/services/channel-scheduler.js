@@ -39,6 +39,8 @@ function getState(source = 'claude') {
 }
 
 const WAIT_TIMEOUT_MS = 15000;
+const MAX_PENDING_PER_PLATFORM = 64;
+const MAX_SESSION_BINDINGS = 1024;
 
 /**
  * 解绑指定渠道的所有会话
@@ -84,6 +86,13 @@ function refreshChannels(source = 'claude') {
       modelRedirects: ch.modelRedirects || []
     }));
 
+  const currentIds = new Set(state.channels.map(channel => channel.id));
+  for (const [id, count] of state.inflight) {
+    if (!currentIds.has(id) && count === 0) state.inflight.delete(id);
+  }
+  for (const [sessionId, channelId] of state.sessionBindings) {
+    if (!currentIds.has(channelId)) state.sessionBindings.delete(sessionId);
+  }
   state.channels.forEach(ch => {
     if (!state.inflight.has(ch.id)) {
       state.inflight.set(ch.id, 0);
@@ -145,7 +154,10 @@ function pickWeightedChannel(channels) {
 
 function tryAllocate(source = 'claude', options = {}) {
   const state = getState(source);
-  const sessionId = options.sessionId;
+  // Session affinity must never retain an arbitrary parsed request object.
+  const rawSessionId = options.sessionId;
+  const sessionId = (typeof rawSessionId === 'string' && Buffer.byteLength(rawSessionId) <= 2048)
+    || (typeof rawSessionId === 'number' && Number.isFinite(rawSessionId)) ? rawSessionId : null;
   const enableSessionBinding = options.enableSessionBinding !== false; // 默认开启
   const available = getAvailableChannels(source, options);
   if (!available.length) {
@@ -157,6 +169,8 @@ function tryAllocate(source = 'claude', options = {}) {
     const boundId = state.sessionBindings.get(sessionId);
     const boundChannel = available.find(ch => ch.id === boundId);
     if (boundChannel) {
+      state.sessionBindings.delete(sessionId);
+      state.sessionBindings.set(sessionId, boundId);
       state.inflight.set(boundChannel.id, (state.inflight.get(boundChannel.id) || 0) + 1);
       return boundChannel;
     }
@@ -168,7 +182,11 @@ function tryAllocate(source = 'claude', options = {}) {
 
   // 只有在启用会话绑定时才记录绑定
   if (enableSessionBinding && sessionId) {
+    state.sessionBindings.delete(sessionId);
     state.sessionBindings.set(sessionId, chosen.id);
+    while (state.sessionBindings.size > MAX_SESSION_BINDINGS) {
+      state.sessionBindings.delete(state.sessionBindings.keys().next().value);
+    }
   }
   state.inflight.set(chosen.id, (state.inflight.get(chosen.id) || 0) + 1);
   return chosen;
@@ -207,6 +225,12 @@ function allocateChannel(options = {}) {
   }
   if (!state.channels.some(ch => matchesAllocationRequest(ch, options))) {
     return Promise.reject(new Error('没有匹配当前请求的可用渠道'));
+  }
+
+  if (state.queue.length >= MAX_PENDING_PER_PLATFORM) {
+    return Promise.reject(Object.assign(new Error('渠道等待队列已满，请稍后重试'), {
+      statusCode: 503, code: 'channel_queue_full'
+    }));
   }
 
   // 检查是否所有渠道都被冻结
@@ -284,7 +308,15 @@ function getSchedulerState(source = 'claude') {
   };
 }
 
+function getChannelSchedulerDiagnostics() {
+  return Object.fromEntries(Object.entries(schedulerStates).map(([source, state]) => [source, {
+    pending: state.queue.length, bindings: state.sessionBindings.size,
+    inflight: [...state.inflight.values()].reduce((sum, value) => sum + value, 0)
+  }]));
+}
+
 module.exports = {
+  getChannelSchedulerDiagnostics,
   allocateChannel,
   releaseChannel,
   getSchedulerState

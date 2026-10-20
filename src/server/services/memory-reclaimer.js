@@ -1,5 +1,7 @@
 'use strict';
 
+const { startMemoryPressureMonitor, stopMemoryPressureMonitor, getMemoryPressureDiagnostics } = require('./memory-pressure');
+
 const MIB = 1024 * 1024;
 const CHECK_INTERVAL_MS = 5_000;
 const MIN_IDLE_MS = 30_000;
@@ -10,22 +12,29 @@ const URGENT_RSS_BYTES = 450 * MIB;
 const URGENT_GC_COOLDOWN_MS = 30_000;
 
 let timer = null;
+let traceTimer = null;
 let activeRequests = 0;
+let generation = 0;
+const TRACKED_ACTIVITY = Symbol('trackedMemoryActivity');
 let lastActivityAt = Date.now();
 let lastCollectionAt = 0;
 
 function trackMemoryActivity(_req, res, next) {
-  if (typeof global.gc !== 'function') {
+  if (res[TRACKED_ACTIVITY]) {
     if (typeof next === 'function') next();
     return;
   }
-
+  res[TRACKED_ACTIVITY] = true;
+  const requestGeneration = generation;
   activeRequests += 1;
   lastActivityAt = Date.now();
   let completed = false;
   const complete = () => {
     if (completed) return;
     completed = true;
+    res.removeListener('finish', complete);
+    res.removeListener('close', complete);
+    if (requestGeneration !== generation) return;
     activeRequests = Math.max(0, activeRequests - 1);
     lastActivityAt = Date.now();
   };
@@ -37,6 +46,7 @@ function trackMemoryActivity(_req, res, next) {
 }
 
 function collectIfIdleAndUnderPressure() {
+  if (typeof global.gc !== 'function') return;
   if (activeRequests > 0) return;
 
   const before = process.memoryUsage();
@@ -68,7 +78,12 @@ function collectIfIdleAndUnderPressure() {
 }
 
 function startMemoryReclaimer() {
-  if (timer || typeof global.gc !== 'function') return false;
+  startMemoryPressureMonitor();
+  if (process.env.CC_TOOL_MEMORY_TRACE === '1' && !traceTimer) {
+    traceTimer = setInterval(() => console.log(`[MEM] sample ${JSON.stringify(getMemoryDiagnostics())}`), 30_000);
+    traceTimer.unref?.();
+  }
+  if (timer) return false;
   timer = setInterval(collectIfIdleAndUnderPressure, CHECK_INTERVAL_MS);
   if (typeof timer.unref === 'function') timer.unref();
   return true;
@@ -76,13 +91,40 @@ function startMemoryReclaimer() {
 
 function stopMemoryReclaimer() {
   if (timer) clearInterval(timer);
+  if (traceTimer) clearInterval(traceTimer);
   timer = null;
+  traceTimer = null;
+  stopMemoryPressureMonitor();
+  generation += 1;
   activeRequests = 0;
   lastActivityAt = Date.now();
+}
+
+function loadedDiagnostics(modulePath, name) {
+  const loaded = require.cache[require.resolve(modulePath)];
+  return loaded?.exports[name]?.() || null;
+}
+
+function getMemoryDiagnostics() {
+  const memory = process.memoryUsage();
+  return {
+    timestamp: new Date().toISOString(), pid: process.pid,
+    rss: memory.rss, heapUsed: memory.heapUsed, heapTotal: memory.heapTotal,
+    external: memory.external, arrayBuffers: memory.arrayBuffers,
+    activeRequests,
+    pressure: getMemoryPressureDiagnostics(),
+    snapshots: loadedDiagnostics('./snapshot-cache', 'getSnapshotCacheDiagnostics'),
+    statistics: loadedDiagnostics('./statistics-service', 'getStatisticsQueueDiagnostics'),
+    websocket: loadedDiagnostics('../websocket-server', 'getWebSocketDiagnostics'),
+    requestLogger: loadedDiagnostics('./request-logger', 'getRequestLoggerDiagnostics'),
+    channels: loadedDiagnostics('./channel-scheduler', 'getChannelSchedulerDiagnostics'),
+    nativeLogs: loadedDiagnostics('./native-log-observer', 'getNativeLogDiagnostics')
+  };
 }
 
 module.exports = {
   startMemoryReclaimer,
   stopMemoryReclaimer,
-  trackMemoryActivity
+  trackMemoryActivity,
+  getMemoryDiagnostics
 };

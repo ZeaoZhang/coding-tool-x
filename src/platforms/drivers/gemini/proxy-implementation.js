@@ -13,7 +13,8 @@ const {
 } = require('./channels-implementation');
 const { persistProxyRequestSnapshot } = require('../../../server/services/request-logger');
 const { redirectModel: redirectModelBase, resolveTargetUrl } = require('../../../shared/proxy-utils');
-const { bindProxyRequest, prepareProxyResponse } = require('../../../shared/proxy-transport');
+const { bindProxyRequest, prepareProxyResponse, proxyRequestLifecycle, bindChannelRelease } = require('../../../shared/proxy-transport');
+const { memoryPressureMiddleware } = require('../../../server/services/memory-pressure');
 const { attachServerShutdownHandling, expediteServerShutdown, PROXY_IDLE_TIMEOUT_MS } = require('../../../server/services/server-shutdown');
 
 let proxyServer = null;
@@ -189,6 +190,8 @@ async function startGeminiProxyServer(options = {}) {
     currentPort = port;
 
     proxyApp = express();
+    proxyApp.use((req, res, next) => { req.proxyPlatform = 'gemini'; memoryPressureMiddleware(req, res, next); });
+    proxyApp.use(proxyRequestLifecycle);
 
     proxyApp.use((req, res, next) => {
       if (shouldParseJson(req)) {
@@ -242,6 +245,7 @@ async function startGeminiProxyServer(options = {}) {
       try {
         const channel = await allocateChannel({
           source: 'gemini',
+          signal: req.proxyAllocationSignal,
           enableSessionBinding: false,
           excludeChannelIds: getGeminiProxyExcludedChannelIds()
         });
@@ -258,9 +262,7 @@ async function startGeminiProxyServer(options = {}) {
         })();
 
         req.__releaseChannel = release;
-        res.on('finish', release);
-        res.on('close', release);
-        res.on('error', release);
+        bindChannelRelease(req, res, release);
         if (res.destroyed || res.writableEnded) { release(); return; }
 
         broadcastSchedulerState('gemini', getSchedulerState('gemini'));
@@ -345,7 +347,7 @@ async function startGeminiProxyServer(options = {}) {
         }, (err) => {
           release();
           if (err) {
-            recordFailure(channel.id, 'gemini', err);
+            if (!req.proxyAllocationSignal?.aborted) recordFailure(channel.id, 'gemini', err);
             console.error('Gemini proxy error:', err);
             if (res && !res.headersSent) {
               res.status(502).json({
@@ -358,6 +360,7 @@ async function startGeminiProxyServer(options = {}) {
           }
         });
       } catch (error) {
+        if (error.code === 'channel_queue_full') res.setHeader('Retry-After', '5');
         req.__releaseChannel?.();
         console.error('Gemini channel allocation error:', error);
         if (!res.headersSent) {
@@ -385,14 +388,14 @@ async function startGeminiProxyServer(options = {}) {
       res.on('close', () => requestMetadata.delete(req));
       res.on('error', (err) => {
         if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Response error:', err);
-        recordFailure(metadata.channelId, 'gemini', err);
+        if (!req.proxyAllocationSignal?.aborted) recordFailure(metadata.channelId, 'gemini', err);
         requestMetadata.delete(req);
       });
 
       const upstreamStatusCode = Number(proxyRes.statusCode) || 200;
       proxyRes.on('end', () => {
         if (isHttpErrorStatus(upstreamStatusCode)) {
-          recordFailure(metadata.channelId, 'gemini', new Error(`Gemini upstream HTTP ${upstreamStatusCode}`));
+          if (!req.proxyAllocationSignal?.aborted) recordFailure(metadata.channelId, 'gemini', new Error(`Gemini upstream HTTP ${upstreamStatusCode}`));
         } else {
           recordSuccess(metadata.channelId, 'gemini');
         }
@@ -400,7 +403,7 @@ async function startGeminiProxyServer(options = {}) {
       });
       proxyRes.on('error', (err) => {
         if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Proxy response error:', err);
-        recordFailure(metadata.channelId, 'gemini', err);
+        if (!req.proxyAllocationSignal?.aborted) recordFailure(metadata.channelId, 'gemini', err);
         requestMetadata.delete(req);
       });
     });
@@ -409,7 +412,7 @@ async function startGeminiProxyServer(options = {}) {
     proxy.on('error', (err, req, res) => {
       console.error('Gemini proxy error:', err);
       if (req && req.selectedChannel) {
-        recordFailure(req.selectedChannel.id, 'gemini', err);
+        if (!req.proxyAllocationSignal?.aborted) recordFailure(req.selectedChannel.id, 'gemini', err);
         req.__releaseChannel?.();
       }
       if (res && !res.headersSent) {

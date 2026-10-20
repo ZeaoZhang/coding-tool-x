@@ -5,7 +5,7 @@ const { startServer } = require('../server');
 const open = require('open');
 const { getProxyStatus } = require('../platforms/drivers/claude/proxy-implementation');
 const { loadConfig } = require('../config/loader');
-const { shutdownNativeCliLogObserver } = require('../server/services/native-log-observer');
+const { drainNativeCliLogs, shutdownNativeCliLogObserver } = require('../server/services/native-log-observer');
 const { hasHostFlag } = require('../utils/cli-flags');
 
 function getWindowsPowerShellPath(env = process.env) {
@@ -52,7 +52,7 @@ function openUrl(url, options = {}) {
   return Promise.resolve(child);
 }
 
-async function handleUI() {
+async function handleUI({ shutdownProcess } = {}) {
   // 检查是否为 daemon 模式（PM2 启动）
   const isDaemon = process.argv.includes('--daemon');
 
@@ -95,7 +95,7 @@ async function handleUI() {
     }
 
     // 处理退出信号（仅非 daemon 模式）
-    if (!isDaemon) {
+    if (!isDaemon && !shutdownProcess) {
       process.on('SIGINT', async () => {
         console.log(chalk.yellow('\n\n[BYE] 正在停止服务器...\n'));
 
@@ -144,6 +144,15 @@ async function handleUI() {
         console.error(chalk.yellow(`[WARN] OMP 动态网关退出清理失败: ${err.message}`));
       }
 
+      try {
+        await drainNativeCliLogs();
+        const result = await require('../server/services/statistics-service').shutdownStatistics();
+        if (result?.durable === false) throw new Error('Statistics could not persist its shutdown backlog');
+      } catch (error) {
+        require('../server/services/native-log-observer').startNativeCliLogObserver();
+        console.error(chalk.yellow(`[WARN] 退出已暂停，待写统计仍保留: ${error.message}`));
+        return;
+      }
       shutdownNativeCliLogObserver();
       try {
         await require('../server/websocket-server').flushPendingLogs();

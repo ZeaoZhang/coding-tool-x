@@ -22,7 +22,8 @@ const {
   resolveTargetUrl,
   ensureOpenAiStreamUsage
 } = require('../../../shared/proxy-utils');
-const { bindProxyRequest, prepareProxyResponse } = require('../../../shared/proxy-transport');
+const { bindProxyRequest, prepareProxyResponse, proxyRequestLifecycle, bindChannelRelease, collectResponseBody } = require('../../../shared/proxy-transport');
+const { memoryPressureMiddleware } = require('../../../server/services/memory-pressure');
 const { attachServerShutdownHandling, expediteServerShutdown, PROXY_IDLE_TIMEOUT_MS } = require('../../../server/services/server-shutdown');
 const { buildCodexTargetUrl, createCodexRequest } = require('../codex/wire');
 const { createClaudeRequest, buildClaudeTargetUrl, buildClaudeCountTokensTargetUrl, buildClaudeCountTokensHeaders } = require('../claude/wire');
@@ -341,17 +342,10 @@ function createDecodedStream(res) {
 }
 
 function collectHttpResponseBody(res) {
-  return new Promise((resolve, reject) => {
-    const stream = createDecodedStream(res);
-    const chunks = [];
-    stream.on('data', chunk => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-    stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    stream.on('error', reject);
-    res.on('error', reject);
-  });
+  return collectResponseBody(res, createDecodedStream(res));
 }
 
-function postJson(url, headers, payload, timeoutMs = PROXY_IDLE_TIMEOUT_MS) {
+function postJson(url, headers, payload, timeoutMs = PROXY_IDLE_TIMEOUT_MS, signal) {
   return new Promise((resolve, reject) => {
     const target = new URL(url);
     const isHttps = target.protocol === 'https:';
@@ -363,6 +357,7 @@ function postJson(url, headers, payload, timeoutMs = PROXY_IDLE_TIMEOUT_MS) {
       path: `${target.pathname}${target.search}`,
       method: 'POST',
       timeout: timeoutMs,
+      signal,
       headers: {
         ...headers,
         'Content-Type': 'application/json',
@@ -389,7 +384,7 @@ function postJson(url, headers, payload, timeoutMs = PROXY_IDLE_TIMEOUT_MS) {
   });
 }
 
-function postJsonStream(url, headers, payload, timeoutMs = PROXY_IDLE_TIMEOUT_MS) {
+function postJsonStream(url, headers, payload, timeoutMs = PROXY_IDLE_TIMEOUT_MS, signal) {
   return new Promise((resolve, reject) => {
     const target = new URL(url);
     const isHttps = target.protocol === 'https:';
@@ -401,6 +396,7 @@ function postJsonStream(url, headers, payload, timeoutMs = PROXY_IDLE_TIMEOUT_MS
       path: `${target.pathname}${target.search}`,
       method: 'POST',
       timeout: timeoutMs,
+      signal,
       headers: {
         ...headers,
         'Content-Type': 'application/json',
@@ -454,7 +450,7 @@ async function preflightClaudeCountTokens(baseUrl, apiKey, claudePayload, option
     providerConfig: options.providerConfig
   });
   try {
-    await postJson(buildClaudeCountTokensTargetUrl(baseUrl), countTokensHeaders, countTokensPayload, 30000);
+    await postJson(buildClaudeCountTokensTargetUrl(baseUrl), countTokensHeaders, countTokensPayload, 30000, options.signal);
   } catch {
     // best-effort preflight, ignore failures
   }
@@ -868,7 +864,7 @@ function reportOpenCodeGatewayFailure({
   model = ''
 }) {
   if (channel?.id && error) {
-    recordFailure(channel.id, 'opencode', error);
+    if (!req.proxyAllocationSignal?.aborted) recordFailure(channel.id, 'opencode', error);
   }
 
   if (!res.headersSent) {
@@ -1858,6 +1854,7 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
 
   await preflightClaudeCountTokens(channel.baseUrl, effectiveKey, claudePayload, {
     hasTools,
+    signal: req.proxyAllocationSignal,
     headers: channel.providerConfig?.headers,
     providerConfig: channel.providerConfig
   });
@@ -1865,7 +1862,7 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
   if (streamResponses) {
     let streamUpstream;
     try {
-      streamUpstream = await postJsonStream(buildClaudeTargetUrl(channel.baseUrl), headers, claudePayload, 120000);
+      streamUpstream = await postJsonStream(buildClaudeTargetUrl(channel.baseUrl), headers, claudePayload, 120000, req.proxyAllocationSignal);
     } catch (error) {
       return reportOpenCodeGatewayFailure({
         req,
@@ -1927,7 +1924,7 @@ async function handleClaudeGatewayRequest(req, res, channel, effectiveKey) {
 
   let upstream;
   try {
-    upstream = await postJson(buildClaudeTargetUrl(channel.baseUrl), headers, claudePayload, 120000);
+    upstream = await postJson(buildClaudeTargetUrl(channel.baseUrl), headers, claudePayload, 120000, req.proxyAllocationSignal);
   } catch (error) {
     return reportOpenCodeGatewayFailure({
       req,
@@ -2049,7 +2046,7 @@ async function handleCodexGatewayRequest(req, res, channel, effectiveKey) {
 
   let streamUpstream;
   try {
-    streamUpstream = await postJsonStream(targetUrl, converted.headers, converted.body, 120000);
+    streamUpstream = await postJsonStream(targetUrl, converted.headers, converted.body, 120000, req.proxyAllocationSignal);
   } catch (error) {
     return reportOpenCodeGatewayFailure({
       req,
@@ -2855,7 +2852,7 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
   if (streamResponses) {
     let streamUpstream;
     try {
-      streamUpstream = await postJsonStream(targetUrl, headers, geminiPayload, 120000);
+      streamUpstream = await postJsonStream(targetUrl, headers, geminiPayload, 120000, req.proxyAllocationSignal);
     } catch (error) {
       return reportOpenCodeGatewayFailure({
         req,
@@ -2917,7 +2914,7 @@ async function handleGeminiGatewayRequest(req, res, channel, effectiveKey) {
 
   let upstream;
   try {
-    upstream = await postJson(targetUrl, headers, geminiPayload, 120000);
+    upstream = await postJson(targetUrl, headers, geminiPayload, 120000, req.proxyAllocationSignal);
   } catch (error) {
     return reportOpenCodeGatewayFailure({
       req,
@@ -3060,6 +3057,8 @@ async function startOpenCodeProxyServer(options = {}) {
     currentPort = port;
 
     proxyApp = express();
+    proxyApp.use((req, res, next) => { req.proxyPlatform = 'opencode'; memoryPressureMiddleware(req, res, next); });
+    proxyApp.use(proxyRequestLifecycle);
 
     proxyApp.use((req, res, next) => {
       if (shouldParseJson(req)) {
@@ -3127,7 +3126,7 @@ async function startOpenCodeProxyServer(options = {}) {
 
     proxyApp.use(async (req, res) => {
       try {
-        const channel = await allocateChannel({ source: 'opencode', enableSessionBinding: false });
+        const channel = await allocateChannel({ source: 'opencode', enableSessionBinding: false, signal: req.proxyAllocationSignal });
         req.selectedChannel = channel;
 
         const release = (() => {
@@ -3141,9 +3140,7 @@ async function startOpenCodeProxyServer(options = {}) {
         })();
 
         req.__releaseChannel = release;
-        res.on('finish', release);
-        res.on('close', release);
-        res.on('error', release);
+        bindChannelRelease(req, res, release);
 
         broadcastSchedulerState('opencode', getSchedulerState('opencode'));
 
@@ -3246,7 +3243,7 @@ async function startOpenCodeProxyServer(options = {}) {
         }, (err) => {
           release();
           if (err) {
-            recordFailure(channel.id, 'opencode', err);
+            if (!req.proxyAllocationSignal?.aborted) recordFailure(channel.id, 'opencode', err);
             console.error('OpenCode proxy error:', err);
             if (res && !res.headersSent) {
               res.status(502).json({
@@ -3259,6 +3256,7 @@ async function startOpenCodeProxyServer(options = {}) {
           }
         });
       } catch (error) {
+        if (error.code === 'channel_queue_full') res.setHeader('Retry-After', '5');
         req.__releaseChannel?.();
         console.error('OpenCode channel allocation error:', error);
         if (!res.headersSent) {
@@ -3286,14 +3284,14 @@ async function startOpenCodeProxyServer(options = {}) {
       res.on('close', () => requestMetadata.delete(req));
       res.on('error', (err) => {
         if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Response error:', err);
-        recordFailure(metadata.channelId, 'opencode', err);
+        if (!req.proxyAllocationSignal?.aborted) recordFailure(metadata.channelId, 'opencode', err);
         requestMetadata.delete(req);
       });
 
       const statusCode = Number(proxyRes.statusCode) || 200;
       proxyRes.on('end', () => {
         if (statusCode >= 400) {
-          recordFailure(metadata.channelId, 'opencode', new Error(`OpenCode upstream HTTP ${statusCode}`));
+          if (!req.proxyAllocationSignal?.aborted) recordFailure(metadata.channelId, 'opencode', new Error(`OpenCode upstream HTTP ${statusCode}`));
         } else {
           recordSuccess(metadata.channelId, 'opencode');
         }
@@ -3301,7 +3299,7 @@ async function startOpenCodeProxyServer(options = {}) {
       });
       proxyRes.on('error', (err) => {
         if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Proxy response error:', err);
-        recordFailure(metadata.channelId, 'opencode', err);
+        if (!req.proxyAllocationSignal?.aborted) recordFailure(metadata.channelId, 'opencode', err);
         requestMetadata.delete(req);
       });
     });
@@ -3310,7 +3308,7 @@ async function startOpenCodeProxyServer(options = {}) {
     proxy.on('error', (err, req, res) => {
       console.error('OpenCode proxy error:', err);
       if (req && req.selectedChannel) {
-        recordFailure(req.selectedChannel.id, 'opencode', err);
+        if (!req.proxyAllocationSignal?.aborted) recordFailure(req.selectedChannel.id, 'opencode', err);
         req.__releaseChannel?.();
       }
       if (res && !res.headersSent) {

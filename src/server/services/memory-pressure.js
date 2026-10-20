@@ -10,6 +10,23 @@ let lowChecks = 0;
 let rejected = 0;
 let latestRss = 0;
 let persistenceBlocked = false;
+let peakRss = 0;
+let pauseTransitions = 0;
+let lastPause = null;
+
+function samplePressure() {
+  latestRss = process.memoryUsage().rss;
+  peakRss = Math.max(peakRss, latestRss);
+  persistenceBlocked = readPersistencePressure();
+  if (latestRss < PAUSE_RSS_BYTES && !persistenceBlocked) return false;
+  if (!paused) {
+    pauseTransitions += 1;
+    lastPause = { timestamp: Date.now(), rss: latestRss, persistenceBlocked };
+  }
+  paused = true;
+  lowChecks = 0;
+  return true;
+}
 
 function readPersistencePressure() {
   // Admission must not initialize storage or enter the statistics/driver cycle.
@@ -20,12 +37,7 @@ function readPersistencePressure() {
 }
 
 function checkMemoryPressure() {
-  latestRss = process.memoryUsage().rss;
-  persistenceBlocked = readPersistencePressure();
-  if (latestRss >= PAUSE_RSS_BYTES || persistenceBlocked) {
-    paused = true;
-    lowChecks = 0;
-  } else if (paused) {
+  if (!samplePressure() && paused) {
     lowChecks = latestRss < RESUME_RSS_BYTES ? lowChecks + 1 : 0;
     if (lowChecks >= 2) {
       paused = false;
@@ -51,17 +63,15 @@ function stopMemoryPressureMonitor() {
   rejected = 0;
   persistenceBlocked = false;
   latestRss = 0;
+  peakRss = 0;
+  pauseTransitions = 0;
+  lastPause = null;
 }
 
 function isUnderMemoryPressure() {
   startMemoryPressureMonitor();
   // Admission can trip the guard immediately, but only periodic checks recover it.
-  latestRss = process.memoryUsage().rss;
-  persistenceBlocked = readPersistencePressure();
-  if (latestRss >= PAUSE_RSS_BYTES || persistenceBlocked) {
-    paused = true;
-    lowChecks = 0;
-  }
+  samplePressure();
   return paused;
 }
 
@@ -90,7 +100,7 @@ function rejectUpgradeUnderPressure(req, socket) {
 }
 
 function getMemoryPressureDiagnostics() {
-  return { paused, rss: latestRss, lowChecks, rejected, persistenceBlocked };
+  return { paused, rss: latestRss, lowChecks, rejected, persistenceBlocked, peakRss, pauseTransitions, lastPause: lastPause && { ...lastPause } };
 }
 
 module.exports = {

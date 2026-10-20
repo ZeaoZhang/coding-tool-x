@@ -265,8 +265,21 @@ describe('statistics write queue', () => {
     mod.recordRequest(makeRequest());
 
     await expect(mod.shutdownStatistics()).resolves.toEqual(expect.objectContaining({
-      pending: 0
+      pending: 0, durable: true
     }));
+  });
+
+  test('shutdown reports an undurable backlog and keeps retrying after disk recovery', async () => {
+    const mod = loadService();
+    mod.recordRequest(makeRequest());
+    const append = vi.spyOn(fs.promises, 'appendFile').mockRejectedValue(new Error('disk unavailable'));
+    const write = vi.spyOn(fs, 'writeFileSync').mockImplementation(() => { throw new Error('spool unavailable'); });
+    const result = await mod.shutdownStatistics();
+    expect(result.durable).toBe(false);
+    expect(mod.getStatisticsQueueDiagnostics().pending).toBe(1);
+    append.mockRestore(); write.mockRestore();
+    await expect(mod.flushStatistics()).resolves.toMatchObject({ pending: 0 });
+    await expect(mod.shutdownStatistics()).resolves.toMatchObject({ durable: true });
   });
 });
 
@@ -504,5 +517,340 @@ describe('trend statistics', () => {
       name: 'gpt-4o-mini',
       data: [150]
     });
+  });
+});
+
+
+describe('bounded statistics persistence', () => {
+  test('bounds pending memory during a stalled writer and preserves overflow on disk', async () => {
+    const mod = loadService();
+    let release;
+    const append = vi.spyOn(fs.promises, 'appendFile').mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    mod.recordRequest(makeRequest({ id: 'active' }));
+    const flushing = mod.flushStatistics();
+    while (!release) await new Promise(resolve => setImmediate(resolve));
+    for (let index = 0; index < 1100; index++) mod.recordRequest(makeRequest({ id: `overflow-${index}` }));
+    expect(mod.getStatisticsQueueDiagnostics()).toEqual(expect.objectContaining({ pending: 1000, spooled: 101, active: 1 }));
+    expect(mod.getStatisticsQueueDiagnostics().bytes).toBeLessThanOrEqual(8 * 1024 * 1024);
+    expect(mod.getStatistics().global.totalRequests).toBe(1101);
+    release();
+    await flushing;
+    await mod.shutdownStatistics();
+    expect(mod.getStatisticsQueueDiagnostics().pending).toBe(0);
+    expect(mod.getStatisticsQueueDiagnostics().spooled).toBe(0);
+    expect(append.mock.calls.every(([, text]) => text.trim().split('\n').length <= 500)).toBe(true);
+  });
+});
+
+
+describe('statistics pressure recovery', () => {
+  test('does not retry successful file groups when a later group fails', async () => {
+    const mod = loadService();
+    const append = vi.spyOn(fs.promises, 'appendFile').mockResolvedValueOnce().mockRejectedValueOnce(new Error('disk full')).mockResolvedValue();
+    mod.recordRequest(makeRequest({ timestamp: '2025-06-15T04:00:00Z' }));
+    mod.recordRequest(makeRequest({ timestamp: '2025-06-16T04:00:00Z' }));
+    await mod.flushStatistics();
+    expect(mod.getStatisticsQueueDiagnostics().blocked).toBe(true);
+    await mod.flushStatistics();
+    expect(append.mock.calls.map(([file]) => path.basename(file))).toEqual(['15.jsonl', '16.jsonl', '16.jsonl']);
+    expect(mod.getStatisticsQueueDiagnostics().blocked).toBe(false);
+  });
+
+  test('backs off failed writes instead of spinning through microtasks', async () => {
+    const mod = loadService();
+    const append = vi.spyOn(fs.promises, 'appendFile').mockRejectedValue(new Error('disk full'));
+    mod.recordRequest(makeRequest());
+    await mod.flushStatistics();
+    for (let index = 0; index < 10; index++) await new Promise(resolve => setImmediate(resolve));
+    expect(append).toHaveBeenCalledTimes(1);
+    expect(mod.getStatisticsQueueDiagnostics().pending).toBe(1);
+    append.mockRestore();
+    await mod.flushStatistics();
+  });
+
+  test('evicts dirty dates to disk and reloads them without losing counts', async () => {
+    const mod = loadService();
+    for (let day = 1; day <= 30; day++) {
+      mod.recordRequest(makeRequest({ timestamp: `2025-06-${String(day).padStart(2, '0')}T04:00:00Z` }));
+    }
+    expect(mod.getStatisticsQueueDiagnostics().dailyCacheEntries).toBe(7);
+    expect(mod.getDailyStatistics('2025-06-01').summary.requests).toBe(1);
+    mod.recordRequest(makeRequest({ timestamp: '2025-06-01T04:00:00Z' }));
+    expect(mod.getDailyStatistics('2025-06-01').summary.requests).toBe(2);
+    await mod.shutdownStatistics();
+    expect(JSON.parse(fs.readFileSync(path.join(dailyStatsDir, '2025-06-01.json'), 'utf8')).summary.requests).toBe(2);
+  });
+
+  test('enforces the byte budget even below the entry limit', async () => {
+    const mod = loadService();
+    const project = 'x'.repeat(1024 * 1024);
+    for (let index = 0; index < 12; index++) mod.recordRequest(makeRequest({ id: `large-${index}`, project }));
+    const state = mod.getStatisticsQueueDiagnostics();
+    expect(state.bytes).toBeLessThanOrEqual(8 * 1024 * 1024);
+    expect(state.spooled).toBeGreaterThan(0);
+    await mod.shutdownStatistics();
+    expect(mod.getStatistics().global.totalRequests).toBe(12);
+  });
+
+  test('caps trend results and expires them without further reads', async () => {
+    vi.useFakeTimers();
+    const mod = loadService();
+    try {
+      for (let index = 0; index < 40; index++) await mod.getTrendStatistics({
+        startDate: '2025-06-01', endDate: '2025-06-01', filters: { model: `model-${index}` }
+      });
+      expect(mod.getStatisticsQueueDiagnostics().trendCacheEntries).toBe(32);
+      expect(mod.getStatisticsQueueDiagnostics().trendCacheBytes).toBeLessThanOrEqual(8 * 1024 * 1024);
+      await vi.advanceTimersByTimeAsync(30001);
+      expect(mod.getStatisticsQueueDiagnostics().trendCacheEntries).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+
+describe('statistics restart and admission', () => {
+  test('recovers overflow records, daily counters and aggregates from disk', async () => {
+    let mod = loadService();
+    mod.recordRequest(makeRequest({ id: 'recovered', timestamp: '2025-06-15T04:00:00Z' }));
+    const aggregate = mod.getStatistics();
+    const daily = mod.getDailyStatistics('2025-06-15');
+    await mod.shutdownStatistics();
+    const spool = path.join(testDir, 'statistics-pending');
+    fs.mkdirSync(path.join(spool, 'daily'), { recursive: true });
+    fs.writeFileSync(path.join(spool, 'aggregate.json'), JSON.stringify(aggregate));
+    fs.writeFileSync(path.join(spool, 'daily', '2025-06-15.json'), JSON.stringify(daily));
+    fs.writeFileSync(path.join(spool, 'recovered.entry'), JSON.stringify({ logEntry: makeRequest({ id: 'recovered', timestamp: '2025-06-15T04:00:00Z' }), date: '2025-06-15', logPersisted: true }));
+    const append = vi.spyOn(fs.promises, 'appendFile');
+    mod = loadService();
+    expect(mod.getStatistics().global.totalRequests).toBe(1);
+    await mod.shutdownStatistics();
+    expect(append).not.toHaveBeenCalled();
+    expect(mod.getStatisticsQueueDiagnostics().spooled).toBe(0);
+    expect(mod.getDailyStatistics('2025-06-15').summary.requests).toBe(1);
+  });
+
+  test('rejects disk overflow before changing counters when spool writes fail', async () => {
+    const mod = loadService();
+    for (let index = 0; index < 1000; index++) expect(mod.recordRequest(makeRequest({ id: `before-${index}` }))).toBe(true);
+    const write = fs.writeFileSync;
+    const failingWrite = vi.spyOn(fs, 'writeFileSync').mockImplementation((file, ...args) => {
+      if (String(file).endsWith('.entry.tmp')) throw new Error('disk full');
+      return write.call(fs, file, ...args);
+    });
+    expect(mod.recordRequest(makeRequest({ id: 'rejected' }))).toBe(false);
+    expect(mod.getStatistics().global.totalRequests).toBe(1000);
+    expect(mod.getStatisticsQueueDiagnostics()).toEqual(expect.objectContaining({ pending: 1000, spooled: 0, blocked: true, dropped: 0, rejected: 1 }));
+    failingWrite.mockRestore();
+    await mod.shutdownStatistics();
+  });
+
+  test('does not double count active or already appended records in trend queries', async () => {
+    const mod = loadService();
+    let release;
+    vi.spyOn(fs.promises, 'appendFile').mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    mod.recordRequest(makeRequest({ timestamp: '2025-06-15T04:00:00Z' }));
+    const flushing = mod.flushStatistics();
+    while (!release) await new Promise(resolve => setImmediate(resolve));
+    const result = await mod.getTrendStatistics({ startDate: '2025-06-15', endDate: '2025-06-15', granularity: 'hour', groupBy: 'model', metric: 'requests' });
+    release();
+    await flushing;
+    expect(result.series[0].data.reduce((sum, value) => sum + value, 0)).toBe(1);
+  });
+});
+
+
+describe('atomic overflow aggregate recovery', () => {
+  test('recovers aggregate and daily counts when spool commit succeeds but checkpoint writes fail', async () => {
+    let mod = loadService();
+    mod.recordRequest(makeRequest({ timestamp: '2025-06-15T04:00:00Z' }));
+    await mod.flushStatistics();
+    const write = fs.writeFileSync;
+    const failure = vi.spyOn(fs, 'writeFileSync').mockImplementation((file, ...args) => {
+      if (String(file).includes('statistics-pending/daily/') || String(file).endsWith('aggregate.json.tmp')) throw new Error('checkpoint disk failure');
+      return write.call(fs, file, ...args);
+    });
+    for (let index = 0; index < 7; index++) mod.recordRequest(makeRequest({ id: `before-${index}`, project: 'x'.repeat(1024 * 1024), timestamp: '2025-06-15T04:00:00Z' }));
+    expect(mod.recordRequest(makeRequest({ id: 'durable-overflow', project: 'x'.repeat(1024 * 1024), timestamp: '2025-06-15T04:00:00Z' }))).toBe(true);
+    const spool = path.join(testDir, 'statistics-pending');
+    const entryName = fs.readdirSync(spool).find(name => name.endsWith('.entry'));
+    const durableRecord = fs.readFileSync(path.join(spool, entryName), 'utf8');
+    expect(JSON.parse(durableRecord).recovery.aggregateBefore.global.totalRequests).toBe(8);
+    expect(mod.getStatisticsQueueDiagnostics().blocked).toBe(true);
+    vi.spyOn(fs.promises, 'appendFile').mockRejectedValue(new Error('destination unavailable'));
+    await mod.shutdownStatistics();
+    failure.mockRestore();
+    vi.restoreAllMocks();
+    // Only the atomically committed overflow record survived this crash boundary.
+    fs.rmSync(spool, { recursive: true, force: true });
+    fs.mkdirSync(spool, { recursive: true });
+    fs.writeFileSync(path.join(spool, entryName), durableRecord);
+    mod = loadService();
+    expect(mod.getStatistics().global.totalRequests).toBe(9);
+    expect(mod.getStatistics().global.totalTokens).toBe(1350);
+    expect(mod.getDailyStatistics('2025-06-15').summary.requests).toBe(9);
+    await mod.shutdownStatistics();
+    expect(JSON.parse(fs.readFileSync(summaryFile, 'utf8')).global.totalRequests).toBe(9);
+    expect(JSON.parse(fs.readFileSync(path.join(dailyStatsDir, '2025-06-15.json'), 'utf8')).summary.requests).toBe(9);
+    mod = loadService();
+    expect(mod.getStatistics().global.totalRequests).toBe(9);
+  });
+
+  test('truncates huge optional metadata without blocking native consumption or losing token counts', async () => {
+    const mod = loadService();
+    expect(mod.recordRequest(makeRequest({ project: 'x'.repeat(9 * 1024 * 1024) }))).toBe(true);
+    expect(mod.getStatisticsQueueDiagnostics()).toEqual(expect.objectContaining({ blocked: false, pending: 1, spooled: 0 }));
+    expect(mod.getStatisticsQueueDiagnostics().bytes).toBeLessThan(20000);
+    expect(mod.getStatistics().global.totalTokens).toBe(150);
+    await mod.shutdownStatistics();
+  });
+});
+
+
+test('keeps atomic recovery state after log append until aggregate persistence succeeds', async () => {
+  let mod = loadService();
+  const aggregateBefore = mod.getStatistics();
+  const dailyBefore = mod.getDailyStatistics('2025-06-15');
+  await mod.shutdownStatistics();
+  const spool = path.join(testDir, 'statistics-pending');
+  fs.mkdirSync(spool, { recursive: true });
+  const file = path.join(spool, 'atomic.entry');
+  fs.writeFileSync(file, JSON.stringify({ logEntry: makeRequest({ timestamp: '2025-06-15T04:00:00Z' }), date: '2025-06-15', recovery: { aggregateBefore, dailyBefore } }));
+  const write = fs.promises.writeFile;
+  const failure = vi.spyOn(fs.promises, 'writeFile').mockImplementation((target, ...args) => {
+    if (target === summaryFile) return Promise.reject(new Error('aggregate unavailable'));
+    return write.call(fs.promises, target, ...args);
+  });
+  const append = vi.spyOn(fs.promises, 'appendFile');
+  mod = loadService();
+  await mod.flushStatistics();
+  const durable = JSON.parse(fs.readFileSync(file, 'utf8'));
+  expect(durable.logPersisted).toBe(true);
+  expect(durable.recovery.aggregateBefore.global.totalRequests).toBe(0);
+  await mod.shutdownStatistics();
+  failure.mockRestore();
+  fs.rmSync(path.join(spool, 'aggregate.json'), { force: true });
+  fs.rmSync(path.join(spool, 'daily'), { recursive: true, force: true });
+  mod = loadService();
+  await mod.shutdownStatistics();
+  expect(mod.getStatistics().global.totalRequests).toBe(1);
+  expect(mod.getDailyStatistics('2025-06-15').summary.requests).toBe(1);
+  expect(append).toHaveBeenCalledTimes(1);
+});
+
+
+test('a killed process between log append and spool marker does not duplicate the recovered request', async () => {
+  let mod = loadService();
+  const aggregateBefore = mod.getStatistics();
+  const dailyBefore = mod.getDailyStatistics('2025-06-15');
+  await mod.shutdownStatistics();
+  const spool = path.join(testDir, 'statistics-pending');
+  fs.mkdirSync(spool, { recursive: true });
+  const spoolFile = path.join(spool, 'crash.entry');
+  const writeId = require('crypto').randomUUID();
+  fs.writeFileSync(spoolFile, JSON.stringify({ writeId, logEntry: { ...makeRequest({ timestamp: '2025-06-15T04:00:00Z' }), _statisticsWriteId: writeId }, date: '2025-06-15', recovery: { aggregateBefore, dailyBefore } }));
+  const pathsModule = require.resolve('../../../src/config/paths');
+  const serviceModule = require.resolve('../../../src/server/services/statistics-service');
+  const childCode = `
+    const fs = require('fs');
+    const pathsModule = ${JSON.stringify(pathsModule)};
+    require.cache[pathsModule] = { id: pathsModule, filename: pathsModule, loaded: true, exports: { PATHS: { statistics: ${JSON.stringify({ summary: summaryFile, dailyStats: dailyStatsDir, requestLogs: requestLogsDir, proxyLogs: proxyLogsFile })} } } };
+    const originalWrite = fs.writeFileSync;
+    fs.writeFileSync = function(file, ...args) {
+      if (file === ${JSON.stringify(spoolFile + '.tmp')}) process.kill(process.pid, 'SIGKILL');
+      return originalWrite.call(fs, file, ...args);
+    };
+    require(${JSON.stringify(serviceModule)}).flushStatistics().then(() => process.exit(10));
+  `;
+  const result = require('child_process').spawnSync(process.execPath, ['-e', childCode], { timeout: 10000 });
+  expect(result.signal).toBe('SIGKILL');
+  expect(JSON.parse(fs.readFileSync(spoolFile, 'utf8')).logPersisted).not.toBe(true);
+  const logFile = path.join(requestLogsDir, '2025-06', '15.jsonl');
+  expect(fs.readFileSync(logFile, 'utf8').trim().split('\n')).toHaveLength(1);
+  const append = vi.spyOn(fs.promises, 'appendFile');
+  const readFile = vi.spyOn(fs, 'readFileSync');
+  const read = vi.spyOn(fs, 'readSync');
+  mod = loadService();
+  await mod.shutdownStatistics();
+  expect(append).not.toHaveBeenCalled();
+  expect(read.mock.calls.every(([, buffer]) => buffer.length <= 64 * 1024)).toBe(true);
+  expect(readFile.mock.calls.some(([file]) => file === logFile)).toBe(false);
+  expect(mod.getStatistics().global.totalRequests).toBe(1);
+  expect(mod.getDailyStatistics('2025-06-15').summary.requests).toBe(1);
+  readFile.mockRestore();
+  expect(fs.readFileSync(logFile, 'utf8').trim().split('\n')).toHaveLength(1);
+});
+
+test('a partial final append is truncated before idempotent replay', async () => {
+  let mod = loadService();
+  const aggregateBefore = mod.getStatistics();
+  const dailyBefore = mod.getDailyStatistics('2025-06-15');
+  await mod.shutdownStatistics();
+  const spool = path.join(testDir, 'statistics-pending');
+  fs.mkdirSync(spool, { recursive: true });
+  const writeId = require('crypto').randomUUID();
+  const logEntry = { ...makeRequest({ timestamp: '2025-06-15T04:00:00Z' }), _statisticsWriteId: writeId };
+  fs.writeFileSync(path.join(spool, 'partial.entry'), JSON.stringify({ writeId, logEntry, date: '2025-06-15', recovery: { aggregateBefore, dailyBefore } }));
+  const logFile = path.join(requestLogsDir, '2025-06', '15.jsonl');
+  fs.mkdirSync(path.dirname(logFile), { recursive: true });
+  fs.writeFileSync(logFile, JSON.stringify(logEntry).slice(0, -1));
+  mod = loadService();
+  await mod.shutdownStatistics();
+  const lines = fs.readFileSync(logFile, 'utf8').trim().split('\n');
+  expect(lines).toHaveLength(1);
+  expect(JSON.parse(lines[0])._statisticsWriteId).toBe(writeId);
+  expect(mod.getStatistics().global.totalRequests).toBe(1);
+});
+
+
+describe('preserving final JSON without a newline', () => {
+  async function prepareTail(makeTail) {
+    let mod = loadService();
+    const aggregateBefore = mod.getStatistics();
+    const dailyBefore = mod.getDailyStatistics('2025-06-15');
+    await mod.shutdownStatistics();
+    const spool = path.join(testDir, 'statistics-pending');
+    fs.mkdirSync(spool, { recursive: true });
+    const writeId = require('crypto').randomUUID();
+    const logEntry = { ...makeRequest({ timestamp: '2025-06-15T04:00:00Z' }), _statisticsWriteId: writeId };
+    fs.writeFileSync(path.join(spool, 'tail.entry'), JSON.stringify({ writeId, logEntry, date: '2025-06-15', recovery: { aggregateBefore, dailyBefore } }));
+    const logFile = path.join(requestLogsDir, '2025-06', '15.jsonl');
+    fs.mkdirSync(path.dirname(logFile), { recursive: true });
+    const tail = makeTail(logEntry, writeId);
+    fs.writeFileSync(logFile, tail);
+    return { logFile, tail };
+  }
+
+  test('preserves a complete large legacy record and appends the recovered request separately', async () => {
+    const legacy = { id: 'legacy', project: '中文😀'.repeat(100000) };
+    const { logFile } = await prepareTail(() => JSON.stringify(legacy));
+    const read = vi.spyOn(fs, 'readSync');
+    const mod = loadService();
+    await mod.shutdownStatistics();
+    const lines = fs.readFileSync(logFile, 'utf8').trim().split('\n');
+    expect(lines).toHaveLength(2);
+    expect(JSON.parse(lines[0])).toEqual(legacy);
+    expect(JSON.parse(lines[1]).id).toBe('req-1');
+    expect(read.mock.calls.every(([, buffer]) => buffer.length <= 64 * 1024)).toBe(true);
+  });
+
+  test('recognizes the committed write id in complete JSON missing only the newline', async () => {
+    const { logFile } = await prepareTail((logEntry, writeId) => JSON.stringify({ _statisticsWriteId: writeId, ...logEntry }));
+    const append = vi.spyOn(fs.promises, 'appendFile');
+    const mod = loadService();
+    await mod.shutdownStatistics();
+    expect(append).not.toHaveBeenCalled();
+    expect(fs.readFileSync(logFile, 'utf8').trim().split('\n')).toHaveLength(1);
+    expect(fs.readFileSync(logFile, 'utf8').endsWith('\n')).toBe(true);
+    expect(mod.getStatistics().global.totalRequests).toBe(1);
+  });
+
+  test('preserves tail bytes and blocks recovery when validation reaches a depth limit', async () => {
+    const { logFile, tail } = await prepareTail(() => '{"project":' + '['.repeat(140) + '0' + ']'.repeat(140) + '}');
+    const append = vi.spyOn(fs.promises, 'appendFile');
+    const mod = loadService();
+    await mod.flushStatistics();
+    expect(mod.getStatisticsQueueDiagnostics().blocked).toBe(true);
+    expect(append).not.toHaveBeenCalled();
+    expect(fs.readFileSync(logFile, 'utf8')).toBe(tail);
   });
 });

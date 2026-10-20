@@ -23,6 +23,99 @@ const getPlatformStatePath = typeof pathsModule.getPlatformStatePath === 'functi
   : (category, platform) => PATHS[category]?.[platform];
 const latestProxyRequestSnapshots = new Map();
 
+// Includes the active write; slow storage cannot retain an unbounded body queue.
+const MAX_LOG_BYTES = 8 * 1024 * 1024;
+const MAX_METADATA_BYTES = 256 * 1024;
+let logBytes = 0;
+let logWriting = false;
+let droppedSnapshots = 0;
+let skippedTemplates = 0;
+const logQueue = [];
+const latestWrites = new Map();
+
+function writeLatest(filePath, data) {
+  let state = latestWrites.get(filePath);
+  if (state) { state.pending = data; return; }
+  state = { pending: null, activeBytes: Buffer.byteLength(data) };
+  latestWrites.set(filePath, state);
+  const write = (value) => {
+    state.activeBytes = Buffer.byteLength(value);
+    const finish = (error) => {
+      if (error) console.error('[request-logger] Failed to write latest metadata:', error);
+      if (state.pending !== null) {
+        const next = state.pending;
+        state.pending = null;
+        write(next);
+      } else latestWrites.delete(filePath);
+    };
+    try { fs.writeFile(filePath, value, finish); } catch (error) { finish(error); }
+  };
+  write(data);
+}
+
+function drainLogQueue() {
+  if (logWriting || !logQueue.length) return;
+  const entry = logQueue.shift();
+  logWriting = true;
+  const finish = (error) => {
+    logBytes -= entry.bytes;
+    logWriting = false;
+    if (error) console.error('[request-logger] Failed to append request log:', error);
+    drainLogQueue();
+  };
+  try { fs.appendFile(entry.filePath, entry.data, finish); } catch (error) { finish(error); }
+}
+
+function escapedStringBytes(value) {
+  let bytes = Buffer.byteLength(value) + 2;
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code === 34 || code === 92 || [8, 9, 10, 12, 13].includes(code)) bytes++;
+    else if (code < 32) bytes += 5;
+  }
+  return bytes;
+}
+
+function boundedStringify(payload, budget) {
+  let estimated = 0;
+  const data = JSON.stringify(payload, (key, value) => {
+    estimated += escapedStringBytes(key) + 4;
+    if (typeof value === 'string') estimated += escapedStringBytes(value);
+    if (estimated > budget) throw new RangeError('Request log queue budget exceeded');
+    return value;
+  });
+  if (Buffer.byteLength(data) + 1 > budget) throw new RangeError('Request log queue budget exceeded');
+  return data;
+}
+
+function appendBoundedLog(filePath, payload) {
+  let data;
+  try { data = boundedStringify(payload, MAX_LOG_BYTES - logBytes) + '\n'; }
+  catch { droppedSnapshots++; return; }
+  const bytes = Buffer.byteLength(data);
+  logBytes += bytes;
+  logQueue.push({ filePath, data, bytes });
+  drainLogQueue();
+}
+
+function getRequestLoggerDiagnostics() {
+  return {
+    queuedBytes: logBytes, pendingSnapshots: logQueue.length + Number(logWriting),
+    droppedSnapshots, skippedTemplates, metadataEntries: latestProxyRequestSnapshots.size,
+    latestWriteBytes: [...latestWrites.values()].reduce((sum, state) => sum + state.activeBytes +
+      (state.pending === null ? 0 : Buffer.byteLength(state.pending)), 0)
+  };
+}
+
+function rememberLatestSnapshot(source, compact) {
+  latestProxyRequestSnapshots.delete(source);
+  latestProxyRequestSnapshots.set(source, compact);
+  while (latestProxyRequestSnapshots.size > 16) {
+    latestProxyRequestSnapshots.delete(latestProxyRequestSnapshots.keys().next().value);
+  }
+  return compact;
+}
+
 function compactProxyRequestSnapshot(payload = {}) {
   const request = payload.request && typeof payload.request === 'object' ? payload.request : {};
   const route = payload.route && typeof payload.route === 'object' ? payload.route : undefined;
@@ -72,18 +165,16 @@ function persistProxyRequestSnapshot(source, payload) {
   if (!isProxyRequestLoggingEnabled()) return;
 
   try {
-    latestProxyRequestSnapshots.set(
-      String(source || '').trim().toLowerCase(),
-      compactProxyRequestSnapshot(payload)
-    );
-    const logPath = getPlatformStatePath('requestSnapshots', source);
+    const normalizedSource = String(source || '').trim().toLowerCase();
+    if (!normalizedSource) return;
+    const compact = compactProxyRequestSnapshot(payload);
+    const metadata = boundedStringify(compact, MAX_METADATA_BYTES);
+    rememberLatestSnapshot(normalizedSource, compact);
+    const logPath = getPlatformStatePath('requestSnapshots', normalizedSource);
     if (!logPath) return;
     ensureDir(path.dirname(logPath));
-    fs.appendFile(logPath, `${JSON.stringify(payload)}\n`, (error) => {
-      if (error) {
-        console.error(`[request-logger] Failed to persist ${source} request snapshot:`, error);
-      }
-    });
+    writeLatest(`${logPath}.latest.json`, metadata);
+    appendBoundedLog(logPath, payload);
   } catch (error) {
     console.error(`[request-logger] Failed to persist ${source} request snapshot:`, error);
   }
@@ -92,18 +183,29 @@ function persistProxyRequestSnapshot(source, payload) {
 function loadLatestProxyRequestSnapshot(source) {
   const normalizedSource = String(source || '').trim().toLowerCase();
   if (latestProxyRequestSnapshots.has(normalizedSource)) {
-    return latestProxyRequestSnapshots.get(normalizedSource);
+    return rememberLatestSnapshot(normalizedSource, latestProxyRequestSnapshots.get(normalizedSource));
   }
   const logPath = getPlatformStatePath('requestSnapshots', normalizedSource);
   if (!logPath) return {};
+
+  try {
+    const metadataPath = `${logPath}.latest.json`;
+    if (fs.statSync(metadataPath).size <= MAX_METADATA_BYTES) {
+      const compact = compactProxyRequestSnapshot(JSON.parse(fs.readFileSync(metadataPath, 'utf8')));
+      rememberLatestSnapshot(normalizedSource, compact);
+      return compact;
+    }
+  } catch { /* Legacy logs have no compact metadata sidecar. */ }
 
   let fd;
   try {
     fd = fs.openSync(logPath, 'r');
     const fileSize = fs.fstatSync(fd).size;
-    const chunkSize = 1024 * 1024;
+    const chunkSize = 64 * 1024;
     let position = fileSize;
     let parts = [];
+    let lineBytes = 0;
+    let skippingOversizedLine = false;
     let bytesScanned = 0;
     while (position > 0) {
       const bytesToRead = Math.min(position, chunkSize);
@@ -114,23 +216,39 @@ function loadLatestProxyRequestSnapshot(source) {
       let segmentEnd = chunk.length;
       for (let index = chunk.length - 1; index >= 0; index -= 1) {
         if (chunk[index] !== 10) continue;
-        if (segmentEnd > index + 1) parts.push(chunk.subarray(index + 1, segmentEnd));
-        const line = Buffer.concat(parts.reverse()).toString('utf8');
+        const segment = chunk.subarray(index + 1, segmentEnd);
+        lineBytes += segment.length;
+        if (lineBytes > MAX_METADATA_BYTES) skippingOversizedLine = true;
+        if (!skippingOversizedLine) parts.push(segment);
+        const line = skippingOversizedLine ? '' : Buffer.concat(parts.reverse()).toString('utf8');
         parts = [];
+        lineBytes = 0;
+        skippingOversizedLine = false;
         segmentEnd = index;
         if (!line.trim()) continue;
         try {
           const entry = JSON.parse(line);
           if (entry && typeof entry === 'object') {
             const compact = compactProxyRequestSnapshot(entry);
-            latestProxyRequestSnapshots.set(normalizedSource, compact);
+            rememberLatestSnapshot(normalizedSource, compact);
             return compact;
           }
         } catch {
           // Ignore malformed records and continue scanning older complete lines.
         }
       }
-      if (segmentEnd > 0) parts.push(chunk.subarray(0, segmentEnd));
+      if (segmentEnd > 0) {
+        lineBytes += segmentEnd;
+        if (lineBytes > MAX_METADATA_BYTES) { skippingOversizedLine = true; parts = []; }
+        if (!skippingOversizedLine) parts.push(chunk.subarray(0, segmentEnd));
+      }
+      if (position === 0 && !skippingOversizedLine && parts.length) {
+        try {
+          const compact = compactProxyRequestSnapshot(JSON.parse(Buffer.concat(parts.reverse()).toString('utf8')));
+          rememberLatestSnapshot(normalizedSource, compact);
+          return compact;
+        } catch { /* Ignore a malformed oldest record. */ }
+      }
       if (bytesScanned > 128 * 1024 * 1024) break;
     }
   } catch {
@@ -195,11 +313,7 @@ function createApiRequestLogger() {
       try {
         ensureDir(PATHS.logs);
         const logPath = path.join(PATHS.logs, 'api-requests.jsonl');
-        fs.appendFile(logPath, `${JSON.stringify(entry)}\n`, (err) => {
-          if (err) {
-            console.error('[request-logger] Failed to write API request log:', err);
-          }
-        });
+        appendBoundedLog(logPath, entry);
       } catch (err) {
         console.error('[request-logger] Failed to write API request log:', err);
       }
@@ -358,7 +472,7 @@ const FALLBACK_CLAUDE_TOOLS = Object.freeze([
 
 /**
  * 从 Claude 请求 body 提取模板（system/tools/userId），覆盖写入单一文件。
- * 无需环境变量开关，默认始终执行（文件极小，仅保留最新一次有效模板）。
+ * 无需环境变量开关，默认始终执行（合并待写版本，仅保留最新一次有效模板）。
  * @param {object} body - 请求 body 对象
  */
 function persistClaudeRequestTemplate(body) {
@@ -378,9 +492,10 @@ function persistClaudeRequestTemplate(body) {
   try {
     ensureDir(path.dirname(CLAUDE_TEMPLATE_PATH));
     const template = { updatedAt: Date.now(), userId, system, tools };
-    fs.writeFile(CLAUDE_TEMPLATE_PATH, JSON.stringify(template), (err) => {
-      if (err) console.error('[request-logger] Failed to write claude-request-template.json:', err);
-    });
+    let serialized;
+    try { serialized = boundedStringify(template, MAX_LOG_BYTES); }
+    catch { skippedTemplates++; return; }
+    writeLatest(CLAUDE_TEMPLATE_PATH, serialized);
   } catch (err) {
     console.error('[request-logger] Failed to write claude-request-template.json:', err);
   }
@@ -407,6 +522,7 @@ function loadClaudeRequestTemplate() {
 }
 
 module.exports = {
+  getRequestLoggerDiagnostics,
   isProxyRequestLoggingEnabled,
   isApiRequestLoggingEnabled,
   persistProxyRequestSnapshot,

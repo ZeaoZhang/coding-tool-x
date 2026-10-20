@@ -473,3 +473,38 @@ describe('registry-backed channel sources', () => {
     }
   });
 });
+
+describe('bounded scheduler retention', () => {
+  it('limits each platform to 64 queued allocations and removes canceled waits', async () => {
+    getAllChannels.mockReturnValue([makeChannel('only', { maxConcurrency: 1 })]);
+    const active = await allocateChannel({ source: 'claude', enableSessionBinding: false });
+    const controllers = Array.from({ length: 64 }, () => new AbortController());
+    const queued = controllers.map(controller => allocateChannel({ source: 'claude', signal: controller.signal }).catch(error => error));
+    await expect(allocateChannel({ source: 'claude' })).rejects.toMatchObject({ statusCode: 503, code: 'channel_queue_full' });
+    expect(getSchedulerState('claude').pending).toBe(64);
+    controllers.forEach(controller => controller.abort());
+    await Promise.all(queued);
+    expect(getSchedulerState('claude').pending).toBe(0);
+    releaseChannel(active.id, 'claude');
+    expect(require(SCHEDULER_PATH).getChannelSchedulerDiagnostics().claude.inflight).toBe(0);
+  });
+
+  it('bounds idle session bindings while preserving recent affinity', async () => {
+    getAllChannels.mockReturnValue([makeChannel('only')]);
+    for (let index = 0; index < 1100; index++) {
+      const channel = await allocateChannel({ source: 'claude', sessionId: `session-${index}` });
+      releaseChannel(channel.id, 'claude');
+    }
+    expect(require(SCHEDULER_PATH).getChannelSchedulerDiagnostics().claude.bindings).toBe(1024);
+  });
+});
+
+
+test('does not retain object-valued or oversized request session identities', async () => {
+  getAllChannels.mockReturnValue([makeChannel('only')]);
+  for (const sessionId of [{ messages: ['retained request'] }, 'x'.repeat(2049)]) {
+    const channel = await allocateChannel({ source: 'claude', sessionId });
+    releaseChannel(channel.id, 'claude');
+  }
+  expect(require(SCHEDULER_PATH).getChannelSchedulerDiagnostics().claude.bindings).toBe(0);
+});

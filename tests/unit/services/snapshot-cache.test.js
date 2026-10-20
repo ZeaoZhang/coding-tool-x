@@ -346,4 +346,81 @@ describe('snapshot-cache service', () => {
     resolveRefresh({ count: 2 });
     await sleep(10);
   });
+  test('bounds snapshots by count with LRU reload and keeps oversized entries on disk', async () => {
+    const { service } = loadService();
+    for (let i = 0; i < 64; i += 1) {
+      await service.refreshSnapshot(`bounded-${i}`, () => ({ i }));
+    }
+    await service.getSnapshot('bounded-0');
+    await service.refreshSnapshot('bounded-64', () => ({ i: 64 }));
+    expect(service._test.snapshots.size).toBe(64);
+    expect(service._test.snapshots.has('bounded-0')).toBe(true);
+    expect(service._test.snapshots.has('bounded-1')).toBe(false);
+    expect((await service.getSnapshot('bounded-1')).value).toEqual({ i: 1 });
+    await service.refreshSnapshot('oversized', () => ({ text: 'x'.repeat(32 * 1024 * 1024) }));
+    expect(service._test.snapshots.has('oversized')).toBe(false);
+    expect(fs.existsSync(service._test.getSnapshotPath('oversized'))).toBe(true);
+    expect(service.getSnapshotCacheDiagnostics().bytes).toBeLessThanOrEqual(32 * 1024 * 1024);
+  });
+
+  test('enforces the byte budget even when fewer than 64 snapshots are retained', async () => {
+    const { service } = loadService();
+    for (let i = 0; i < 6; i += 1) {
+      await service.refreshSnapshot(`large-${i}`, () => ({ text: 'x'.repeat(6 * 1024 * 1024) }));
+    }
+    expect(service._test.snapshots.size).toBeLessThan(6);
+    expect(service.getSnapshotCacheDiagnostics().bytes).toBeLessThanOrEqual(32 * 1024 * 1024);
+  });
+
+  test('an invalidated old refresh cannot overwrite a newer generation', async () => {
+    const { service } = loadService();
+    let releaseOld;
+    const old = service.refreshSnapshot('race', () => new Promise(resolve => { releaseOld = resolve; }));
+    await Promise.resolve();
+    service.invalidateSnapshot('race');
+    await service.refreshSnapshot('race', () => ({ generation: 'new' }));
+    releaseOld({ generation: 'old' });
+    await old;
+    expect((await service.getSnapshot('race')).value).toEqual({ generation: 'new' });
+    expect(service.getSnapshotCacheDiagnostics().activeRefreshes).toBe(0);
+  });
+
+  test('clearing queued background refreshes settles their promises and releases state', async () => {
+    const { service } = loadService();
+    const queued = service.refreshSnapshot('cancelled', () => ({ stale: true }), { defer: true, deferMs: 10000 });
+    service.clearSnapshotCache();
+    await expect(queued).rejects.toThrow(/cancel/i);
+    expect(service.getSnapshotCacheDiagnostics().queuedRefreshes).toBe(0);
+    expect(service.getSnapshotCacheDiagnostics().activeRefreshes).toBe(0);
+  });
+
+  test('bounds failures and refresh admission without retaining invalidation sidecars', async () => {
+    const { service } = loadService();
+    for (let i = 0; i < 100; i += 1) {
+      await expect(service.refreshSnapshot(`error-${i}`, () => { throw new Error('failed'); })).rejects.toThrow('failed');
+      service.invalidateSnapshot(`unused-${i}`);
+    }
+    expect(service.getSnapshotCacheDiagnostics().errors).toBe(64);
+    const queued = Array.from({ length: 64 }, (_, i) => service.refreshSnapshot(`queued-${i}`, () => ({}), { defer: true, deferMs: 10000 }));
+    await expect(service.refreshSnapshot('rejected', () => ({}))).rejects.toThrow(/capacity/);
+    expect(service.getSnapshotCacheDiagnostics().activeRefreshes).toBe(64);
+    service.clearSnapshotCache();
+    await Promise.allSettled(queued);
+    expect(service.getSnapshotCacheDiagnostics()).toMatchObject({ activeRefreshes: 0, queuedRefreshes: 0, errors: 0 });
+  });
+
+  test('failure from an invalidated generation cannot attach an error to a new snapshot', async () => {
+    const { service } = loadService();
+    let rejectOld;
+    const old = service.refreshSnapshot('error-race', () => new Promise((resolve, reject) => { rejectOld = reject; }));
+    await Promise.resolve();
+    service.invalidateSnapshot('error-race');
+    await service.refreshSnapshot('error-race', () => ({ generation: 'new' }));
+    rejectOld(new Error('old failure'));
+    await expect(old).rejects.toThrow('old failure');
+    const current = await service.getSnapshot('error-race');
+    expect(current.value).toEqual({ generation: 'new' });
+    expect(current.meta.error).toBe(null);
+  });
+
 });

@@ -112,6 +112,7 @@ function createStubs() {
       getAllChannels: vi.fn(() => [])
     }],
     ['../../../src/server/services/request-logger', {
+      isProxyRequestLoggingEnabled: vi.fn(() => false),
       persistProxyRequestSnapshot,
       persistClaudeRequestTemplate,
       loadClaudeRequestTemplate
@@ -717,4 +718,30 @@ describe('startProxyServer', () => {
 
     expect(recordRequest).not.toHaveBeenCalled();
   });
+});
+
+test('cancels the OpenAI conversion upstream when the Claude client disconnects', async () => {
+  let upstreamClosed = false;
+  upstreamServer = http.createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write('data: {"id":"stream","model":"model","choices":[{"index":0,"delta":{"content":"hello"}}]}\n\n');
+    res.once('close', () => { upstreamClosed = true; });
+  });
+  await new Promise(resolve => upstreamServer.listen(0, '127.0.0.1', resolve));
+  allocateChannel.mockResolvedValue({ id: 'conversion-stream', name: 'Conversion', sourceType: 'openai_compatible',
+    providerApi: 'openai-completions', baseUrl: `http://127.0.0.1:${upstreamServer.address().port}/v1` });
+  proxyModule = require(PROXY_SERVER_PATH);
+  await proxyModule.startProxyServer();
+  await new Promise((resolve, reject) => {
+    const client = http.request({ hostname: '127.0.0.1', port: proxyPort,
+      path: '/v1/messages', method: 'POST', headers: { 'content-type': 'application/json' } }, response => {
+      response.on('error', () => {});
+      response.once('data', () => { response.destroy(); client.destroy(); resolve(); });
+    });
+    client.once('error', reject);
+    client.end('{"model":"model","messages":[{"role":"user","content":"hello"}],"stream":true}');
+  });
+  await vi.waitFor(() => expect(upstreamClosed).toBe(true));
+  expect(releaseChannel).toHaveBeenCalledTimes(1);
+  expect(recordFailure).not.toHaveBeenCalled();
 });

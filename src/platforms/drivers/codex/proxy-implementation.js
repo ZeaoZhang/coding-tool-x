@@ -15,7 +15,8 @@ const {
   isChatCompletionsPath,
   ensureOpenAiStreamUsage
 } = require('../../../shared/proxy-utils');
-const { bindProxyRequest, prepareProxyResponse } = require('../../../shared/proxy-transport');
+const { bindProxyRequest, prepareProxyResponse, proxyRequestLifecycle, bindChannelRelease } = require('../../../shared/proxy-transport');
+const { memoryPressureMiddleware } = require('../../../server/services/memory-pressure');
 const { attachServerShutdownHandling, expediteServerShutdown, PROXY_IDLE_TIMEOUT_MS } = require('../../../server/services/server-shutdown');
 
 let proxyServer = null;
@@ -68,6 +69,8 @@ async function startCodexProxyServer(options = {}) {
     currentPort = port;
 
     proxyApp = express();
+    proxyApp.use((req, res, next) => { req.proxyPlatform = 'codex'; memoryPressureMiddleware(req, res, next); });
+    proxyApp.use(proxyRequestLifecycle);
 
     proxyApp.use((req, res, next) => {
       if (shouldParseJson(req)) {
@@ -114,6 +117,7 @@ async function startCodexProxyServer(options = {}) {
       try {
         const channel = await allocateChannel({
           source: 'codex',
+          signal: req.proxyAllocationSignal,
           enableSessionBinding: false,
           excludeChannelIds: getCodexProxyExcludedChannelIds()
         });
@@ -130,9 +134,7 @@ async function startCodexProxyServer(options = {}) {
         })();
 
         req.__releaseChannel = release;
-        res.on('finish', release);
-        res.on('close', release);
-        res.on('error', release);
+        bindChannelRelease(req, res, release);
         if (res.destroyed || res.writableEnded) { release(); return; }
 
         broadcastSchedulerState('codex', getSchedulerState('codex'));
@@ -210,7 +212,7 @@ async function startCodexProxyServer(options = {}) {
         }, (err) => {
           release();
           if (err) {
-            recordFailure(channel.id, 'codex', err);
+            if (!req.proxyAllocationSignal?.aborted) recordFailure(channel.id, 'codex', err);
             console.error('Codex proxy error:', err);
             if (res && !res.headersSent) {
               res.status(502).json({
@@ -223,6 +225,7 @@ async function startCodexProxyServer(options = {}) {
           }
         });
       } catch (error) {
+        if (error.code === 'channel_queue_full') res.setHeader('Retry-After', '5');
         req.__releaseChannel?.();
         console.error('Codex channel allocation error:', error);
         if (!res.headersSent) {
@@ -257,13 +260,13 @@ async function startCodexProxyServer(options = {}) {
         if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
           console.error('Response error:', err);
         }
-        recordFailure(metadata.channelId, 'codex', err);
+        if (!req.proxyAllocationSignal?.aborted) recordFailure(metadata.channelId, 'codex', err);
         requestMetadata.delete(req);
       });
 
       proxyRes.on('end', () => {
         if (Number(proxyRes.statusCode) >= 400) {
-          recordFailure(metadata.channelId, 'codex', new Error(`Codex upstream HTTP ${proxyRes.statusCode}`));
+          if (!req.proxyAllocationSignal?.aborted) recordFailure(metadata.channelId, 'codex', new Error(`Codex upstream HTTP ${proxyRes.statusCode}`));
         } else {
           recordSuccess(metadata.channelId, 'codex');
         }
@@ -274,7 +277,7 @@ async function startCodexProxyServer(options = {}) {
         if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') {
           console.error('Proxy response error:', err);
         }
-        recordFailure(metadata.channelId, 'codex', err);
+        if (!req.proxyAllocationSignal?.aborted) recordFailure(metadata.channelId, 'codex', err);
         requestMetadata.delete(req);
       });
     });
@@ -283,7 +286,7 @@ async function startCodexProxyServer(options = {}) {
     proxy.on('error', (err, req, res) => {
       console.error('Codex proxy error:', err);
       if (req && req.selectedChannel) {
-        recordFailure(req.selectedChannel.id, 'codex', err);
+        if (!req.proxyAllocationSignal?.aborted) recordFailure(req.selectedChannel.id, 'codex', err);
         req.__releaseChannel?.();
       }
       if (res && !res.headersSent) {

@@ -45,6 +45,88 @@ function makeRuntime(statistics, nativeDriver = null) {
   };
 }
 
+test('drains a rejected native batch and cursor backlog before closing on restart', async () => {
+  const statisticsPath = require.resolve('../../../src/server/services/statistics-service');
+  const previous = require.cache[statisticsPath];
+  const flushStatistics = vi.fn(async () => ({ pending: 0 }));
+  injectStub(statisticsPath, { flushStatistics, getStatisticsQueueDiagnostics: () => ({ blocked: false }) });
+  const first = { id: 'retry-at-exit', tokens: { input: 2 } };
+  const second = { id: 'queued-at-exit', tokens: { input: 3 } };
+  const cursor = { initialize: vi.fn(), close: vi.fn(), readNewEvents: vi.fn()
+    .mockReturnValueOnce([first]).mockReturnValueOnce([second]).mockReturnValue([]) };
+  const statistics = { recordRequest: vi.fn().mockReturnValueOnce(false).mockReturnValue(true) };
+  const runtime = makeRuntime(statistics, { createNativeLogCursor: () => cursor });
+  const registry = { list: () => [{ key: 'codex' }] };
+  try {
+    observer.prepareNativeCliLogObserver({ runtime, registry });
+    observer.pollNativeCliLogs({ runtime, registry });
+    await observer.drainNativeCliLogs({ runtime, registry });
+    observer.shutdownNativeCliLogObserver();
+    expect(statistics.recordRequest.mock.calls.map(([entry]) => entry.id)).toEqual([first.id, first.id, second.id]);
+    expect(broadcastLog).toHaveBeenCalledTimes(2);
+    expect(flushStatistics).toHaveBeenCalledTimes(3);
+    expect(cursor.readNewEvents).toHaveBeenLastCalledWith({ force: true });
+    expect(cursor.close).toHaveBeenCalledTimes(1);
+    observer.prepareNativeCliLogObserver({ runtime, registry });
+    observer.pollNativeCliLogs({ runtime, registry });
+    expect(broadcastLog).toHaveBeenCalledTimes(2);
+  } finally {
+    if (previous) require.cache[statisticsPath] = previous;
+    else delete require.cache[statisticsPath];
+  }
+});
+
+test('a second shutdown drain accepts usage that arrives while long streams complete', async () => {
+  const statisticsPath = require.resolve('../../../src/server/services/statistics-service');
+  const previous = require.cache[statisticsPath];
+  injectStub(statisticsPath, { flushStatistics: async () => ({ pending: 0 }), getStatisticsQueueDiagnostics: () => ({ blocked: false }) });
+  const event = { id: 'long-stream-finished', tokens: { input: 2 } };
+  const cursor = { initialize: vi.fn(), close: vi.fn(), readNewEvents: vi.fn().mockReturnValue([]) };
+  const statistics = { recordRequest: vi.fn().mockReturnValue(true) };
+  const runtime = makeRuntime(statistics, { createNativeLogCursor: () => cursor });
+  const registry = { list: () => [{ key: 'codex' }] };
+  try {
+    observer.prepareNativeCliLogObserver({ runtime, registry });
+    await observer.drainNativeCliLogs({ runtime, registry });
+    cursor.readNewEvents.mockReturnValueOnce([event]);
+    await observer.drainNativeCliLogs({ runtime, registry });
+    observer.shutdownNativeCliLogObserver();
+    expect(statistics.recordRequest).toHaveBeenCalledTimes(1);
+    expect(cursor.close).toHaveBeenCalledTimes(1);
+  } finally {
+    if (previous) require.cache[statisticsPath] = previous;
+    else delete require.cache[statisticsPath];
+  }
+});
+
+test('failed shutdown drain preserves pending events and leaves cursors open for retry', async () => {
+  const statisticsPath = require.resolve('../../../src/server/services/statistics-service');
+  const previous = require.cache[statisticsPath];
+  let blocked = false;
+  injectStub(statisticsPath, { flushStatistics: async () => ({ error: blocked ? 'disk unavailable' : undefined }),
+    getStatisticsQueueDiagnostics: () => ({ blocked }) });
+  const event = { id: 'preserve-at-exit', tokens: { input: 2 } };
+  const cursor = { initialize: vi.fn(), close: vi.fn(), readNewEvents: vi.fn().mockReturnValueOnce([event]).mockReturnValue([]) };
+  const statistics = { recordRequest: vi.fn().mockReturnValueOnce(false).mockReturnValue(true) };
+  const runtime = makeRuntime(statistics, { createNativeLogCursor: () => cursor });
+  const registry = { list: () => [{ key: 'codex' }] };
+  try {
+    observer.prepareNativeCliLogObserver({ runtime, registry });
+    observer.pollNativeCliLogs({ runtime, registry });
+    blocked = true;
+    await expect(observer.drainNativeCliLogs({ runtime, registry })).rejects.toThrow('disk unavailable');
+    expect(observer.getNativeLogDiagnostics().pendingEvents).toBe(1);
+    expect(cursor.close).not.toHaveBeenCalled();
+    blocked = false;
+    await observer.drainNativeCliLogs({ runtime, registry });
+    observer.shutdownNativeCliLogObserver();
+    expect(broadcastLog).toHaveBeenCalledTimes(1);
+  } finally {
+    if (previous) require.cache[statisticsPath] = previous;
+    else delete require.cache[statisticsPath];
+  }
+});
+
 test('records normalized native usage without touching channel health', () => {
   const statistics = { recordRequest: vi.fn() };
   const runtime = makeRuntime(statistics);
@@ -230,4 +312,101 @@ test('memory tracing reports per-platform cursor phases and bounded reader count
   }));
   expect(records.every(record => !Object.prototype.hasOwnProperty.call(record, 'sessionId'))).toBe(true);
   log.mockRestore();
+});
+
+
+test('statistics disk pressure pauses cursor consumption and resumes without advancing it', () => {
+  const statisticsPath = require.resolve('../../../src/server/services/statistics-service');
+  const previousModule = require.cache[statisticsPath];
+  let blocked = true;
+  injectStub(statisticsPath, { getStatisticsQueueDiagnostics: () => ({ blocked }) });
+  const cursor = { initialize: vi.fn(), readNewEvents: vi.fn(() => []), close: vi.fn() };
+  const nativeDriver = { createNativeLogCursor: vi.fn(() => cursor) };
+  const runtime = makeRuntime({ recordRequest: vi.fn() }, nativeDriver);
+  const registry = { list: () => [{ key: 'codex' }] };
+  try {
+    observer.prepareNativeCliLogObserver({ runtime, registry });
+    observer.pollNativeCliLogs({ runtime, registry });
+    expect(cursor.readNewEvents).not.toHaveBeenCalled();
+    blocked = false;
+    observer.pollNativeCliLogs({ runtime, registry });
+    expect(cursor.readNewEvents).toHaveBeenCalledTimes(1);
+  } finally {
+    if (previousModule) require.cache[statisticsPath] = previousModule;
+    else delete require.cache[statisticsPath];
+  }
+});
+
+
+test.each([false, { status: 'ok', data: false }, { status: 'failed', error: 'disk unavailable' }])('retries rejected native result %j before another cursor batch and broadcasts once', rejectedResult => {
+  const statisticsPath = require.resolve('../../../src/server/services/statistics-service');
+  const previousModule = require.cache[statisticsPath];
+  injectStub(statisticsPath, { getStatisticsQueueDiagnostics: () => ({ blocked: false }) });
+  const event = { id: 'native-retry', tokens: { input: 2, total: 2 } };
+  const cursor = { initialize: vi.fn(), readNewEvents: vi.fn(() => [event]), close: vi.fn() };
+  const statistics = { recordRequest: vi.fn().mockReturnValueOnce(rejectedResult).mockReturnValue({ status: 'ok', data: true }) };
+  const runtime = makeRuntime(statistics, { createNativeLogCursor: () => cursor });
+  const registry = { list: () => [{ key: 'codex' }] };
+  try {
+    observer.prepareNativeCliLogObserver({ runtime, registry });
+    observer.pollNativeCliLogs({ runtime, registry });
+    expect(observer.getNativeLogDiagnostics().pendingEvents).toBe(1);
+    expect(broadcastLog).not.toHaveBeenCalled();
+    observer.pollNativeCliLogs({ runtime, registry });
+    expect(cursor.readNewEvents).toHaveBeenCalledTimes(1);
+    expect(statistics.recordRequest).toHaveBeenCalledTimes(2);
+    expect(observer.getNativeLogDiagnostics().pendingEvents).toBe(0);
+    expect(broadcastLog).toHaveBeenCalledTimes(1);
+  } finally {
+    if (previousModule) require.cache[statisticsPath] = previousModule;
+    else delete require.cache[statisticsPath];
+  }
+});
+
+
+test('a checkpoint creation failure does not crash the observer', () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const runtime = makeRuntime(null, { createNativeLogCursor() { throw new Error('checkpoint disk unavailable'); } });
+  const registry = { list: () => [{ key: 'codex' }] };
+  try {
+    expect(() => observer.prepareNativeCliLogObserver({ runtime, registry })).not.toThrow();
+    expect(observer.getNativeLogDiagnostics().platforms).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('checkpoint'), 'checkpoint disk unavailable');
+  } finally { warn.mockRestore(); }
+});
+
+
+test.each(['refused', 'thrown'])('real capability statistics driver %s result retains the native batch', failure => {
+  const { createCapabilityDriver } = require('../../../src/shared/capability-driver');
+  const statisticsPath = require.resolve('../../../src/server/services/statistics-service');
+  const previousModule = require.cache[statisticsPath];
+  injectStub(statisticsPath, { getStatisticsQueueDiagnostics: () => ({ blocked: false }) });
+  let calls = 0;
+  const driver = createCapabilityDriver({
+    platform: 'codex', capability: 'statistics', servicePath: 'fixture',
+    requireImpl: () => ({ recordRequest() {
+      calls++;
+      if (calls === 1) {
+        if (failure === 'thrown') throw new Error('fixture disk unavailable');
+        return false;
+      }
+      return true;
+    } }), methods: { recordRequest: 'recordRequest' }
+  });
+  const cursor = { initialize() {}, readNewEvents: vi.fn(() => [{ id: 'real-driver-retry', tokens: { input: 1 } }]), close() {} };
+  const runtime = makeRuntime(driver, { createNativeLogCursor: () => cursor });
+  const registry = { list: () => [{ key: 'codex' }] };
+  try {
+    observer.prepareNativeCliLogObserver({ runtime, registry });
+    observer.pollNativeCliLogs({ runtime, registry });
+    expect(observer.getNativeLogDiagnostics().pendingEvents).toBe(1);
+    expect(broadcastLog).not.toHaveBeenCalled();
+    observer.pollNativeCliLogs({ runtime, registry });
+    expect(cursor.readNewEvents).toHaveBeenCalledTimes(1);
+    expect(observer.getNativeLogDiagnostics().pendingEvents).toBe(0);
+    expect(broadcastLog).toHaveBeenCalledTimes(1);
+  } finally {
+    if (previousModule) require.cache[statisticsPath] = previousModule;
+    else delete require.cache[statisticsPath];
+  }
 });

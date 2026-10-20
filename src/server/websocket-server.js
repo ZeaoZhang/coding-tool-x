@@ -13,6 +13,7 @@ const {
 
 const MAX_PERSISTED_LOGS = 500;
 const LOG_PERSIST_DEBOUNCE_MS = 250;
+const MAX_CLIENT_BACKLOG_BYTES = 1024 * 1024;
 
 let maxLogsLimit = 100;
 
@@ -43,6 +44,42 @@ let websocketOptions = {
 };
 const HISTORY_CHUNK_SIZE = 50;
 
+function disconnectSlowClient(ws) {
+  wsClients.delete(ws);
+  ws.terminate();
+}
+
+function checkClientBacklog(ws) {
+  if (ws.readyState !== WebSocket.OPEN) return false;
+  if ((Number(ws.bufferedAmount) || 0) > MAX_CLIENT_BACKLOG_BYTES) {
+    disconnectSlowClient(ws);
+    return false;
+  }
+  return true;
+}
+
+function sendBounded(ws, message) {
+  if (!checkClientBacklog(ws)) return false;
+  // Include the next frame so one large event cannot exceed the budget.
+  if ((Number(ws.bufferedAmount) || 0) + Buffer.byteLength(message) > MAX_CLIENT_BACKLOG_BYTES) {
+    disconnectSlowClient(ws);
+    return false;
+  }
+  try {
+    ws.send(message, error => {
+      if (error) {
+        wsClients.delete(ws);
+        ws.terminate();
+      }
+    });
+    return checkClientBacklog(ws);
+  } catch {
+    wsClients.delete(ws);
+    ws.terminate();
+    return false;
+  }
+}
+
 function sendPersistedLogsInChunks(ws, logs) {
   let index = 0;
 
@@ -53,7 +90,7 @@ function sendPersistedLogsInChunks(ws, logs) {
 
     const end = Math.min(index + HISTORY_CHUNK_SIZE, logs.length);
     for (let i = index; i < end; i++) {
-      ws.send(JSON.stringify(logs[i]));
+      if (!sendBounded(ws, JSON.stringify(logs[i]))) return;
     }
     index = end;
 
@@ -291,7 +328,9 @@ let persistTimer = null;
 let persistGeneration = 0;
 let persistedGeneration = 0;
 let enqueuedGeneration = 0;
-let persistChain = Promise.resolve();
+let persistChain = null;
+let pendingPersistence = null;
+let activePersistenceBytes = 0;
 let configSavedListener = null;
 
 function rebuildLogSourceCounts() {
@@ -352,15 +391,28 @@ function appendLogToCache(payload) {
 
 function enqueueLogPersistence(data, generation) {
   enqueuedGeneration = Math.max(enqueuedGeneration, generation);
-  persistChain = persistChain
-    .catch(() => {})
-    .then(async () => {
-      await fs.promises.writeFile(getLogsFilePath(), data, 'utf8');
-      persistedGeneration = Math.max(persistedGeneration, generation);
-    })
-    .catch((error) => {
-      console.error('Failed to save logs to file:', error);
+  // A blocked filesystem retains only its active payload and the newest pending state.
+  pendingPersistence = { data, generation };
+  if (!persistChain) {
+    persistChain = Promise.resolve().then(async () => {
+      while (pendingPersistence) {
+        const next = pendingPersistence;
+        pendingPersistence = null;
+        activePersistenceBytes = Buffer.byteLength(next.data);
+        try {
+          await fs.promises.writeFile(getLogsFilePath(), next.data, 'utf8');
+          persistedGeneration = Math.max(persistedGeneration, next.generation);
+        } catch (error) {
+          console.error('Failed to save logs to file:', error);
+        } finally {
+          activePersistenceBytes = 0;
+        }
+      }
+      // Reset synchronously with draining; an enqueue cannot land between completion and cleanup.
+      persistChain = null;
+      enqueuedGeneration = persistedGeneration;
     });
+  }
   return persistChain;
 }
 
@@ -380,15 +432,11 @@ function flushPendingLogs() {
     persistTimer = null;
   }
   if (persistGeneration <= persistedGeneration || persistGeneration <= enqueuedGeneration) {
-    return persistChain;
+    return persistChain || Promise.resolve();
   }
   const generation = persistGeneration;
   const data = serializeLogs(logsCache.slice());
-  return enqueueLogPersistence(data, generation).then(() => {
-    if (persistGeneration > generation && persistGeneration > enqueuedGeneration) {
-      scheduleLogPersistence({ markDirty: false });
-    }
-  });
+  return enqueueLogPersistence(data, generation);
 }
 
 function ensureConfigListener() {
@@ -462,7 +510,7 @@ function startWebSocketServer(httpServer, options = {}) {
 
       // 响应客户端的心跳 ping
       ws.on('ping', () => {
-        ws.pong();
+        if (checkClientBacklog(ws)) ws.pong();
       });
 
       ws.on('close', () => {
@@ -487,7 +535,7 @@ function startWebSocketServer(httpServer, options = {}) {
 
         // 标记为未响应，等待 pong
         ws.isAlive = false;
-        ws.ping();
+        if (checkClientBacklog(ws)) ws.ping();
       });
     }, 30000);
 
@@ -554,9 +602,7 @@ function broadcastLog(logData) {
     const message = JSON.stringify(payload);
 
     wsClients.forEach(client => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
-      }
+      sendBounded(client, message);
     });
   }
 }
@@ -607,9 +653,7 @@ function broadcastProxyState(source, proxyStatus = {}, activeChannel = null, cha
     const message = JSON.stringify(stateUpdate);
 
     wsClients.forEach(client => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
-      }
+      sendBounded(client, message);
     });
   }
 }
@@ -627,9 +671,7 @@ function broadcastSchedulerState(source, schedulerState) {
     const message = JSON.stringify(stateUpdate);
 
     wsClients.forEach(client => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
-      }
+      sendBounded(client, message);
     });
   }
 }
@@ -643,20 +685,40 @@ function broadcastBrowserNotification(notification = {}) {
     });
 
     wsClients.forEach(client => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
-      }
+      sendBounded(client, message);
     });
   }
+}
+
+function getWebSocketDiagnostics() {
+  let clientBufferedBytes = 0;
+  let maxClientBufferedBytes = 0;
+  for (const client of wsClients) {
+    const bytes = Number(client.bufferedAmount) || 0;
+    clientBufferedBytes += bytes;
+    maxClientBufferedBytes = Math.max(maxClientBufferedBytes, bytes);
+  }
+  return {
+    clients: wsClients.size,
+    logs: logsCache.length,
+    activeWrites: activePersistenceBytes > 0 ? 1 : 0,
+    activeWriteBytes: activePersistenceBytes,
+    pendingWrites: pendingPersistence ? 1 : 0,
+    pendingWriteBytes: pendingPersistence ? Buffer.byteLength(pendingPersistence.data) : 0,
+    clientBufferedBytes,
+    maxClientBufferedBytes
+  };
 }
 
 module.exports = {
   startWebSocketServer,
   stopWebSocketServer,
+  getWebSocketDiagnostics,
   broadcastLog,
   clearAllLogs,
   flushPendingLogs,
   broadcastProxyState,
   broadcastSchedulerState,
-  broadcastBrowserNotification
+  broadcastBrowserNotification,
+  _test: { sendBounded, sendPersistedLogsInChunks, wsClients }
 };

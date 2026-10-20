@@ -206,3 +206,64 @@ describe('request-logger toggles and persistence', () => {
     });
   });
 });
+
+describe('bounded request persistence', () => {
+  test('includes the active append in its byte budget and drops excess bodies', () => {
+    process.env.CC_TOOL_LOG_REQUESTS = 'true';
+    const callbacks = [];
+    fs.appendFile.mockImplementation((_file, _data, callback) => callbacks.push(callback));
+    const body = { text: 'x'.repeat(3 * 1024 * 1024) };
+    for (let index = 0; index < 3; index++) {
+      requestLogger.persistProxyRequestSnapshot('claude', { request: { body }, timestamp: index });
+    }
+    expect(fs.appendFile).toHaveBeenCalledTimes(1);
+    expect(requestLogger.getRequestLoggerDiagnostics()).toMatchObject({ pendingSnapshots: 2, droppedSnapshots: 1 });
+    expect(requestLogger.getRequestLoggerDiagnostics().queuedBytes).toBeLessThanOrEqual(8 * 1024 * 1024);
+    callbacks.shift()(null);
+    expect(fs.appendFile).toHaveBeenCalledTimes(2);
+    callbacks.shift()(null);
+    expect(requestLogger.getRequestLoggerDiagnostics().queuedBytes).toBe(0);
+  });
+
+  test('coalesces template writes into one active write and the latest pending value', () => {
+    const writes = [];
+    fs.writeFile.mockImplementation((file, data, callback) => writes.push({ file, data, callback }));
+    for (let index = 0; index < 20; index++) {
+      requestLogger.persistClaudeRequestTemplate({
+        metadata: { user_id: `user-${index}` },
+        system: [{ type: 'text', text: 'x'.repeat(1000) }], tools: [{ name: 'Read' }]
+      });
+    }
+    expect(writes).toHaveLength(1);
+    writes[0].callback(null);
+    expect(writes).toHaveLength(2);
+    expect(JSON.parse(writes[1].data).userId).toBe('user-19');
+    writes[1].callback(null);
+    expect(requestLogger.getRequestLoggerDiagnostics().latestWriteBytes).toBe(0);
+  });
+
+  test('releases its append budget on storage failure', () => {
+    process.env.CC_TOOL_LOG_REQUESTS = 'true';
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    fs.appendFile.mockImplementation((_file, _data, callback) => callback(new Error('disk full')));
+    requestLogger.persistProxyRequestSnapshot('claude', { request: { body: 'payload' } });
+    expect(requestLogger.getRequestLoggerDiagnostics().queuedBytes).toBe(0);
+  });
+
+  test('skips oversized legacy lines without retaining their request bodies', () => {
+    const file = pathsStub.PATHS.requestSnapshots.claude;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ timestamp: 1, request: { headers: { version: 'old' } } }) + '\n' +
+      JSON.stringify({ timestamp: 2, request: { body: 'x'.repeat(1024 * 1024) } }) + '\n');
+    expect(requestLogger.loadLatestProxyRequestSnapshot('claude').timestamp).toBe(1);
+  });
+});
+
+
+test('preserves the previous valid template when a new template exceeds 8 MiB', () => {
+  const original = { metadata: { user_id: 'valid' }, system: [{ text: 'x'.repeat(1000) }], tools: [{ name: 'Read' }] };
+  requestLogger.persistClaudeRequestTemplate(original);
+  requestLogger.persistClaudeRequestTemplate({ ...original, metadata: { user_id: 'oversized' }, system: [{ text: 'x'.repeat(9 * 1024 * 1024) }] });
+  expect(requestLogger.loadClaudeRequestTemplate().userId).toBe('valid');
+  expect(requestLogger.getRequestLoggerDiagnostics().skippedTemplates).toBe(1);
+});

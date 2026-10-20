@@ -1,3 +1,4 @@
+const { collectResponseBody } = require('../../../shared/proxy-transport');
 const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
@@ -103,21 +104,10 @@ function buildProxyAgent(proxyUrl = '') {
 }
 
 function collectHttpResponseBody(response) {
-  return new Promise((resolve, reject) => {
-    const stream = createDecodedStream(response);
-    const chunks = [];
-    stream.on('data', (chunk) => {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    });
-    stream.on('end', () => {
-      resolve(Buffer.concat(chunks).toString('utf8'));
-    });
-    stream.on('error', reject);
-    response.on('error', reject);
-  });
+  return collectResponseBody(response, createDecodedStream(response));
 }
 
-function postJson(url, headers, payload, timeoutMs = REQUEST_TIMEOUT_MS, agent) {
+function postJson(url, headers, payload, timeoutMs = REQUEST_TIMEOUT_MS, agent, signal) {
   return new Promise((resolve, reject) => {
     const target = new URL(url);
     const isHttps = target.protocol === 'https:';
@@ -130,6 +120,7 @@ function postJson(url, headers, payload, timeoutMs = REQUEST_TIMEOUT_MS, agent) 
       method: 'POST',
       timeout: timeoutMs,
       agent,
+      signal,
       headers: {
         ...headers,
         'Content-Length': Buffer.byteLength(body)
@@ -155,7 +146,7 @@ function postJson(url, headers, payload, timeoutMs = REQUEST_TIMEOUT_MS, agent) 
   });
 }
 
-function postJsonStream(url, headers, payload, timeoutMs = REQUEST_TIMEOUT_MS, agent) {
+function postJsonStream(url, headers, payload, timeoutMs = REQUEST_TIMEOUT_MS, agent, signal) {
   return new Promise((resolve, reject) => {
     const target = new URL(url);
     const isHttps = target.protocol === 'https:';
@@ -168,6 +159,7 @@ function postJsonStream(url, headers, payload, timeoutMs = REQUEST_TIMEOUT_MS, a
       method: 'POST',
       timeout: timeoutMs,
       agent,
+      signal,
       headers: {
         ...headers,
         'Content-Length': Buffer.byteLength(body)
@@ -1115,7 +1107,8 @@ async function handleClaudeOpenAiGatewayRequest({ req, res, channel, effectiveKe
         headers,
         converted.requestBody,
         REQUEST_TIMEOUT_MS,
-        agent
+        agent,
+        req.proxyAllocationSignal
       );
 
       if (upstream.statusCode < 200 || upstream.statusCode >= 300) {
@@ -1148,7 +1141,8 @@ async function handleClaudeOpenAiGatewayRequest({ req, res, channel, effectiveKe
       headers,
       converted.requestBody,
       REQUEST_TIMEOUT_MS,
-      agent
+      agent,
+      req.proxyAllocationSignal
     );
     const parsedBody = safeJsonParse(upstream.rawBody);
 
@@ -1186,6 +1180,10 @@ async function handleClaudeOpenAiGatewayRequest({ req, res, channel, effectiveKe
     }
     return true;
   } catch (error) {
+    if (req.proxyAllocationSignal?.aborted) {
+      if (typeof onDone === 'function') onDone();
+      return true;
+    }
     return reportGatewayFailure({
       channel,
       res,

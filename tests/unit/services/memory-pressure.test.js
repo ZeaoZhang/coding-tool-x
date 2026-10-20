@@ -94,4 +94,17 @@ describe('shared proxy memory admission', () => {
     vi.advanceTimersByTime(10000);
     expect(pressure.getMemoryPressureDiagnostics().paused).toBe(false);
   });
+
+  it('retains bounded evidence of brief pressure spikes between periodic samples', () => {
+    const next = vi.fn();
+    pressure.memoryPressureMiddleware({}, response(), next);
+    rss = 390 * 1024 * 1024;
+    pressure.memoryPressureMiddleware({}, response(), next);
+    rss = 200 * 1024 * 1024;
+    vi.advanceTimersByTime(10000);
+    expect(pressure.getMemoryPressureDiagnostics()).toEqual(expect.objectContaining({
+      paused: false, pauseTransitions: 1, peakRss: 390 * 1024 * 1024,
+      lastPause: expect.objectContaining({ rss: 390 * 1024 * 1024, persistenceBlocked: false })
+    }));
+  });
 });

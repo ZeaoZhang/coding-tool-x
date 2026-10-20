@@ -14,7 +14,7 @@ const {
   createScannedFileCursor,
   createIncrementalJsonlCursor
 } = require('../native-log-utils');
-const { calculateUsageCost } = require('../../../server/services/usage-log-utils');
+const { calculateUsageCost, createUsageCostCalculator } = require('../../../server/services/usage-log-utils');
 
 const MAX_WHOLE_JSON_BYTES = 16 * 1024 * 1024;
 const MIN_WHOLE_JSON_PARSE_INTERVAL_MS = 15 * 1000;
@@ -50,6 +50,7 @@ function parseSession(filePath, fsImpl) {
     session = { ...state, messages };
   }
   const messages = Array.isArray(session?.messages) ? session.messages : [];
+  const calculateCost = createUsageCostCalculator('gemini');
   return messages.flatMap(message => {
     const usage = message.tokens || message.usage;
     if (!usage || typeof usage !== 'object') return [];
@@ -65,7 +66,7 @@ function parseSession(filePath, fsImpl) {
       model: message.model || session.model || '',
       tokens: normalizeUsage(usage),
       cost: normalizeCost(message.cost ?? usage.cost)
-        || calculateUsageCost('gemini', message.model || session.model || '', normalizeUsage(usage)),
+        || calculateCost(message.model || session.model || '', normalizeUsage(usage)),
       channelId: message.channelId,
       channel: message.channel
     }];
@@ -74,7 +75,15 @@ function parseSession(filePath, fsImpl) {
 
 function parseGeminiJsonlLine(filePath, record, state) {
   if (record?.$set && typeof record.$set === 'object') {
-    Object.assign(state.metadata, record.$set);
+    // The usage cursor must not retain conversation bodies or arbitrary state.
+    for (const key of ['sessionId', 'provider', 'model', 'lastUpdated']) {
+      if (!Object.prototype.hasOwnProperty.call(record.$set, key)) continue;
+      const value = record.$set[key];
+      if (value === null) state.metadata[key] = '';
+      else if (typeof value === 'string' || (key === 'lastUpdated' && typeof value === 'number' && Number.isFinite(value))) {
+        state.metadata[key] = value;
+      }
+    }
   }
   const message = record?.message && typeof record.message === 'object' ? record.message : record;
   const usage = message?.tokens || message?.usage;
@@ -123,12 +132,13 @@ function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
       let lastWholeJsonParse = new Map();
       let oversizeWarned = new Set();
       let initializedWholeJsonFiles = new Set();
+      let forceWholeJsonRead = false;
       const jsonCursor = createScannedFileCursor({
         scanFiles: jsonFiles,
         parseFile: filePath => {
           return parseSession(filePath, cursorFs);
         },
-        shouldParseFile: (filePath, stat, { isInitialRead, skipInitialParse }) => {
+        shouldParseFile: (filePath, stat, { isInitialRead, skipInitialParse, persistenceRetry }) => {
           if (stat.size > MAX_WHOLE_JSON_BYTES) {
             if (!oversizeWarned.has(filePath)) {
               oversizeWarned.add(filePath);
@@ -145,17 +155,39 @@ function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
             return true;
           }
           const now = Date.now();
-          const allowed = now - (lastWholeJsonParse.get(filePath) || 0) >= MIN_WHOLE_JSON_PARSE_INTERVAL_MS;
+          const allowed = forceWholeJsonRead || persistenceRetry || now - (lastWholeJsonParse.get(filePath) || 0) >= MIN_WHOLE_JSON_PARSE_INTERVAL_MS;
           if (allowed) lastWholeJsonParse.set(filePath, now);
           return allowed;
         },
         normalizeEvent: event => event,
         fsImpl: cursorFs,
-        skipInitialParse
+        skipInitialParse,
+        parseBaseline: true,
+        onDiagnostic,
+        onFilesRemoved(filePath) {
+          lastWholeJsonParse.delete(filePath);
+          oversizeWarned.delete(filePath);
+          initializedWholeJsonFiles.delete(filePath);
+        }
       });
       return {
         initialize() { jsonlCursor.initialize(); jsonCursor.initialize(); },
-        readNewEvents() { return [...jsonlCursor.readNewEvents(), ...jsonCursor.readNewEvents()]; },
+        readNewEvents({ force = false } = {}) {
+          const current = new Set(jsonFiles());
+          for (const metadata of [lastWholeJsonParse, oversizeWarned, initializedWholeJsonFiles]) {
+            for (const filePath of metadata.keys()) if (!current.has(filePath)) metadata.delete(filePath);
+          }
+          const events = jsonlCursor.readNewEvents();
+          // Drain each source independently while keeping the public batch bounded.
+          if (events.length) return events;
+          forceWholeJsonRead = force;
+          try { return jsonCursor.readNewEvents(); } finally { forceWholeJsonRead = false; }
+        },
+        diagnostics() {
+          const jsonl = jsonlCursor.diagnostics?.() || {};
+          const json = jsonCursor.diagnostics?.() || {};
+          return { jsonl, json, persistenceBlocked: jsonl.persistenceBlocked || json.persistenceBlocked };
+        },
         read() { return this.readNewEvents(); },
         reset() {
           jsonlCursor.reset();
@@ -177,4 +209,4 @@ function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
   };
 }
 
-module.exports = { createDriver };
+module.exports = { createDriver, parseGeminiJsonlLine };

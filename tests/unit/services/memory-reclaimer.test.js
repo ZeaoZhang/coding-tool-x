@@ -58,4 +58,40 @@ describe('memory reclaimer under proxy traffic', () => {
     vi.advanceTimersByTime(5000);
     expect(global.gc).toHaveBeenCalledTimes(1);
   });
+
+  it('tracks without exposed GC and releases both completion listeners once', () => {
+    delete global.gc;
+    const response = Object.assign(new EventEmitter(), { writeHead() {} });
+    reclaimer.trackMemoryActivity({}, response);
+    reclaimer.trackMemoryActivity({}, response);
+    expect(reclaimer.getMemoryDiagnostics().activeRequests).toBe(1);
+    response.emit('close');
+    response.emit('finish');
+    expect(reclaimer.getMemoryDiagnostics().activeRequests).toBe(0);
+    expect(response.listenerCount('finish')).toBe(0);
+    expect(response.listenerCount('close')).toBe(0);
+  });
+
+  it('prints body-free diagnostics every30seconds when enabled', () => {
+    const previous = process.env.CC_TOOL_MEMORY_TRACE;
+    process.env.CC_TOOL_MEMORY_TRACE = '1';
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      reclaimer.stopMemoryReclaimer();
+      delete global.gc;
+      reclaimer.startMemoryReclaimer();
+      vi.advanceTimersByTime(30000);
+      const sample = log.mock.calls.find(([line]) => line.startsWith('[MEM] sample '));
+      expect(sample).toBeDefined();
+      const diagnostic = JSON.parse(sample[0].slice('[MEM] sample '.length));
+      expect(diagnostic.pid).toBe(process.pid);
+      expect(diagnostic.activeRequests).toBe(0);
+      expect(diagnostic.pressure.paused).toBe(true);
+      expect(sample[0]).not.toContain('headers');
+      expect(sample[0]).not.toContain('body');
+    } finally {
+      if (previous === undefined) delete process.env.CC_TOOL_MEMORY_TRACE;
+      else process.env.CC_TOOL_MEMORY_TRACE = previous;
+    }
+  });
 });

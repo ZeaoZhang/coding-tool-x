@@ -296,6 +296,21 @@ describe('OMP session parser', () => {
     expect(cursor.read()).toEqual([]);
   });
 
+  test('native usage bursts return at most 500 events per read without losing the suffix', () => {
+    const sessionFile = path.join(sessionDir, 'session-batched.jsonl');
+    writeJsonl(sessionFile, [{ type: 'session', id: 'omp-batched' }]);
+    const { createOmpUsageEventCursor } = loadModule();
+    const cursor = createOmpUsageEventCursor(sessionDir);
+    try {
+      cursor.initialize();
+      appendJsonl(sessionFile, Array.from({ length: 1100 }, (_, i) => ({ type: 'message', id: `assistant-${i}`, message: { role: 'assistant', usage: { input: 1 } } })));
+      const batches = [cursor.read(), cursor.read(), cursor.read()];
+      expect(batches.map(batch => batch.length)).toEqual([500, 500, 100]);
+      expect(new Set(batches.flat().map(event => event.id)).size).toBe(1100);
+      expect(cursor.read()).toEqual([]);
+    } finally { cursor.close(); }
+  });
+
   test('can baseline existing files without reading their historical contents', () => {
     const sessionFile = path.join(sessionDir, 'session-skip-history.jsonl');
     writeJsonl(sessionFile, [

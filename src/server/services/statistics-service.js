@@ -1,5 +1,7 @@
 const fs = require('fs');
 const path = require('path');
+const { randomUUID } = require('crypto');
+const { StringDecoder } = require('string_decoder');
 const { PATHS } = require('../../config/paths');
 const { normalizeUsageTokens, resolveActualModel } = require('./usage-log-utils');
 
@@ -7,6 +9,170 @@ const { normalizeUsageTokens, resolveActualModel } = require('./usage-log-utils'
 const CST_OFFSET_MS = 8 * 60 * 60 * 1000;
 
 const pendingEntries = [];
+const MAX_PENDING_ENTRIES = 1000;
+const MAX_PENDING_BYTES = 8 * 1024 * 1024;
+const MAX_FLUSH_BATCH = 500;
+const MAX_DAILY_CACHE = 7;
+let recentDailyDates = [];
+let pendingBytes = 0;
+let activeEntries = 0;
+let retryTimer = null;
+let retryDelay = 1000;
+let queueBlocked = false;
+let lastQueueError = null;
+let rejectedEntries = 0;
+let shuttingDown = false;
+let spoolSequence = 0;
+const spoolDir = path.join(path.dirname(PATHS.statistics.summary), 'statistics-pending');
+const stagedDailyDir = path.join(spoolDir, 'daily');
+const aggregateCheckpoint = path.join(spoolDir, 'aggregate.json');
+let spooledEntries = 0;
+try {
+  if (fs.existsSync(spoolDir)) {
+    const directory = fs.opendirSync(spoolDir);
+    try {
+      let item;
+      while ((item = directory.readSync())) if (item.name.endsWith('.entry')) spooledEntries++;
+    } finally { directory.closeSync(); }
+  }
+} catch (error) { queueBlocked = true; lastQueueError = error.message; }
+
+function failQueue(error) {
+  queueBlocked = true;
+  lastQueueError = error.message;
+  console.error('[Statistics] Persistence paused:', error.message);
+}
+
+function spoolEntry(entry, alreadyCounted = false) {
+  fs.mkdirSync(spoolDir, { recursive: true });
+  const name = `${Date.now()}-${process.pid}-${String(spoolSequence++).padStart(12, '0')}.entry`;
+  const file = path.join(spoolDir, name);
+  // The log and the aggregate recovery basis commit in one atomic rename.
+  const globalStats = aggregateStatsCache || loadStatistics();
+  const dailyStats = dailyStatsCache.get(entry.date) || loadDailyStats(entry.date);
+  const recovery = alreadyCounted
+    ? { aggregateAfter: globalStats, dailyAfter: dailyStats }
+    : { aggregateBefore: globalStats, dailyBefore: dailyStats };
+  fs.writeFileSync(`${file}.tmp`, JSON.stringify({ ...entry, recovery }), 'utf8');
+  fs.renameSync(`${file}.tmp`, file);
+  entry.spoolFile = file;
+  spooledEntries++;
+}
+
+function enqueueEntry(entry) {
+  entry.writeId = randomUUID();
+  entry.logEntry._statisticsWriteId = entry.writeId;
+  entry.bytes = Buffer.byteLength(JSON.stringify(entry));
+  try {
+    if (entry.bytes > MAX_PENDING_BYTES) throw new Error('Statistics entry exceeds the 8 MiB persistence budget');
+    if (pendingEntries.length < MAX_PENDING_ENTRIES && pendingBytes + entry.bytes <= MAX_PENDING_BYTES) {
+      pendingEntries.push(entry);
+      pendingBytes += entry.bytes;
+    } else { spoolEntry(entry); return 'spooled'; }
+    return true;
+  } catch (error) {
+    rejectedEntries++;
+    failQueue(error);
+    scheduleStatisticsRetry();
+    return false;
+  }
+}
+
+let spoolRecoveryRequired = spooledEntries > 0;
+
+function recoverSpoolStatistics() {
+  if (!spoolRecoveryRequired || !fs.existsSync(spoolDir)) return;
+  const directory = fs.opendirSync(spoolDir);
+  let globalStats = aggregateStatsCache || loadStatistics();
+  try {
+    let item;
+    while ((item = directory.readSync())) {
+      if (!item.name.endsWith('.entry')) continue;
+      const entry = JSON.parse(fs.readFileSync(path.join(spoolDir, item.name), 'utf8'));
+      if (!entry.recovery) continue; // Earlier spool versions use aggregate checkpoints.
+      const recovery = entry.recovery;
+      const aggregate = recovery.aggregateAfter || recovery.aggregateBefore;
+      const daily = recovery.dailyAfter || recovery.dailyBefore;
+      if (!recovery.aggregateAfter) applyAggregateRequest(aggregate, entry.logEntry);
+      if (!recovery.dailyAfter) applyDailyRequest(daily, entry.logEntry);
+      if (aggregate.global.totalRequests > globalStats.global.totalRequests) globalStats = aggregate;
+      const currentDaily = dailyStatsCache.get(entry.date) || loadDailyStats(entry.date);
+      if (daily.summary.requests > currentDaily.summary.requests) stageDailyStats(entry.date, daily);
+    }
+    aggregateStatsCache = globalStats;
+    fs.writeFileSync(`${aggregateCheckpoint}.tmp`, JSON.stringify(globalStats), 'utf8');
+    fs.renameSync(`${aggregateCheckpoint}.tmp`, aggregateCheckpoint);
+    spoolRecoveryRequired = false;
+  } finally {
+    aggregateStatsCache = globalStats;
+    directory.closeSync();
+  }
+}
+
+function promoteSpoolEntries() {
+  if (!spooledEntries || !fs.existsSync(spoolDir)) return;
+  const directory = fs.opendirSync(spoolDir);
+  try {
+    let item;
+    while ((item = directory.readSync()) && pendingEntries.length < MAX_PENDING_ENTRIES) {
+      if (!item.name.endsWith('.entry')) continue;
+      const file = path.join(spoolDir, item.name);
+      if (pendingEntries.some(entry => entry.spoolFile === file)) continue;
+      const entry = JSON.parse(fs.readFileSync(file, 'utf8'));
+      delete entry.recovery;
+      entry.verifyPersisted = true;
+      entry.bytes = Buffer.byteLength(JSON.stringify(entry));
+      if (entry.bytes > MAX_PENDING_BYTES) throw new Error('Statistics entry exceeds the 8 MiB persistence budget');
+      if (pendingBytes + entry.bytes > MAX_PENDING_BYTES) break;
+      entry.spoolFile = file;
+      pendingEntries.push(entry);
+      pendingBytes += entry.bytes;
+    }
+  } finally { directory.closeSync(); }
+}
+
+function* getUnpersistedEntries() {
+  for (const entry of pendingEntries) if (!entry.logPersisted) yield entry;
+  if (!spooledEntries || !fs.existsSync(spoolDir)) return;
+  const directory = fs.opendirSync(spoolDir);
+  try {
+    let item;
+    while ((item = directory.readSync())) {
+      if (!item.name.endsWith('.entry')) continue;
+      const file = path.join(spoolDir, item.name);
+      if (pendingEntries.some(entry => entry.spoolFile === file)) continue;
+      const entry = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (!entry.logPersisted) yield entry;
+    }
+  } finally { directory.closeSync(); }
+}
+
+function getOutstandingCount() {
+  return pendingEntries.length + Math.max(0, spooledEntries - pendingEntries.filter(entry => entry.spoolFile).length);
+}
+
+function getStatisticsQueueDiagnostics() {
+  return { blocked: queueBlocked, pending: pendingEntries.length, bytes: pendingBytes,
+    spooled: spooledEntries, active: activeEntries, lastError: lastQueueError, dropped: 0, rejected: rejectedEntries,
+    dailyCacheEntries: dailyStatsCache.size, trendCacheEntries: trendCache.size, trendCacheBytes };
+}
+
+function stageDailyStats(date, stats) {
+  fs.mkdirSync(stagedDailyDir, { recursive: true });
+  const file = path.join(stagedDailyDir, `${date}.json`);
+  fs.writeFileSync(`${file}.tmp`, JSON.stringify(stats), 'utf8');
+  fs.renameSync(`${file}.tmp`, file);
+}
+
+function retainDailyStats(date, stats) {
+  dailyStatsCache.set(date, stats);
+  while (dailyStatsCache.size > MAX_DAILY_CACHE) {
+    const oldest = [...dailyStatsCache.keys()].sort()[0];
+    stageDailyStats(oldest, dailyStatsCache.get(oldest));
+    dailyStatsCache.delete(oldest);
+  }
+}
+
 let flushPromise = null;
 let flushScheduled = false;
 let aggregateStatsCache = null;
@@ -94,7 +260,7 @@ function getProxyLogsFilePath() {
 
 // 加载总体统计
 function loadStatistics() {
-  const filePath = getStatisticsFilePath();
+  const filePath = fs.existsSync(aggregateCheckpoint) ? aggregateCheckpoint : getStatisticsFilePath();
   try {
     if (fs.existsSync(filePath)) {
       const data = fs.readFileSync(filePath, 'utf8');
@@ -133,7 +299,8 @@ function saveStatistics(stats) {
 
 // 加载每日统计
 function loadDailyStats(date) {
-  const filePath = getDailyStatsFilePath(date);
+  const stagedPath = path.join(stagedDailyDir, `${date}.json`);
+  const filePath = fs.existsSync(stagedPath) ? stagedPath : getDailyStatsFilePath(date);
   try {
     if (fs.existsSync(filePath)) {
       const data = fs.readFileSync(filePath, 'utf8');
@@ -199,6 +366,79 @@ function getRequestLogPath(timestamp) {
   return path.join(PATHS.statistics.requestLogs, `${year}-${month}`, `${day}.jsonl`);
 }
 
+function validateFinalLogRecord(fd, scratch, start, end) {
+  const { createSelectiveJsonLineParser } = require('../../platforms/drivers/native-log-utils');
+  const parser = createSelectiveJsonLineParser(['_statisticsWriteId'], { maxSelectedStringBytes: 256 });
+  const decoder = new StringDecoder('utf8');
+  const invalidCodes = new Set(['ERR_JSON_STRUCTURE', 'ERR_JSON_VALUE', 'ERR_JSON_ESCAPE',
+    'ERR_JSON_STRING', 'ERR_JSON_NUMBER', 'ERR_JSON_LITERAL', 'ERR_JSON_TRAILING',
+    'ERR_JSON_OBJECT_KEY', 'ERR_JSON_INCOMPLETE']);
+  try {
+    for (let offset = start; offset < end;) {
+      const read = fs.readSync(fd, scratch, 0, Math.min(scratch.length, end - offset), offset);
+      if (!read) throw new Error('Statistics log tail changed during validation');
+      offset += read;
+      parser.write(decoder.write(scratch.subarray(0, read)));
+    }
+    parser.write(decoder.end());
+    return { valid: true, value: parser.finish() };
+  } catch (error) {
+    // Resource limits and I/O errors do not prove that the old record is invalid.
+    if (!invalidCodes.has(error.code)) throw error;
+    return { valid: false };
+  }
+}
+
+function findPersistedWriteIds(filePath, entries) {
+  const wanted = new Set(entries.map(entry => entry.writeId).filter(Boolean));
+  const found = new Set();
+  if (!wanted.size || !fs.existsSync(filePath)) return found;
+  const fd = fs.openSync(filePath, 'r+');
+  const scratch = Buffer.allocUnsafe(64 * 1024);
+  try {
+    let size = fs.fstatSync(fd).size;
+    if (size) {
+      fs.readSync(fd, scratch, 0, 1, size - 1);
+      if (scratch[0] !== 10) {
+        // Preserve complete legacy JSON; a kill may occur before its newline.
+        let position = size;
+        let completeSize = 0;
+        while (position > 0) {
+          const length = Math.min(scratch.length, position);
+          position -= length;
+          const read = fs.readSync(fd, scratch, 0, length, position);
+          const newline = scratch.subarray(0, read).lastIndexOf(10);
+          if (newline >= 0) { completeSize = position + newline + 1; break; }
+        }
+        const finalRecord = validateFinalLogRecord(fd, scratch, completeSize, size);
+        if (finalRecord.valid) {
+          const writeId = finalRecord.value?._statisticsWriteId;
+          if (wanted.has(writeId)) found.add(writeId);
+          fs.writeSync(fd, Buffer.from('\n'), 0, 1, size);
+          size++;
+        } else {
+          fs.ftruncateSync(fd, completeSize);
+          size = completeSize;
+        }
+      }
+    }
+    let position = 0;
+    let tail = '';
+    while (position < size && found.size < wanted.size) {
+      const read = fs.readSync(fd, scratch, 0, Math.min(scratch.length, size - position), position);
+      if (!read) break;
+      position += read;
+      const text = tail + scratch.toString('utf8', 0, read);
+      // The app-owned write id is the final field; require a complete line.
+      const marker = /"_statisticsWriteId":"([a-f0-9-]{36})"}\r?\n/g;
+      let match;
+      while ((match = marker.exec(text))) if (wanted.has(match[1])) found.add(match[1]);
+      tail = text.slice(-128);
+    }
+  } finally { fs.closeSync(fd); }
+  return found;
+}
+
 async function appendRequestLogsAsync(entries) {
   const byPath = new Map();
   for (const entry of entries) {
@@ -211,11 +451,27 @@ async function appendRequestLogsAsync(entries) {
   const persisted = [];
   for (const [filePath, group] of byPath) {
     await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.promises.appendFile(
-      filePath,
-      group.map(entry => `${JSON.stringify(entry.logEntry)}\n`).join(''),
-      'utf8'
-    );
+    const recovered = group.some(entry => entry.verifyPersisted)
+      ? findPersistedWriteIds(filePath, group) : new Set();
+    const missing = group.filter(entry => !recovered.has(entry.writeId));
+    if (missing.length) {
+      for (const entry of missing) entry.verifyPersisted = true;
+      await fs.promises.appendFile(
+        filePath,
+        missing.map(entry => `${JSON.stringify(entry.logEntry)}\n`).join(''),
+        'utf8'
+      );
+    }
+    // Commit each successful path immediately; a later path may fail.
+    for (const entry of group) entry.logPersisted = true;
+    for (const entry of group) {
+      if (entry.spoolFile) {
+        const { spoolFile, ...state } = entry;
+        const recovery = JSON.parse(fs.readFileSync(spoolFile, 'utf8')).recovery;
+        fs.writeFileSync(`${spoolFile}.tmp`, JSON.stringify({ ...state, recovery }), 'utf8');
+        fs.renameSync(`${spoolFile}.tmp`, spoolFile);
+      }
+    }
     persisted.push(...group);
   }
   return persisted;
@@ -226,55 +482,109 @@ async function writeJsonAsync(filePath, value) {
   await fs.promises.writeFile(filePath, JSON.stringify(value, null, 2), 'utf8');
 }
 
+function scheduleStatisticsRetry() {
+  if (retryTimer || shuttingDown) return;
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    void flushStatistics();
+  }, retryDelay);
+  retryTimer.unref?.();
+  retryDelay = Math.min(retryDelay * 2, 30000);
+}
+
 function scheduleStatisticsFlush() {
-  if (flushScheduled) return;
+  if (flushScheduled || retryTimer || shuttingDown) return;
   flushScheduled = true;
   queueMicrotask(() => {
     flushScheduled = false;
-    void flushStatistics();
+    if (!shuttingDown) void flushStatistics();
   });
+}
+
+async function flushStagedDailyStats() {
+  if (!fs.existsSync(stagedDailyDir)) return;
+  const directory = fs.opendirSync(stagedDailyDir);
+  try {
+    let item;
+    while ((item = directory.readSync())) {
+      if (!item.name.endsWith('.json')) continue;
+      const file = path.join(stagedDailyDir, item.name);
+      const content = fs.readFileSync(file, 'utf8');
+      const date = item.name.slice(0, -5);
+      const stats = cloneJson(dailyStatsCache.get(date) || JSON.parse(content));
+      await writeJsonAsync(path.join(PATHS.statistics.dailyStats, item.name), stats);
+      // recordRequest may have replaced this staged snapshot while awaiting I/O.
+      if (fs.existsSync(file) && fs.readFileSync(file, 'utf8') === content) fs.unlinkSync(file);
+    }
+  } finally { directory.closeSync(); }
 }
 
 async function flushStatistics() {
   if (flushPromise) return flushPromise;
-  if (pendingEntries.length === 0) {
-    return { flushed: 0, pending: 0 };
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+  try { recoverSpoolStatistics(); promoteSpoolEntries(); } catch (error) {
+    failQueue(error);
+    scheduleStatisticsRetry();
+    return { flushed: 0, pending: getOutstandingCount(), error: error.message };
+  }
+  // Probe writes even with no admitted entries, to recover from a failed overflow.
+  if (pendingEntries.length === 0 && !queueBlocked && !fs.existsSync(stagedDailyDir) && !fs.existsSync(aggregateCheckpoint)) return { flushed: 0, pending: 0 };
+  let batch, checkpointContent, globalSnapshot, dailySnapshots;
+  try {
+    batch = pendingEntries.slice(0, MAX_FLUSH_BATCH);
+    activeEntries = batch.length;
+    checkpointContent = fs.existsSync(aggregateCheckpoint) ? fs.readFileSync(aggregateCheckpoint, 'utf8') : null;
+    globalSnapshot = aggregateStatsCache ? cloneJson(aggregateStatsCache) : (checkpointContent ? JSON.parse(checkpointContent) : null);
+    const dates = [...new Set(batch.map(entry => entry.date))];
+    dailySnapshots = new Map(dates.map(date => [date, cloneJson(dailyStatsCache.get(date) || loadDailyStats(date))]));
+
+  } catch (error) {
+    activeEntries = 0;
+    failQueue(error);
+    scheduleStatisticsRetry();
+    return { flushed: 0, pending: getOutstandingCount(), error: error.message };
   }
 
-  const batch = pendingEntries.splice(0, pendingEntries.length);
-  const globalSnapshot = aggregateStatsCache ? cloneJson(aggregateStatsCache) : null;
-  const dates = [...new Set(batch.map(entry => entry.date))];
-  const dailySnapshots = new Map(
-    dates.map(date => [date, cloneJson(dailyStatsCache.get(date))])
-  );
-
-  const writer = (async () => {
+  flushPromise = (async () => {
     try {
-      const pendingLogEntries = batch.filter(entry => !entry.logPersisted);
-      const persisted = await appendRequestLogsAsync(pendingLogEntries);
-      persisted.forEach(entry => { entry.logPersisted = true; });
+      if (queueBlocked) {
+        await fs.promises.mkdir(spoolDir, { recursive: true });
+        const probe = path.join(spoolDir, 'write-probe.tmp');
+        await fs.promises.writeFile(probe, '', 'utf8');
+        if (fs.existsSync(probe)) fs.unlinkSync(probe);
+      }
+      await appendRequestLogsAsync(batch.filter(entry => !entry.logPersisted));
       if (globalSnapshot) {
         globalSnapshot.lastUpdated = new Date().toISOString();
         await writeJsonAsync(getStatisticsFilePath(), globalSnapshot);
+        if (checkpointContent && fs.existsSync(aggregateCheckpoint) && fs.readFileSync(aggregateCheckpoint, 'utf8') === checkpointContent) fs.unlinkSync(aggregateCheckpoint);
       }
       for (const [date, stats] of dailySnapshots) {
         if (stats) await writeJsonAsync(getDailyStatsFilePathWithoutCreate(date), stats);
       }
-      return { flushed: batch.length, pending: pendingEntries.length };
+      await flushStagedDailyStats();
+      for (const entry of batch) {
+        if (entry.spoolFile) { fs.unlinkSync(entry.spoolFile); spooledEntries--; }
+        pendingEntries.splice(pendingEntries.indexOf(entry), 1);
+        pendingBytes -= entry.bytes;
+      }
+      for (const date of dailyStatsCache.keys()) {
+        if (!recentDailyDates.includes(date) && !pendingEntries.some(entry => entry.date === date)) dailyStatsCache.delete(date);
+      }
+      queueBlocked = false;
+      lastQueueError = null;
+      retryDelay = 1000;
+      return { flushed: batch.length, pending: getOutstandingCount() };
     } catch (error) {
-      pendingEntries.unshift(...batch);
-      console.error('[Statistics] Failed to flush queued entries:', error.message);
-      return {
-        flushed: 0,
-        pending: pendingEntries.length,
-        error: error.message
-      };
+      failQueue(error);
+      return { flushed: 0, pending: getOutstandingCount(), error: error.message };
+    } finally {
+      activeEntries = 0;
     }
-  })();
-
-  flushPromise = writer.finally(() => {
+  })().finally(() => {
     flushPromise = null;
-    if (pendingEntries.length > 0) scheduleStatisticsFlush();
+    if (queueBlocked) scheduleStatisticsRetry();
+    else if (pendingEntries.length || spooledEntries) scheduleStatisticsFlush();
   });
   return flushPromise;
 }
@@ -284,13 +594,31 @@ function getDailyStatsFilePathWithoutCreate(date) {
 }
 
 async function shutdownStatistics() {
+  shuttingDown = true;
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
   let result = await flushStatistics();
-  while (result.pending > 0 && !result.error) {
-    result = await flushStatistics();
+  while (result.pending > 0 && !result.error) result = await flushStatistics();
+  let durable = !result.error;
+  // If destination persistence fails, retain pending records in the restart spool.
+  if (result.error) {
+    durable = true;
+    try {
+      for (const [date, stats] of dailyStatsCache) stageDailyStats(date, stats);
+      if (aggregateStatsCache) {
+        fs.mkdirSync(spoolDir, { recursive: true });
+        fs.writeFileSync(`${aggregateCheckpoint}.tmp`, JSON.stringify(aggregateStatsCache), 'utf8');
+        fs.renameSync(`${aggregateCheckpoint}.tmp`, aggregateCheckpoint);
+      }
+    } catch (error) { durable = false; failQueue(error); }
+    for (const entry of pendingEntries) {
+      if (entry.spoolFile) continue;
+      try { spoolEntry(entry, true); } catch (error) { durable = false; failQueue(error); break; }
+    }
   }
-  return result;
+  if (durable) clearInterval(trendCacheSweepTimer);
+  else { shuttingDown = false; scheduleStatisticsRetry(); }
+  return { ...result, durable };
 }
-
 
 // 初始化统计对象
 function initStatsObject() {
@@ -322,56 +650,10 @@ function updateStats(stats, tokens, cost) {
   stats.cost += cost || 0;
 }
 
-/**
- * 记录一次请求
- * @param {Object} requestData - 请求数据
- */
-function recordRequest(requestData) {
-  try {
-    const {
-      id,
-      timestamp,
-      toolType = 'claude-code',
-      channel,
-      channelId,
-      model,
-      tokens,
-      duration,
-      success,
-      cost = 0,
-      session,
-      project
-    } = requestData;
-    const resolvedModel = resolveActualModel(model, requestData);
-    const modelKey = resolvedModel || 'unknown';
-    const totalTokens = getTokenTotal(tokens);
-
-    // 1. 写入详细日志
-    const logEntry = {
-      id,
-      timestamp,
-      toolType,
-      channel,
-      channelId,
-      model: resolvedModel,
-      tokens,
-      duration,
-      success,
-      cost,
-      session,
-      project
-    };
-    // 如果有模型重定向信息，记录到日志中
-    if (requestData.originalModel) {
-      logEntry.originalModel = requestData.originalModel;
-    }
-    if (requestData.redirectedModel) {
-      logEntry.redirectedModel = requestData.redirectedModel;
-    }
-
-    // 2. 更新总体统计
-    const globalStats = aggregateStatsCache || loadStatistics();
-    aggregateStatsCache = globalStats;
+function applyAggregateRequest(globalStats, entry) {
+  const { timestamp, toolType = 'claude-code', channel, channelId, model, tokens = {}, cost = 0 } = entry;
+  const modelKey = model || 'unknown';
+  const totalTokens = getTokenTotal(tokens);
     // 更新全局统计
     globalStats.global.totalRequests += 1;
     globalStats.global.totalTokens += totalTokens;
@@ -436,12 +718,14 @@ function recordRequest(requestData) {
     updateStats(globalStats.byModel[modelKey], tokens, cost);
 
 
-    // 3. 更新每日统计（使用北京时间）
-    const date = getCSTDateStr(timestamp); // YYYY-MM-DD (CST)
+}
+
+function applyDailyRequest(dailyStats, entry) {
+  const { timestamp, toolType = 'claude-code', channel, channelId, model, tokens = {}, cost = 0 } = entry;
+  const modelKey = model || 'unknown';
+  const totalTokens = getTokenTotal(tokens);
     const hour = getCSTHour(timestamp).toString().padStart(2, '0'); // HH (CST)
 
-    const dailyStats = dailyStatsCache.get(date) || loadDailyStats(date);
-    dailyStatsCache.set(date, dailyStats);
 
     // 更新每日汇总
     dailyStats.summary.requests += 1;
@@ -518,17 +802,98 @@ function recordRequest(requestData) {
     updateStats(dailyStats.byModel[modelKey], tokens, cost);
 
 
+}
+
+/**
+ * 记录一次请求
+ * @param {Object} requestData - 请求数据
+ */
+function recordRequest(requestData) {
+  try {
+    const {
+      id,
+      timestamp,
+      toolType = 'claude-code',
+      channel,
+      channelId,
+      model,
+      tokens = {},
+      duration,
+      success,
+      cost = 0,
+      session,
+      project
+    } = requestData;
+    const resolvedModel = resolveActualModel(model, requestData);
+    const modelKey = resolvedModel || 'unknown';
+    const totalTokens = getTokenTotal(tokens);
+
+    // 1. 写入详细日志
+    const logEntry = {
+      id,
+      timestamp,
+      toolType,
+      channel,
+      channelId,
+      model: resolvedModel,
+      tokens,
+      duration,
+      success,
+      cost,
+      session,
+      project
+    };
+    // 如果有模型重定向信息，记录到日志中
+    if (requestData.originalModel) {
+      logEntry.originalModel = requestData.originalModel;
+    }
+    if (requestData.redirectedModel) {
+      logEntry.redirectedModel = requestData.redirectedModel;
+    }
+
+    if (Buffer.byteLength(JSON.stringify(logEntry)) > MAX_PENDING_BYTES / 2) for (const key of ['id', 'toolType', 'channel', 'channelId', 'model', 'originalModel', 'redirectedModel', 'session', 'project']) {
+      const value = logEntry[key];
+      if (typeof value === 'string' && Buffer.byteLength(value) > 16384) logEntry[key] = value.slice(0, 4096);
+      else if (value && typeof value === 'object') logEntry[key] = '[metadata omitted]';
+    }
+    logEntry.tokens = Object.fromEntries(['input', 'output', 'cacheCreation', 'cacheRead', 'cached', 'reasoning', 'total'].filter(key => typeof tokens[key] === 'number').map(key => [key, tokens[key]]));
+    const date = getCSTDateStr(timestamp);
+    let dailyStats = dailyStatsCache.get(date) || loadDailyStats(date);
+    // Persist an evicted dirty date before admitting another date.
+    if (!dailyStatsCache.has(date) && dailyStatsCache.size >= MAX_DAILY_CACHE) {
+      const oldest = [...dailyStatsCache.keys()].sort()[0];
+      stageDailyStats(oldest, dailyStatsCache.get(oldest));
+      dailyStatsCache.delete(oldest);
+    }
+    const admission = enqueueEntry({ logEntry, date });
+    if (!admission) return false;
+    recentDailyDates = [...new Set([...recentDailyDates, date])].sort().slice(-MAX_DAILY_CACHE);
+    retainDailyStats(date, dailyStats);
+
+    // 2. 更新总体统计
+    const globalStats = aggregateStatsCache || loadStatistics();
+    aggregateStatsCache = globalStats;
+    applyAggregateRequest(globalStats, logEntry);
+
+    // 3. 更新每日统计（使用北京时间）
+    applyDailyRequest(dailyStats, logEntry);
+
     // Invalidate cached trend results that cover this date
     invalidateTrendCacheForDate(date);
-    pendingEntries.push({ logEntry, date });
-    if (pendingEntries.length >= 1000) {
-      console.error('[Statistics] Write queue reached its limit; flushing immediately');
-      void flushStatistics();
-    } else {
-      scheduleStatisticsFlush();
+    if (admission === 'spooled') {
+      // Overflow records survive a restart together with their aggregate state.
+      try {
+        stageDailyStats(date, dailyStats);
+        fs.writeFileSync(`${aggregateCheckpoint}.tmp`, JSON.stringify(globalStats), 'utf8');
+        fs.renameSync(`${aggregateCheckpoint}.tmp`, aggregateCheckpoint);
+      } catch (error) { failQueue(error); scheduleStatisticsRetry(); }
     }
+    scheduleStatisticsFlush();
+    return true;
   } catch (err) {
-    console.error('[Statistics] Failed to record request:', err);
+    failQueue(err);
+    scheduleStatisticsRetry();
+    return false;
   }
 }
 
@@ -595,7 +960,7 @@ function addLogEntryToResult(result, entry, groupBy, filters = null) {
 }
 
 function mergePendingLogEntries(result, dateStr, hour, groupBy, filters = null) {
-  for (const { logEntry } of pendingEntries) {
+  for (const { logEntry } of getUnpersistedEntries()) {
     const timestamp = new Date(logEntry.timestamp);
     if (getCSTDateStr(timestamp) !== dateStr) continue;
     if (hour !== undefined && getCSTHour(timestamp) !== hour) continue;
@@ -608,7 +973,11 @@ function readJsonlForHour(year, month, day, hour, groupBy, filters) {
   const result = {};
 
   try {
-    if (!fs.existsSync(filePath)) return result;
+    if (!fs.existsSync(filePath)) {
+      const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      mergePendingLogEntries(result, dateStr, hour, groupBy, filters);
+      return result;
+    }
     const lines = fs.readFileSync(filePath, 'utf8').split('\n');
 
     for (const line of lines) {
@@ -661,7 +1030,11 @@ function readJsonlForDay(year, month, day, groupBy, filters) {
   const result = {};
 
   try {
-    if (!fs.existsSync(filePath)) return result;
+    if (!fs.existsSync(filePath)) {
+      const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      mergePendingLogEntries(result, dateStr, undefined, groupBy, filters);
+      return result;
+    }
     const lines = fs.readFileSync(filePath, 'utf8').split('\n');
 
     for (const line of lines) {
@@ -1065,7 +1438,7 @@ function getAvailableFilters(startDate, endDate) {
     }
   }
 
-for (const { logEntry, date } of pendingEntries) {
+for (const { logEntry, date } of getUnpersistedEntries()) {
   if (date < startDate || date > endDate) continue;
   if (logEntry.toolType) toolTypes.add(logEntry.toolType);
   if (logEntry.channel) channels.add(logEntry.channel);
@@ -1097,6 +1470,18 @@ for (const { logEntry, date } of pendingEntries) {
 // ─── Trend statistics in-memory cache ───────────────────────────────────────
 // Key: JSON-serialized params, Value: { result, expiresAt }
 const trendCache = new Map();
+let trendCacheBytes = 0;
+const MAX_TREND_CACHE_BYTES = 8 * 1024 * 1024;
+function deleteTrendCacheEntry(key) {
+  const cached = trendCache.get(key);
+  if (cached) trendCacheBytes -= cached.bytes;
+  trendCache.delete(key);
+}
+function sweepTrendCache() {
+  for (const [key, value] of trendCache) if (value.expiresAt <= Date.now()) deleteTrendCacheEntry(key);
+}
+const trendCacheSweepTimer = setInterval(sweepTrendCache, 30000);
+trendCacheSweepTimer.unref?.();
 const TREND_CACHE_TTL_MS = 30 * 1000; // 30 seconds
 
 function getTrendCacheKey(params) {
@@ -1105,6 +1490,7 @@ function getTrendCacheKey(params) {
 
 function invalidateTrendCache() {
   trendCache.clear();
+  trendCacheBytes = 0;
 }
 
 // Called by recordRequest so fresh data is visible immediately after a new request
@@ -1113,9 +1499,9 @@ function invalidateTrendCacheForDate(dateStr) {
     try {
       const p = JSON.parse(key);
       if (p.startDate <= dateStr && dateStr <= p.endDate) {
-        trendCache.delete(key);
+        deleteTrendCacheEntry(key);
       }
-    } catch { trendCache.delete(key); }
+    } catch { deleteTrendCacheEntry(key); }
   }
 }
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1128,8 +1514,11 @@ async function getTrendStatistics({ startDate, endDate, granularity = 'day', ste
 
   // Check cache first
   const cacheKey = getTrendCacheKey({ startDate, endDate, granularity, step: String(step), groupBy, metric, filters: activeFilters || null });
+  sweepTrendCache();
   const cached = trendCache.get(cacheKey);
   if (cached && Date.now() < cached.expiresAt) {
+    trendCache.delete(cacheKey);
+    trendCache.set(cacheKey, cached);
     return cached.result;
   }
 
@@ -1265,13 +1654,26 @@ async function getTrendStatistics({ startDate, endDate, granularity = 'day', ste
   const result = { labels, series, totals };
 
   // Store in cache
-  trendCache.set(cacheKey, { result, expiresAt: Date.now() + TREND_CACHE_TTL_MS });
+  const bytes = Buffer.byteLength(cacheKey) + Buffer.byteLength(JSON.stringify(result));
+  if (bytes <= MAX_TREND_CACHE_BYTES) {
+    deleteTrendCacheEntry(cacheKey);
+    while (trendCache.size >= 32 || trendCacheBytes + bytes > MAX_TREND_CACHE_BYTES) {
+      deleteTrendCacheEntry(trendCache.keys().next().value);
+    }
+    trendCache.set(cacheKey, { result, bytes, expiresAt: Date.now() + TREND_CACHE_TTL_MS });
+    trendCacheBytes += bytes;
+  }
 
   return result;
 }
 
+try { recoverSpoolStatistics(); } catch (error) { failQueue(error); }
+
+if (spooledEntries || fs.existsSync(stagedDailyDir) || fs.existsSync(aggregateCheckpoint)) scheduleStatisticsFlush();
+
 module.exports = {
   recordRequest,
+  getStatisticsQueueDiagnostics,
   getStatistics,
   getDailyStatistics,
   getTodayStatistics,

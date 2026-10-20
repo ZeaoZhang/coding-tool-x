@@ -584,4 +584,4 @@ function createDriver(context = {}) {
   };
 }
 
-module.exports = { createDriver, projectNameFor, decodeArtifact, listArtifacts, textFromContent };
+module.exports = { createDriver, projectNameFor, decodeArtifact, listArtifacts, textFromContent, zstdFrameEnd };

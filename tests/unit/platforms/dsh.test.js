@@ -124,6 +124,143 @@ describe('DSH platform integration', () => {
     })]);
   });
 
+  test('isolates damaged compressed sources without blocking healthy logs or proxy admission', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const good = path.join(paths.sessions, 'good', 'session.v3.jsonl.zstd');
+    const bad = path.join(paths.sessions, 'bad', 'session.v3.jsonl.zstd');
+    writeZstdLog(good, { type: 'session', id: 'good' }, []);
+    writeZstdLog(bad, { type: 'session', id: 'bad' }, []);
+    fs.appendFileSync(bad, zlib.zstdCompressSync(Buffer.from('damaged json\n')));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const cursor = createNativeLogDriver({ paths }).createNativeLogCursor({ skipInitialParse: true });
+    try {
+      cursor.initialize();
+      expect(cursor.diagnostics().persistenceBlocked).toBe(false);
+      fs.appendFileSync(good, zlib.zstdCompressSync(Buffer.from(JSON.stringify({ id: 'healthy', usage: { input: 2 } }) + '\n')));
+      expect(cursor.readNewEvents()).toEqual([expect.objectContaining({ id: expect.stringContaining('healthy') })]);
+      expect(cursor.diagnostics().persistenceBlocked).toBe(false);
+      expect(cursor.readNewEvents()).toEqual([]);
+    } finally { cursor.close(); warn.mockRestore(); }
+  });
+
+  test('bounds compressed frame input and decompressed output without global storage pressure', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const file = path.join(paths.sessions, 'large', 'session.v3.jsonl.zstd');
+    writeZstdLog(file, { type: 'session', id: 'large' }, []);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const decompress = vi.spyOn(zlib, 'zstdDecompressSync');
+    const cursor = createNativeLogDriver({ paths }).createNativeLogCursor({ skipInitialParse: true });
+    try {
+      cursor.initialize();
+      // A highly compressible transcript must not expand without a byte limit.
+      fs.appendFileSync(file, zlib.zstdCompressSync(Buffer.from(JSON.stringify({ content: 'x'.repeat(17 * 1024 * 1024) }) + '\n')));
+      cursor.readNewEvents();
+      expect(decompress.mock.calls.every(args => args[1]?.maxOutputLength === 16 * 1024 * 1024)).toBe(true);
+      expect(cursor.diagnostics().persistenceBlocked).toBe(false);
+      expect(warn).toHaveBeenCalled();
+      // An incomplete, incompressible frame is capped before decompression.
+      const frame = zlib.zstdCompressSync(require('crypto').randomBytes(9 * 1024 * 1024));
+      writeZstdLog(file, { type: 'session', id: 'large' }, []);
+      fs.appendFileSync(file, frame.subarray(0, frame.length - 1));
+      warn.mockClear(); decompress.mockClear();
+      cursor.readNewEvents();
+      expect(warn.mock.calls.some(args => args.some(value => String(value).includes('compressed frame exceeds')))).toBe(true);
+      expect(decompress.mock.calls).toHaveLength(1); // Header only.
+      expect(cursor.diagnostics().persistenceBlocked).toBe(false);
+    } finally { cursor.close(); warn.mockRestore(); decompress.mockRestore(); }
+  });
+
+  test('keeps plain DSH usage distinct across sessions with the same sequence', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const files = ['session-a', 'session-b'].map(session => path.join(paths.sessions, 'project', session, 'session.v3.jsonl'));
+    for (const file of files) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify({ type: 'session', id: path.basename(path.dirname(file)) }) + '\n');
+    }
+    const cursor = createNativeLogDriver({ paths }).createNativeLogCursor({ skipInitialParse: true });
+    try {
+      cursor.initialize();
+      for (const file of files) fs.appendFileSync(file, JSON.stringify({ seq: 1, usage: { input: 2 } }) + '\n');
+      const events = cursor.readNewEvents();
+      expect(events).toHaveLength(2);
+      expect(new Set(events.map(event => event.id)).size).toBe(2);
+      expect(cursor.readNewEvents()).toEqual([]);
+    } finally { cursor.close(); }
+  });
+
+  test('reads appended plain DSH logs incrementally in bounded batches', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const file = path.join(paths.sessions, 'project', 'usage', 'session.v3.jsonl');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const event = index => ({ id: `event-${index}`, usage: { input: 2, output: 1, total: 3 } });
+    fs.writeFileSync(file, Array.from({ length: 2000 }, (_, index) => JSON.stringify(event(index))).join('\n') + '\n');
+    const readFileSync = vi.fn((...args) => fs.readFileSync(...args));
+    const cursor = createNativeLogDriver({ paths, fsImpl: { ...fs, readFileSync } }).createNativeLogCursor({ skipInitialParse: true });
+    try {
+      cursor.initialize();
+      readFileSync.mockClear();
+      fs.appendFileSync(file, Array.from({ length: 1200 }, (_, index) => JSON.stringify(event(index + 2000))).join('\n') + '\n');
+      const batches = [cursor.readNewEvents(), cursor.readNewEvents(), cursor.readNewEvents()];
+      expect(batches.map(batch => batch.length)).toEqual([500, 500, 200]);
+      expect(new Set(batches.flat().map(item => item.id)).size).toBe(1200);
+      expect(cursor.readNewEvents()).toEqual([]);
+      expect(readFileSync.mock.calls.filter(([target]) => target === file)).toHaveLength(0);
+    } finally { cursor.close(); }
+  });
+
+  test('reads compressed DSH history without whole-file copies or replaying the baseline', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const file = path.join(paths.sessions, 'project', 'usage', 'session.v3.jsonl.zstd');
+    const event = index => ({ id: `event-${index}`, usage: { input: 2, output: 1, total: 3 }, content: 'x'.repeat(1024) });
+    writeZstdLog(file, { type: 'session', id: 'usage' }, [event(0)]);
+    const readFileSync = vi.spyOn(fs, 'readFileSync');
+    const cursor = createNativeLogDriver({ paths }).createNativeLogCursor({ skipInitialParse: true });
+    try {
+      cursor.initialize();
+      for (let index = 1; index <= 1200; index += 1) {
+        fs.appendFileSync(file, zlib.zstdCompressSync(Buffer.from(JSON.stringify(event(index)) + '\n')));
+      }
+      const batches = [cursor.readNewEvents(), cursor.readNewEvents(), cursor.readNewEvents()];
+      expect(batches.map(batch => batch.length)).toEqual([500, 500, 200]);
+      expect(new Set(batches.flat().map(item => item.id)).size).toBe(1200);
+      expect(cursor.readNewEvents()).toEqual([]);
+      expect(readFileSync.mock.calls.filter(([target]) => target === file)).toHaveLength(0);
+    } finally { cursor.close(); readFileSync.mockRestore(); }
+  });
+
+  test('preserves DSH usage fields in long lines across compressed frames and partial appends', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const file = path.join(paths.sessions, 'project', 'usage', 'session.v3.jsonl.zstd');
+    writeZstdLog(file, { type: 'session', id: 'usage' }, []);
+    const cursor = createNativeLogDriver({ paths }).createNativeLogCursor({ skipInitialParse: true });
+    const event = { id: 'long', content: '测'.repeat(300000), data: { message: {
+      source: { provider: 'deepseek', model: 'deepseek-chat', channelId: 'channel' },
+      usage: { prompt_tokens: 12, completion_tokens: 3, cache: { readTokens: 2, writeTokens: 1 } }
+    } } };
+    try {
+      cursor.initialize();
+      const text = JSON.stringify(event) + '\n';
+      const frame1 = zlib.zstdCompressSync(Buffer.from(text.slice(0, 100000)));
+      const frame2 = zlib.zstdCompressSync(Buffer.from(text.slice(100000)));
+      fs.appendFileSync(file, frame1);
+      fs.appendFileSync(file, frame2.subarray(0, 5));
+      expect(cursor.readNewEvents()).toEqual([]);
+      expect(cursor.diagnostics().persistenceBlocked).toBe(false);
+      fs.appendFileSync(file, frame2.subarray(5));
+      expect(cursor.readNewEvents()).toEqual([expect.objectContaining({
+        model: 'deepseek-chat', provider: 'deepseek', channelId: 'channel', cacheUsageAvailable: true,
+        tokens: expect.objectContaining({ input: 10, output: 3, cacheRead: 2, cacheCreation: 1 })
+      })]);
+      expect(cursor.readNewEvents()).toEqual([]);
+    } finally { cursor.close(); vi.useRealTimers(); }
+  });
+
   test('reads current DSH zstd session generations and maps message projections read-only', () => {
     tempHome = makeTempHome();
     const paths = dshPaths(tempHome);

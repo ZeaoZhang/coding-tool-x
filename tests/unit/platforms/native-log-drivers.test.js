@@ -34,6 +34,19 @@ afterEach(() => {
 });
 
 describe('file-backed native log cursors', () => {
+  test('Gemini retains only scalar usage metadata across repeated updates', () => {
+    const state = { metadata: {}, entryIndex: 0 };
+    for (let index = 0; index < 100; index += 1) {
+      geminiDriver.parseGeminiJsonlLine('session-test.jsonl', {
+        $set: { sessionId: 'session', model: 'gemini-test', provider: 'google', lastUpdated: index, [`history-${index}`]: { content: 'x'.repeat(1024) } }
+      }, state);
+    }
+    expect(state.metadata).toEqual({ sessionId: 'session', model: 'gemini-test', provider: 'google', lastUpdated: 99 });
+    geminiDriver.parseGeminiJsonlLine('session-test.jsonl', { $set: { model: { content: 'invalid' }, provider: null } }, state);
+    expect(state.metadata.model).toBe('gemini-test');
+    expect(state.metadata.provider).toBe('');
+  });
+
   test('can establish a file baseline without parsing historical content', () => {
     const filePath = path.join(testDir, 'claude', 'session.jsonl');
     writeJsonLines(filePath, [{ id: 'old', tokens: { input: 1 } }]);
@@ -79,6 +92,21 @@ describe('file-backed native log cursors', () => {
       tokens: expect.objectContaining({ input: 20, output: 5, total: 25 })
     })]);
     expect(cursor.readNewEvents()).toEqual([]);
+  });
+
+  test('JSONL bursts stop at exact byte boundaries and drain without skipping events', () => {
+    const filePath = path.join(testDir, 'claude', 'burst.jsonl');
+    writeJsonLines(filePath, []);
+    const cursor = claudeDriver.createDriver({ nativeRoot: path.dirname(filePath) }).createNativeLogCursor();
+    try {
+      cursor.initialize();
+      const records = Array.from({ length: 1200 }, (_, i) => ({ type: 'assistant', uuid: `burst-${i}`, message: { role: 'assistant', usage: { input_tokens: 1 } } }));
+      fs.appendFileSync(filePath, records.map(record => JSON.stringify(record)).join('\n') + '\n');
+      const batches = [cursor.readNewEvents(), cursor.readNewEvents(), cursor.readNewEvents()];
+      expect(batches.map(batch => batch.length)).toEqual([500, 500, 200]);
+      expect(batches.flat().map(event => event.id)).toEqual(records.map(record => `burst.jsonl:${record.uuid}`));
+      expect(cursor.readNewEvents()).toEqual([]);
+    } finally { cursor.close(); }
   });
 
   test('a truncated or replaced Claude file is treated as a new cursor source', () => {
@@ -395,6 +423,38 @@ describe('file-backed native log cursors', () => {
     expect(cursor.readNewEvents()).toEqual([]);
   });
 
+  test('Gemini baseline skips history on the first rewrite and batches pending events', () => {
+    const filePath = path.join(testDir, 'gemini', 'session-baseline.json');
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const messages = Array.from({ length: 1200 }, (_, i) => ({ id: `old-${i}`, usage: { input_tokens: 1 } }));
+    fs.writeFileSync(filePath, JSON.stringify({ messages }));
+    vi.useFakeTimers();
+    const cursor = geminiDriver.createDriver({ nativeRoot: path.dirname(filePath) }).createNativeLogCursor({ skipInitialParse: true });
+    cursor.initialize();
+    vi.advanceTimersByTime(15 * 1000);
+    fs.writeFileSync(filePath, JSON.stringify({ messages: [...messages, ...Array.from({ length: 1100 }, (_, i) => ({ id: `new-${i}`, usage: { input_tokens: 2 } }))] }));
+    const batches = [cursor.readNewEvents(), cursor.readNewEvents(), cursor.readNewEvents()];
+    expect(batches.map(batch => batch.length)).toEqual([500, 500, 100]);
+    expect(batches.flat().every(event => !event.id.includes('old-'))).toBe(true);
+    expect(cursor.readNewEvents()).toEqual([]);
+    cursor.close();
+  });
+
+  test('Gemini shutdown force reads the final JSON rewrite within the polling interval', () => {
+    const filePath = path.join(testDir, 'gemini', 'session-final.json');
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify({ messages: [] }));
+    vi.useFakeTimers();
+    const cursor = geminiDriver.createDriver({ nativeRoot: path.dirname(filePath) }).createNativeLogCursor({ skipInitialParse: true });
+    try {
+      cursor.initialize();
+      fs.writeFileSync(filePath, JSON.stringify({ messages: [{ id: 'final', usage: { input: 2 } }] }));
+      expect(cursor.readNewEvents()).toEqual([]);
+      expect(cursor.readNewEvents({ force: true })).toEqual([expect.objectContaining({ id: 'session-final.json:final' })]);
+      expect(cursor.readNewEvents({ force: true })).toEqual([]);
+    } finally { cursor.close(); }
+  });
+
   test('Gemini uses a deterministic content version when a message has no id', () => {
     const filePath = path.join(testDir, 'gemini', 'session-b.json');
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -552,6 +612,70 @@ describe('file-backed native log cursors', () => {
 });
 
 describe('OpenCode native log cursor', () => {
+  test('attaches checkpoints read-only and keeps source bodies out of the hot cache', () => {
+    const { createNativeLogCheckpoints } = require('../../../src/server/services/native-log-checkpoints');
+    const store = createNativeLogCheckpoints({ directory: testDir });
+    const db = new DatabaseSync(':memory:');
+    try {
+      store.set('rows', 'one', { tokens: { input: 1 } }, { data: 'x'.repeat(1024 * 1024) });
+      expect(store.diagnostics().hotBytes).toBeLessThan(1024);
+      store.attachReadOnly(db);
+      expect(() => db.exec('DELETE FROM native_checkpoints.states')).toThrow(/readonly/i);
+      expect(store.get('rows', 'one')).toEqual({ tokens: { input: 1 } });
+    } finally { db.close(); store.close(); }
+  });
+
+  test('skips unchanged usage parsing but detects old part and parent message edits', () => {
+    const dbPath = path.join(testDir, 'opencode-edits.db');
+    process.env.OPENCODE_DB_PATH = dbPath;
+    const db = new DatabaseSync(dbPath);
+    db.exec('CREATE TABLE message (id TEXT PRIMARY KEY, data TEXT); CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);');
+    db.prepare('INSERT INTO message VALUES (?, ?)').run('m', JSON.stringify({ modelID: 'gpt-5.5', providerID: 'first' }));
+    const insert = db.prepare('INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)');
+    insert.run('old', 'm', 's', 1, 1, JSON.stringify({ tokens: { input: 10 } }));
+    const diagnostics = [];
+    const cursor = opencodeDriver.createDriver().createNativeLogCursor({ onDiagnostic: value => diagnostics.push(value) });
+    try {
+      cursor.initialize();
+      insert.run('new', 'm', 's', 2, 2, JSON.stringify({ tokens: { input: 1 } }));
+      expect(cursor.readNewEvents()).toHaveLength(1);
+      expect(diagnostics.at(-1).parsedRecords).toBe(1);
+      db.prepare('UPDATE message SET data = ?').run(JSON.stringify({ modelID: 'gpt-5.5', providerID: 'second' }));
+      expect(cursor.readNewEvents()).toEqual([]);
+      expect(diagnostics.at(-1).parsedRecords).toBe(2);
+      db.prepare('UPDATE message SET data = ?').run(JSON.stringify({ modelID: 'gpt-5.5', providerID: 'second', content: 'unrelated content' }));
+      expect(cursor.readNewEvents()).toEqual([]);
+      expect(diagnostics.at(-1).parsedRecords).toBe(0);
+      db.prepare('UPDATE part SET data = ? WHERE id = ?').run(JSON.stringify({ tokens: { input: 13 } }), 'old');
+      expect(cursor.readNewEvents()).toEqual([expect.objectContaining({ provider: 'second', tokens: expect.objectContaining({ input: 3 }) })]);
+      expect(diagnostics.at(-1).parsedRecords).toBe(1);
+      expect(cursor.readNewEvents()).toEqual([]);
+    } finally { cursor.close(); db.close(); }
+  });
+
+  test('evicted OpenCode baselines still produce exact deltas and bounded batches', () => {
+    const dbPath = path.join(testDir, 'opencode-many.db');
+    process.env.OPENCODE_DB_PATH = dbPath;
+    const db = new DatabaseSync(dbPath);
+    db.exec('CREATE TABLE message (id TEXT PRIMARY KEY, data TEXT); CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);');
+    const insert = db.prepare('INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)');
+    for (let i = 0; i < 1300; i++) insert.run(`part-${i}`, 'message', 'session', i, i, JSON.stringify({ tokens: { input: 10 } }));
+    const cursor = opencodeDriver.createDriver().createNativeLogCursor();
+    try {
+      cursor.initialize();
+      expect(cursor.diagnostics().hotEntries).toBeLessThanOrEqual(1024);
+      expect(cursor.diagnostics().hotBytes).toBeLessThanOrEqual(2 * 1024 * 1024);
+      db.prepare('UPDATE part SET data = ? WHERE id = ?').run(JSON.stringify({ tokens: { input: 13 } }), 'part-0');
+      expect(cursor.readNewEvents()).toEqual([expect.objectContaining({ tokens: expect.objectContaining({ input: 3 }) })]);
+      expect(cursor.readNewEvents()).toEqual([]);
+      for (let i = 1300; i < 2400; i++) insert.run(`part-${i}`, 'message', 'session', i, i, JSON.stringify({ tokens: { input: 1 } }));
+      const batches = [cursor.readNewEvents(), cursor.readNewEvents(), cursor.readNewEvents()];
+      expect(batches.map(batch => batch.length)).toEqual([500, 500, 100]);
+      expect(new Set(batches.flat().map(event => event.id)).size).toBe(1100);
+      expect(cursor.readNewEvents()).toEqual([]);
+    } finally { cursor.close(); db.close(); }
+  });
+
   test('uses a read-only SQLite connection and reads stable usage rows once', () => {
     const dbPath = path.join(testDir, 'opencode.db');
     process.env.OPENCODE_DB_PATH = dbPath;
@@ -589,5 +713,122 @@ describe('OpenCode native log cursor', () => {
       provider: 'openai'
     })]);
     db.close();
+  });
+});
+
+
+describe('checkpoint disk failures', () => {
+  function withFailingCheckpoint(callback) {
+    const utilsPath = require.resolve('../../../src/platforms/drivers/native-log-utils');
+    const checkpointPath = require.resolve('../../../src/server/services/native-log-checkpoints');
+    const previousUtils = require.cache[utilsPath];
+    const checkpointModule = require(checkpointPath);
+    const realCreate = checkpointModule.createNativeLogCheckpoints;
+    let fail = true;
+    checkpointModule.createNativeLogCheckpoints = options => {
+      const store = realCreate(options);
+      return { ...store, enqueue(event) {
+        if (fail) throw new Error('injected checkpoint disk failure');
+        return store.enqueue(event);
+      } };
+    };
+    delete require.cache[utilsPath];
+    const utils = require(utilsPath);
+    try { callback(utils, () => { fail = false; }); } finally {
+      checkpointModule.createNativeLogCheckpoints = realCreate;
+      require.cache[utilsPath] = previousUtils;
+    }
+  }
+
+  test('JSONL retries the same failed overflow event before committing its offset', () => {
+    vi.useFakeTimers();
+    withFailingCheckpoint((utils, recover) => {
+      const filePath = path.join(testDir, 'retry.jsonl');
+      writeJsonLines(filePath, []);
+      let parsed = 0;
+      const cursor = utils.createIncrementalJsonlCursor({
+        scanFiles: () => [filePath],
+        parseLine: (_path, record) => { parsed++; return record.events; },
+        onError: () => {}
+      });
+      try {
+        cursor.initialize();
+        const events = Array.from({ length: 501 }, (_, i) => ({ id: `retry-${i}`, tokens: { input: 1 } }));
+        writeJsonLines(filePath, [{ events }]);
+        expect(cursor.readNewEvents()).toEqual(events.slice(0, 500));
+        expect(cursor.diagnostics().persistenceBlocked).toBe(true);
+        expect(cursor.readNewEvents()).toEqual([]);
+        vi.advanceTimersByTime(1000);
+        expect(cursor.readNewEvents()).toEqual([]);
+        expect(cursor.diagnostics().persistenceBlocked).toBe(true);
+        recover(); vi.advanceTimersByTime(2000);
+        expect(cursor.readNewEvents()).toEqual([events[500]]);
+        expect(cursor.diagnostics().persistenceBlocked).toBe(false);
+        expect(cursor.readNewEvents()).toEqual([]);
+        expect(parsed).toBe(1);
+        fs.appendFileSync(filePath, JSON.stringify({ events: [{ id: 'after-retry', tokens: { input: 2 } }] }) + '\n');
+        expect(cursor.readNewEvents()).toEqual([expect.objectContaining({ id: 'after-retry' })]);
+      } finally { cursor.close(); }
+    });
+  });
+
+  test('scanned JSON rollback retries all identical IDs after overflow persistence recovers', () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    withFailingCheckpoint((utils, recover) => {
+      const filePath = path.join(testDir, 'retry.json');
+      fs.writeFileSync(filePath, JSON.stringify([]));
+      const cursor = utils.createScannedFileCursor({
+        scanFiles: () => [filePath], parseFile: () => JSON.parse(fs.readFileSync(filePath, 'utf8')),
+        normalizeEvent: event => event, parseBaseline: true
+      });
+      try {
+        cursor.initialize();
+        const events = Array.from({ length: 1100 }, (_, i) => ({ id: `same-id-${i}`, tokens: { input: 1 } }));
+        fs.writeFileSync(filePath, JSON.stringify(events));
+        expect(cursor.readNewEvents()).toEqual([]);
+        expect(cursor.diagnostics().persistenceBlocked).toBe(true);
+        for (let i = 0; i < 10; i++) expect(cursor.readNewEvents()).toEqual([]);
+        expect(warn).toHaveBeenCalledTimes(1);
+        recover(); vi.advanceTimersByTime(1000);
+        const actual = [cursor.readNewEvents(), cursor.readNewEvents(), cursor.readNewEvents()];
+        expect(actual.map(batch => batch.length)).toEqual([500, 500, 100]);
+        expect(actual.flat()).toEqual(events);
+        expect(cursor.diagnostics().persistenceBlocked).toBe(false);
+        expect(cursor.readNewEvents()).toEqual([]);
+      } finally { cursor.close(); }
+    });
+    warn.mockRestore();
+  });
+
+  test('Gemini whole JSON retries its unchanged source after a failed pending write', () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    withFailingCheckpoint((_utils, recover) => {
+      const driverPath = require.resolve('../../../src/platforms/drivers/gemini/native-logs');
+      const previousDriver = require.cache[driverPath];
+      delete require.cache[driverPath];
+      const driver = require(driverPath);
+      const filePath = path.join(testDir, 'gemini-retry', 'session-retry.json');
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, JSON.stringify({ messages: [{ id: 'old', tokens: { input: 1 } }] }));
+      const cursor = driver.createDriver({ nativeRoot: path.dirname(filePath) }).createNativeLogCursor({ skipInitialParse: true });
+      try {
+        cursor.initialize(); vi.advanceTimersByTime(15_000);
+        const messages = Array.from({ length: 501 }, (_, i) => ({ id: `same-${i}`, tokens: { input: 2 } }));
+        fs.writeFileSync(filePath, JSON.stringify({ messages: [{ id: 'old', tokens: { input: 1 } }, ...messages] }));
+        expect(cursor.readNewEvents()).toEqual([]);
+        expect(cursor.diagnostics().persistenceBlocked).toBe(true);
+        vi.advanceTimersByTime(1000);
+        expect(cursor.readNewEvents()).toEqual([]);
+        expect(cursor.diagnostics().persistenceBlocked).toBe(true);
+        recover(); vi.advanceTimersByTime(2000);
+        const batches = [cursor.readNewEvents(), cursor.readNewEvents()];
+        expect(batches.map(batch => batch.length)).toEqual([500, 1]);
+        expect(batches.flat().map(event => event.id)).toEqual(messages.map(message => `session-retry.json:${message.id}`));
+        expect(cursor.readNewEvents()).toEqual([]);
+      } finally { cursor.close(); require.cache[driverPath] = previousDriver; }
+    });
+    warn.mockRestore();
   });
 });

@@ -69,6 +69,25 @@ function calculateUsageCost(source, model, tokens = {}) {
   });
 }
 
+// Create once per synchronous scan, so edits to pricing are visible next poll.
+function createUsageCostCalculator(source) {
+  const normalizedSource = normalizeToolSource(source);
+  const prices = new Map();
+  return (model, tokens = {}) => {
+    const cacheable = typeof model === 'string' && Buffer.byteLength(model) <= 2048;
+    let pricing = cacheable ? prices.get(model) : undefined;
+    if (!pricing) pricing = resolveModelPricing(normalizedSource, model);
+    if (cacheable) {
+      prices.delete(model);
+      prices.set(model, pricing);
+      if (prices.size > 64) prices.delete(prices.keys().next().value);
+    }
+    return calculateTokenCost(pricing, normalizeUsageTokens(normalizedSource, tokens), {
+      reasoningBilledAsOutput: normalizedSource === 'gemini'
+    });
+  };
+}
+
 function formatRealtimeTime(timestamp = Date.now()) {
   return new Date(timestamp).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
@@ -95,6 +114,7 @@ module.exports = {
   normalizeUsageTokens,
   hasMeaningfulUsage,
   calculateUsageCost,
+  createUsageCostCalculator,
   formatRealtimeTime,
   buildSuccessLogPayload
 };

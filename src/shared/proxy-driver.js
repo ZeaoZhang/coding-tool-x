@@ -36,7 +36,12 @@ function createProxyDriver({
     }
   };
   const driver = { platform, capability, manifest };
-  driver.getCliMetadata = () => ({ ...cliMetadata });
+  driver.getCliMetadata = () => ({
+    ...(Number.isInteger(manifest.defaultPort) ? { defaultPort: manifest.defaultPort } : {}),
+    ...(manifest.proxyMode === 'managed' ? { managedProviderConfig: true } : {}),
+    ...(manifest.proxyLabels ? { proxyLabels: manifest.proxyLabels } : {}),
+    ...cliMetadata
+  });
   for (const operation of ['status', 'start', 'stop']) {
     driver[operation] = (...args) => call(operation, args);
   }

@@ -221,14 +221,11 @@ function shutdownProcess(code = 0, error = null) {
   if (processShutdownPromise) return processShutdownPromise;
   processShutdownPromise = (async () => {
     try {
-      require('./server/services/memory-reclaimer').stopMemoryReclaimer();
-    } catch (memoryError) {
-      console.error(chalk.yellow(`[WARN] 内存回收器退出清理失败: ${memoryError.message}`));
-    }
-    try {
-      require('./server/services/native-log-observer').shutdownNativeCliLogObserver();
+      await require('./server/services/native-log-observer').drainNativeCliLogs();
     } catch (observerError) {
       console.error(chalk.yellow(`[WARN] CLI 原生会话日志退出清理失败: ${observerError.message}`));
+      processShutdownPromise = null;
+      return false;
     }
     await Promise.all([
       stopOwnedOmpGatewayBeforeExit(),
@@ -243,10 +240,18 @@ function shutdownProcess(code = 0, error = null) {
       console.error(`[WARN] Log persistence flush failed during shutdown: ${flushError.message}`);
     }
     try {
-      await require('./server/services/statistics-service').shutdownStatistics();
+      // A completing CLI stream may append native usage during proxy drain.
+      await require('./server/services/native-log-observer').drainNativeCliLogs();
+      const result = await require('./server/services/statistics-service').shutdownStatistics();
+      if (result?.durable === false) throw new Error('Statistics could not persist its shutdown backlog');
     } catch (flushError) {
       console.error(`[WARN] Statistics flush failed during shutdown: ${flushError.message}`);
+      require('./server/services/native-log-observer').startNativeCliLogObserver();
+      processShutdownPromise = null;
+      return false;
     }
+    require('./server/services/native-log-observer').shutdownNativeCliLogObserver();
+    require('./server/services/memory-reclaimer').stopMemoryReclaimer();
     try {
       require('./server/services/session-history-index').closeSessionHistoryIndex();
       require('./server/services/sqlite-connection').closeAllDatabases();
@@ -300,7 +305,7 @@ async function main({ menuDependencies } = {}) {
   // LAN 快捷入口，等同于 ctx ui --host/--hosts
   if (hasHostFlag(process.argv) && !args.some((arg) => arg && !arg.startsWith('-'))) {
     const { handleUI } = require('./commands/ui');
-    await handleUI();
+    await handleUI({ shutdownProcess });
     return;
   }
 
@@ -441,7 +446,7 @@ async function main({ menuDependencies } = {}) {
     } else {
       // 默认前台运行
       const { handleUI } = require('./commands/ui');
-      await handleUI();
+      await handleUI({ shutdownProcess });
     }
     return;
   }
@@ -680,7 +685,7 @@ async function main({ menuDependencies } = {}) {
 
       case 'ui': {
         const { handleUI } = require('./commands/ui');
-        await handleUI();
+        await handleUI({ shutdownProcess });
         break;
       }
 

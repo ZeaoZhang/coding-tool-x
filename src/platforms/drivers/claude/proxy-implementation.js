@@ -16,10 +16,11 @@ const {
   getEffectiveApiKey,
   getClaudeProxyExcludedChannelIds = () => []
 } = require('./channels-implementation');
-const { persistProxyRequestSnapshot, persistClaudeRequestTemplate } = require('../../../server/services/request-logger');
+const { isProxyRequestLoggingEnabled, persistProxyRequestSnapshot, persistClaudeRequestTemplate } = require('../../../server/services/request-logger');
 const { redirectModel, normalizeGatewaySourceType } = require('../../../shared/proxy-utils');
 const { handleClaudeOpenAiGatewayRequest } = require('./openai-gateway');
-const { bindProxyRequest, prepareProxyResponse } = require('../../../shared/proxy-transport');
+const { bindProxyRequest, prepareProxyResponse, proxyRequestLifecycle, bindChannelRelease } = require('../../../shared/proxy-transport');
+const { memoryPressureMiddleware } = require('../../../server/services/memory-pressure');
 const { attachServerShutdownHandling, expediteServerShutdown, PROXY_IDLE_TIMEOUT_MS } = require('../../../server/services/server-shutdown');
 
 let proxyServer = null;
@@ -77,15 +78,6 @@ function pickClaudeRequestHeaders(headers = {}) {
   return { ...headers };
 }
 
-function toSerializable(value) {
-  if (value === undefined) return null;
-  try {
-    return JSON.parse(JSON.stringify(value));
-  } catch (error) {
-    return String(value);
-  }
-}
-
 function extractClaudeRequestBody(req) {
   if (req?.body !== undefined) {
     return req.body;
@@ -100,9 +92,6 @@ function extractClaudeRequestBody(req) {
 }
 
 function serializeFullClaudeRequest(req) {
-  const rawBodyBuffer = req?.rawBody
-    ? (Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(req.rawBody))
-    : null;
 
   return {
     method: req?.method || null,
@@ -112,10 +101,9 @@ function serializeFullClaudeRequest(req) {
     httpVersion: req?.httpVersion || null,
     headers: pickClaudeRequestHeaders(req?.headers || {}),
     rawHeaders: Array.isArray(req?.rawHeaders) ? [...req.rawHeaders] : null,
-    query: toSerializable(req?.query),
-    params: toSerializable(req?.params),
-    body: toSerializable(extractClaudeRequestBody(req)),
-    rawBody: rawBodyBuffer ? rawBodyBuffer.toString('utf8') : null
+    query: req?.query || null,
+    params: req?.params || null,
+    body: extractClaudeRequestBody(req)
   };
 }
 
@@ -165,6 +153,8 @@ async function startProxyServer(options = {}) {
     currentPort = port;
 
     proxyApp = express();
+    proxyApp.use((req, res, next) => { req.proxyPlatform = 'claude'; memoryPressureMiddleware(req, res, next); });
+    proxyApp.use(proxyRequestLifecycle);
 
     proxyApp.use((req, res, next) => {
       if (shouldParseJson(req)) {
@@ -219,6 +209,7 @@ async function startProxyServer(options = {}) {
         const enableSessionBinding = config.enableSessionBinding !== false; // 默认开启
         const channel = await allocateChannel({
           source: 'claude',
+          signal: req.proxyAllocationSignal,
           sessionId,
           enableSessionBinding,
           excludeChannelIds: getClaudeProxyExcludedChannelIds()
@@ -240,9 +231,7 @@ async function startProxyServer(options = {}) {
         };
 
         req.__releaseChannel = release;
-        res.on('finish', release);
-        res.on('close', release);
-        res.on('error', release);
+        bindChannelRelease(req, res, release);
         if (res.destroyed || res.writableEnded) { release(); return; }
 
         const effectiveKey = getEffectiveApiKey(channel);
@@ -254,14 +243,12 @@ async function startProxyServer(options = {}) {
           });
         }
         req.effectiveApiKey = effectiveKey;
-        const requestSnapshot = serializeFullClaudeRequest(req);
-        persistClaudeRequestSnapshot({
-          timestamp: Date.now(),
-          source: 'claude',
-          channel: channel.name,
-          sessionId: sessionId || null,
-          request: requestSnapshot
-        });
+        if (isProxyRequestLoggingEnabled()) {
+          persistClaudeRequestSnapshot({
+            timestamp: Date.now(), source: 'claude', channel: channel.name,
+            sessionId: sessionId || null, request: serializeFullClaudeRequest(req)
+          });
+        }
         persistClaudeRequestTemplate(req.body);
 
         // 应用模型重定向（当 proxy 开启时）
@@ -321,7 +308,7 @@ async function startProxyServer(options = {}) {
           release();
           if (err) {
             // 记录请求失败
-            recordFailure(channel.id, 'claude', err);
+            if (!req.proxyAllocationSignal?.aborted) recordFailure(channel.id, 'claude', err);
             console.error('Proxy error:', err);
             if (res && !res.headersSent) {
               res.status(502).json({
@@ -332,6 +319,7 @@ async function startProxyServer(options = {}) {
           }
         });
       } catch (error) {
+        if (error.code === 'channel_queue_full') res.setHeader('Retry-After', '5');
         req.__releaseChannel?.();
         console.error('Channel allocation error:', error);
         if (!res.headersSent) {
@@ -357,14 +345,14 @@ async function startProxyServer(options = {}) {
       res.on('close', () => requestMetadata.delete(req));
       res.on('error', (err) => {
         if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Response error:', err);
-        recordFailure(metadata.channelId, 'claude', err);
+        if (!req.proxyAllocationSignal?.aborted) recordFailure(metadata.channelId, 'claude', err);
         requestMetadata.delete(req);
       });
 
       const statusCode = Number(proxyRes.statusCode) || 200;
       proxyRes.on('end', () => {
         if (statusCode >= 400) {
-          recordFailure(metadata.channelId, 'claude', new Error(`Claude upstream HTTP ${statusCode}`));
+          if (!req.proxyAllocationSignal?.aborted) recordFailure(metadata.channelId, 'claude', new Error(`Claude upstream HTTP ${statusCode}`));
         } else {
           recordSuccess(metadata.channelId, 'claude');
         }
@@ -372,7 +360,7 @@ async function startProxyServer(options = {}) {
       });
       proxyRes.on('error', (err) => {
         if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Proxy response error:', err);
-        recordFailure(metadata.channelId, 'claude', err);
+        if (!req.proxyAllocationSignal?.aborted) recordFailure(metadata.channelId, 'claude', err);
         requestMetadata.delete(req);
       });
     });
@@ -381,7 +369,7 @@ async function startProxyServer(options = {}) {
       console.error('Proxy error:', err);
       // 记录请求失败（用于健康检查）
       if (req && req.selectedChannel && req.selectedChannel.id) {
-        recordFailure(req.selectedChannel.id, 'claude', err);
+        if (!req.proxyAllocationSignal?.aborted) recordFailure(req.selectedChannel.id, 'claude', err);
       }
       if (res && !res.headersSent) {
         res.status(502).json({

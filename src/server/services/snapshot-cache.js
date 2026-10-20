@@ -10,13 +10,20 @@ const SNAPSHOT_VERSION = 1;
 const DEFAULT_BACKGROUND_DELAY_MS = process.env.NODE_ENV === 'test' ? 0 : 750;
 const DEFAULT_BACKGROUND_GAP_MS = process.env.NODE_ENV === 'test' ? 0 : 100;
 const WAIT_TIMEOUT = Symbol('snapshot-wait-timeout');
+const MAX_SNAPSHOTS = 64;
+const MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024;
+const MAX_REFRESHES = 64;
 
 const snapshots = new Map();
+const snapshotSizes = new WeakMap();
 const inflight = new Map();
 const deferredQueue = [];
 const lastErrors = new Map();
-const invalidationVersions = new Map();
-let deferredRunning = false;
+// Tokens remain alive only for their refresh, including invalidated generations.
+const activeRefreshes = new Set();
+let snapshotBytes = 0;
+let activeDeferredTask = null;
+let deferredTimer = null;
 
 function getSnapshotDir() {
   return PATHS.snapshotCache
@@ -66,11 +73,14 @@ function readPersistedSnapshot(key) {
 
 function getEntry(key) {
   if (snapshots.has(key)) {
-    return snapshots.get(key);
+    const entry = snapshots.get(key);
+    snapshots.delete(key);
+    snapshots.set(key, entry);
+    return entry;
   }
   const persisted = readPersistedSnapshot(key);
   if (persisted) {
-    snapshots.set(key, persisted);
+    cacheEntry(key, persisted);
   }
   return persisted;
 }
@@ -94,14 +104,39 @@ function persistEntry(key, entry) {
   }
 }
 
-function getInvalidationVersion(key) {
-  return invalidationVersions.get(key) || 0;
+function deleteCachedEntry(key) {
+  const entry = snapshots.get(key);
+  if (!entry) return;
+  snapshotBytes -= snapshotSizes.get(entry) || 0;
+  snapshots.delete(key);
 }
 
-function bumpInvalidationVersion(key) {
-  const nextVersion = getInvalidationVersion(key) + 1;
-  invalidationVersions.set(key, nextVersion);
-  return nextVersion;
+function cacheEntry(key, entry) {
+  deleteCachedEntry(key);
+  const bytes = Buffer.byteLength(JSON.stringify(entry), 'utf8');
+  if (bytes > MAX_SNAPSHOT_BYTES) return;
+  snapshotSizes.set(entry, bytes);
+  snapshots.set(key, entry);
+  snapshotBytes += bytes;
+  while (snapshots.size > MAX_SNAPSHOTS || snapshotBytes > MAX_SNAPSHOT_BYTES) {
+    const oldest = snapshots.keys().next().value;
+    deleteCachedEntry(oldest);
+    lastErrors.delete(oldest);
+  }
+}
+
+function rememberError(key, message) {
+  lastErrors.delete(key);
+  lastErrors.set(key, String(message).slice(0, 2048));
+  while (lastErrors.size > MAX_SNAPSHOTS) lastErrors.delete(lastErrors.keys().next().value);
+}
+
+function cancelRefreshes(matches) {
+  for (const token of activeRefreshes) {
+    if (!matches(token.key)) continue;
+    token.invalidated = true;
+    token.cancel?.();
+  }
 }
 
 function makeEntry(key, value, nowMs = Date.now()) {
@@ -115,34 +150,42 @@ function makeEntry(key, value, nowMs = Date.now()) {
 }
 
 function pumpDeferredQueue() {
-  if (deferredRunning) return;
+  if (activeDeferredTask) return;
   const task = deferredQueue.shift();
   if (!task) return;
-
-  deferredRunning = true;
-  setTimeout(() => {
+  activeDeferredTask = task;
+  deferredTimer = setTimeout(() => {
+    deferredTimer = null;
+    task.started = true;
     Promise.resolve()
-      .then(() => task.refresh())
+      .then(task.refresh)
       .then(task.resolve, task.reject)
       .finally(() => {
-        deferredRunning = false;
+        activeDeferredTask = null;
         setTimeout(pumpDeferredQueue, task.gapMs);
       });
   }, task.delayMs);
 }
 
-function runDeferredRefresh(refresh, delayMs = DEFAULT_BACKGROUND_DELAY_MS, gapMs = DEFAULT_BACKGROUND_GAP_MS) {
+function runRefresh(refresh, defer, deferMs, token) {
+  if (!defer) return Promise.resolve().then(refresh);
   return new Promise((resolve, reject) => {
-    deferredQueue.push({ refresh, resolve, reject, delayMs, gapMs });
+    const task = { refresh, resolve, reject, delayMs: deferMs, gapMs: DEFAULT_BACKGROUND_GAP_MS, started: false };
+    token.cancel = () => {
+      if (task.started) return;
+      const index = deferredQueue.indexOf(task);
+      if (index >= 0) deferredQueue.splice(index, 1);
+      if (activeDeferredTask === task) {
+        clearTimeout(deferredTimer);
+        deferredTimer = null;
+        activeDeferredTask = null;
+      }
+      reject(new Error('Snapshot refresh cancelled'));
+      pumpDeferredQueue();
+    };
+    deferredQueue.push(task);
     pumpDeferredQueue();
   });
-}
-
-function runRefresh(refresh, defer, deferMs) {
-  if (!defer) {
-    return Promise.resolve().then(() => refresh());
-  }
-  return runDeferredRefresh(refresh, deferMs);
 }
 
 function refreshSnapshot(key, refresh, {
@@ -153,11 +196,19 @@ function refreshSnapshot(key, refresh, {
     return inflight.get(key);
   }
 
-  const startedVersion = getInvalidationVersion(key);
-  const promise = runRefresh(refresh, defer, deferMs)
+  if (activeRefreshes.size >= MAX_REFRESHES) {
+    const error = new Error('Snapshot refresh capacity reached');
+    rememberError(key, error.message);
+    const rejected = Promise.reject(error);
+    rejected.catch(() => {});
+    return rejected;
+  }
+  const token = { key, invalidated: false };
+  activeRefreshes.add(token);
+  const promise = runRefresh(refresh, defer, deferMs, token)
     .then((value) => {
       let nextValue = value;
-      const existing = getEntry(key);
+      const existing = token.invalidated ? null : getEntry(key);
       if (value && Array.isArray(value.__errors) && existing?.value && typeof existing.value === 'object') {
         nextValue = { ...existing.value, ...value };
         for (const failure of value.__errors) {
@@ -168,30 +219,31 @@ function refreshSnapshot(key, refresh, {
         }
       }
       const entry = makeEntry(key, nextValue);
-      if (getInvalidationVersion(key) === startedVersion) {
-        snapshots.set(key, entry);
+      if (!token.invalidated) {
+        cacheEntry(key, entry);
         lastErrors.delete(key);
         persistEntry(key, entry);
       }
       return entry;
     })
     .catch((error) => {
-      const message = error?.message || String(error);
-      const existing = getEntry(key);
-      if (existing && getInvalidationVersion(key) === startedVersion) {
+      const message = String(error?.message || error).slice(0, 2048);
+      const existing = token.invalidated ? null : getEntry(key);
+      if (existing && !token.invalidated) {
         const retained = {
           ...existing,
           lastError: message
         };
-        snapshots.set(key, retained);
-        lastErrors.set(key, message);
+        cacheEntry(key, retained);
+        rememberError(key, message);
         persistEntry(key, retained);
-      } else {
-        lastErrors.set(key, message);
+      } else if (!token.invalidated) {
+        rememberError(key, message);
       }
       throw error;
     })
     .finally(() => {
+      activeRefreshes.delete(token);
       if (inflight.get(key) === promise) {
         inflight.delete(key);
       }
@@ -323,58 +375,22 @@ async function getSnapshot(key, {
 }
 
 function invalidateSnapshot(keyOrPrefix) {
-  if (!keyOrPrefix) {
-    for (const key of inflight.keys()) {
-      bumpInvalidationVersion(key);
-    }
-    snapshots.clear();
-    inflight.clear();
-    lastErrors.clear();
-    return;
-  }
-
-  const key = String(keyOrPrefix);
-  snapshots.delete(key);
-  inflight.delete(key);
-  lastErrors.delete(key);
-  bumpInvalidationVersion(key);
-  for (const existingKey of Array.from(snapshots.keys())) {
-    if (existingKey.startsWith(key)) {
-      snapshots.delete(existingKey);
-      lastErrors.delete(existingKey);
-      bumpInvalidationVersion(existingKey);
-    }
-  }
-  for (const existingKey of Array.from(inflight.keys())) {
-    if (existingKey.startsWith(key)) {
-      inflight.delete(existingKey);
-      lastErrors.delete(existingKey);
-      bumpInvalidationVersion(existingKey);
-    }
-  }
+  const prefix = keyOrPrefix ? String(keyOrPrefix) : null;
+  const matches = key => !prefix || key.startsWith(prefix);
+  cancelRefreshes(matches);
+  for (const key of snapshots.keys()) if (matches(key)) deleteCachedEntry(key);
+  for (const key of inflight.keys()) if (matches(key)) inflight.delete(key);
+  for (const key of lastErrors.keys()) if (matches(key)) lastErrors.delete(key);
 
   try {
     const dir = getSnapshotDir();
     if (!fs.existsSync(dir)) return;
-    const exactFile = getSnapshotPath(key);
-    if (fs.existsSync(exactFile)) {
-      fs.unlinkSync(exactFile);
+    // Encoded filenames already carry the key; never load large snapshots just to invalidate them.
+    for (const file of fs.readdirSync(dir)) {
+      if (!file.endsWith('.json')) continue;
+      const persistedKey = Buffer.from(file.slice(0, -5).replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString();
+      if (matches(persistedKey)) fs.unlinkSync(path.join(dir, file));
     }
-    const files = fs.readdirSync(dir).filter(file => file.endsWith('.json'));
-    files.forEach((file) => {
-      const filePath = path.join(dir, file);
-      try {
-        const payload = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-        const persistedKey = typeof payload?.key === 'string' ? payload.key : '';
-        if (persistedKey && persistedKey.startsWith(key)) {
-          fs.unlinkSync(filePath);
-          lastErrors.delete(persistedKey);
-          bumpInvalidationVersion(persistedKey);
-        }
-      } catch {
-        // Corrupt non-exact files cannot be matched to a prefix safely.
-      }
-    });
   } catch {
     // Best-effort invalidation; the in-memory state has already been cleared.
   }
@@ -391,14 +407,11 @@ function invalidateDashboardSourceSnapshot(source) {
 }
 
 function clearSnapshotCache({ deleteFiles = false } = {}) {
-  for (const key of inflight.keys()) {
-    bumpInvalidationVersion(key);
-  }
+  cancelRefreshes(() => true);
   snapshots.clear();
+  snapshotBytes = 0;
   inflight.clear();
   lastErrors.clear();
-  deferredQueue.splice(0, deferredQueue.length);
-  deferredRunning = false;
   if (!deleteFiles) return;
   try {
     fs.rmSync(getSnapshotDir(), { recursive: true, force: true });
@@ -407,8 +420,19 @@ function clearSnapshotCache({ deleteFiles = false } = {}) {
   }
 }
 
+function getSnapshotCacheDiagnostics() {
+  return {
+    entries: snapshots.size,
+    bytes: snapshotBytes,
+    errors: lastErrors.size,
+    activeRefreshes: activeRefreshes.size,
+    queuedRefreshes: deferredQueue.length + (activeDeferredTask && !activeDeferredTask.started ? 1 : 0)
+  };
+}
+
 module.exports = {
   getSnapshot,
+  getSnapshotCacheDiagnostics,
   refreshSnapshot,
   invalidateSnapshot,
   clearSnapshotCache,

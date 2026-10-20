@@ -59,6 +59,40 @@ afterEach(() => {
 });
 
 describe('modelMetadataOverrides pricing precedence', () => {
+  it('reuses prices within a scan and refreshes them for the next scan', () => {
+    const configFile = path.join(testDir, 'config.json');
+    const read = vi.spyOn(fs, 'readFileSync');
+    try {
+      const calculate = usage.createUsageCostCalculator('opencode');
+      expect(calculate('gpt-5.5', { input: 1000000 })).toBe(99);
+      expect(calculate('gpt-5.5', { output: 1000000 })).toBe(88);
+      expect(read.mock.calls.filter(([file]) => file === configFile)).toHaveLength(1);
+      fs.writeFileSync(configFile, JSON.stringify({ modelMetadataOverrides: { 'gpt-5.5': { pricing: { input: 7 } } } }));
+      expect(usage.createUsageCostCalculator('opencode')('gpt-5.5', { input: 1000000 })).toBe(7);
+    } finally { read.mockRestore(); }
+  });
+
+  it('limits a scan pricing cache to 64 models and excludes oversized keys', () => {
+    const configFile = path.join(testDir, 'config.json');
+    const read = vi.spyOn(fs, 'readFileSync');
+    try {
+      const calculate = usage.createUsageCostCalculator('opencode');
+      for (let i = 0; i < 65; i++) calculate(`unknown-${i}`, { input: 1 });
+      calculate('unknown-64', { input: 2 });
+      calculate('unknown-0', { input: 2 });
+      expect(read.mock.calls.filter(([file]) => file === configFile)).toHaveLength(66);
+      calculate('x'.repeat(2049), { input: 1 });
+      calculate('x'.repeat(2049), { input: 1 });
+      expect(read.mock.calls.filter(([file]) => file === configFile)).toHaveLength(68);
+    } finally { read.mockRestore(); }
+  });
+
+  it('keeps Gemini reasoning and cache token billing in a scan calculator', () => {
+    const tokens = { input: 10, output: 20, reasoning: 30, cacheRead: 40 };
+    expect(usage.createUsageCostCalculator('gemini')('gpt-5.5', tokens))
+      .toBe(usage.calculateUsageCost('gemini', 'gpt-5.5', tokens));
+  });
+
   it('uses an override before model-metadata.json pricing', () => {
     expect(pricing.resolveModelPricing('codex', 'gpt-5.5')).toEqual({
       input: 99,
