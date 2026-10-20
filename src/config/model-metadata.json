@@ -1,7 +1,7 @@
 {
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
-  "lastUpdated": "2026-10-18",
+  "lastUpdated": "2026-10-20",
   "defaultModels": {
     "claude": [
       "claude-opus-4-7",
@@ -219,9 +219,9 @@
       },
       "name": "DeepSeek V4 Flash 0731",
       "pricing": {
-        "cacheRead": 0.04,
-        "input": 0.2,
-        "output": 0.4
+        "cacheRead": 0.088,
+        "input": 0.44,
+        "output": 1.32
       },
       "provider": "alibaba",
       "reasoning": true,
@@ -1162,8 +1162,8 @@
       },
       "name": "Qwen3.6 35B-A3B",
       "pricing": {
-        "input": 0.248,
-        "output": 1.485
+        "input": 0.375,
+        "output": 2.25
       },
       "provider": "alibaba",
       "reasoning": true,
@@ -1186,9 +1186,10 @@
       },
       "name": "Qwen3.6 Flash",
       "pricing": {
-        "cacheCreation": 0.234375,
-        "input": 0.1875,
-        "output": 1.125
+        "cacheCreation": 0.3125,
+        "cacheRead": 0.025,
+        "input": 0.25,
+        "output": 1.5
       },
       "provider": "alibaba",
       "reasoning": true,
@@ -1870,7 +1871,7 @@
         "image"
       ],
       "limit": {
-        "context": 1000000,
+        "context": 1048576,
         "output": 393216
       },
       "name": "DeepSeek V4.1 Flash 1017",
@@ -1895,7 +1896,7 @@
         "image"
       ],
       "limit": {
-        "context": 1000000,
+        "context": 1048576,
         "output": 393216
       },
       "name": "DeepSeek V4 Flash",
@@ -1920,7 +1921,7 @@
         "image"
       ],
       "limit": {
-        "context": 1000000,
+        "context": 1048576,
         "output": 393216
       },
       "name": "DeepSeek V4 Flash Vision Exp",
@@ -1944,7 +1945,7 @@
         "text"
       ],
       "limit": {
-        "context": 1000000,
+        "context": 1048576,
         "output": 393216
       },
       "name": "DeepSeek V4 Pro",
@@ -4274,6 +4275,7 @@
       },
       "name": "GLM-4.5V",
       "pricing": {
+        "cacheCreation": 0,
         "cacheRead": 0.11,
         "input": 0.6,
         "output": 1.8
@@ -4324,6 +4326,7 @@
       },
       "name": "GLM-4.6V",
       "pricing": {
+        "cacheCreation": 0,
         "cacheRead": 0.05,
         "input": 0.3,
         "output": 0.9
