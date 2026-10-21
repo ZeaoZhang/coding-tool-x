@@ -1,7 +1,7 @@
 {
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
-  "lastUpdated": "2026-10-20",
+  "lastUpdated": "2026-10-21",
   "defaultModels": {
     "claude": [
       "claude-opus-4-7",
@@ -83,7 +83,8 @@
       "gemini-3.1-flash-live-preview",
       "gemini-3.1-pro-preview-customtools",
       "gemini-2.5-computer-use-preview-10-2025",
-      "gemini-4-argon"
+      "gemini-4-argon",
+      "gemini-pro-latest"
     ]
   },
   "defaultSpeedTestModels": {
@@ -2465,6 +2466,32 @@
       "provider": "google",
       "reasoning": true,
       "sourceId": "google/gemini-flash-lite-latest",
+      "supportsTools": true,
+      "toolTypes": [
+        "gemini",
+        "opencode",
+        "omp"
+      ]
+    },
+    "gemini-pro-latest": {
+      "id": "gemini-pro-latest",
+      "input": [
+        "text",
+        "image"
+      ],
+      "limit": {
+        "context": 1048576,
+        "output": 65536
+      },
+      "name": "Gemini Pro Latest",
+      "pricing": {
+        "cacheRead": 0.2,
+        "input": 2,
+        "output": 12
+      },
+      "provider": "google",
+      "reasoning": true,
+      "sourceId": "google/gemini-pro-latest",
       "supportsTools": true,
       "toolTypes": [
         "gemini",
