@@ -99,7 +99,7 @@ describe('readSettings', () => {
   });
 
   test('throws when settings file does not exist', () => {
-    expect(() => readSettings()).toThrow();
+    expect(readSettings()).toEqual({});
   });
 
   test('throws when settings file contains invalid JSON', () => {

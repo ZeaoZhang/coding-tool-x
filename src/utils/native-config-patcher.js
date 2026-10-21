@@ -431,20 +431,20 @@ function updateEnvFile(filePath, updates, options = {}) {
   const output = [];
 
   for (const line of lines) {
-    const match = line.match(/^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)\s*=([^\r\n]*)$/);
+    const match = line.match(/^(\s*(?:export\s+)?)([A-Za-z_][A-Za-z0-9_]*)(\s*)=(\s*)([^\r\n]*)$/);
     if (!match || !keys.has(match[2])) {
       output.push(line);
       continue;
     }
-    const [, prefix, key] = match;
+    const [, prefix, key, beforeEquals, afterEquals] = match;
     const value = updates[key];
-    const rawValue = match[3];
+    const rawValue = match[5];
     const comment = findEnvComment(rawValue);
     if (value === undefined || value === null) {
       if (comment) output.push(comment.trimStart());
       continue;
     }
-    output.push(`${prefix}${key}=${encodeEnvValue(value)}${comment ? ` ${comment.trimStart()}` : ''}`);
+    output.push(`${prefix}${key}${beforeEquals}=${afterEquals}${encodeEnvValue(value)}${comment ? ` ${comment.trimStart()}` : ''}`);
     seen.add(key);
   }
 

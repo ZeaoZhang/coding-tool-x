@@ -1668,7 +1668,7 @@ class PluginsService {
           profile: profileName,
           source: 'dsh-profile',
           pluginType: 'dsh-profile',
-          enabled: true,
+          enabled: plugin.installed === true,
           readonly: plugin.builtIn === true,
           description: plugin.description || '',
           directory: plugin.name || name

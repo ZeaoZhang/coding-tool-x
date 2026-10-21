@@ -776,9 +776,6 @@ async function applyTemplateToProject(targetDir, templateId, options = {}) {
       if (aiConfigTypes.includes('codex')) {
         pushSkipped(results.skipped, 'agent', fileName, 'Codex agents 仅支持用户级配置，项目目录应用时已跳过');
       }
-      if (aiConfigTypes.includes('omp')) {
-        pushSkipped(results.skipped, 'agent', fileName, 'OMP agents 需通过扩展或包提供，项目目录应用时已跳过');
-      }
       if (written) {
         results.agents.applied++;
       }
@@ -993,9 +990,6 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
       }
       if (aiConfigTypes.includes('codex')) {
         pushSkipped(preview.skipped, 'agent', fileName, 'Codex agents 仅支持用户级配置，项目目录预览时已跳过');
-      }
-      if (aiConfigTypes.includes('omp')) {
-        pushSkipped(preview.skipped, 'agent', fileName, 'OMP agents 需通过扩展或包提供，项目目录预览时已跳过');
       }
       if (applicable) {
         preview.summary.agents++;

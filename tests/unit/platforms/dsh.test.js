@@ -63,7 +63,7 @@ describe('DSH platform integration', () => {
       key: 'dsh',
       defaultEnabled: false,
       cliSelectable: false,
-      resourceTypes: expect.objectContaining({ skills: true, commands: false, agents: false, plugins: true })
+      resourceTypes: expect.objectContaining({ skills: true, commands: false, agents: true, plugins: true })
     }));
     expect(registry.getCapability('dsh', 'projects')).toBe('dsh-projects');
     expect(registry.getCapability('dsh', 'sessions')).toBe('dsh-sessions');
@@ -394,10 +394,9 @@ describe('DSH platform integration', () => {
 
     const api = createApiDriver({ paths, platform: 'dsh', route: { capability: 'api', operation: 'listProfilePlugins' } });
     const pluginsBefore = await api.listProfilePlugins({ params: { profileName: 'review' } });
-    expect(pluginsBefore.data.plugins).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'demo-bundle', installed: true, bundle: true, management: 'ctx+dsh-plugin' }),
-      expect.objectContaining({ name: '@deepseek-ai/dsh-base', inBundleList: true, management: 'ctx+dsh-plugin' })
-    ]));
+    expect(pluginsBefore.data.plugins).toEqual([
+      expect.objectContaining({ name: 'demo-bundle', installed: true, bundle: true, management: 'ctx+dsh-plugin' })
+    ]);
     const capabilities = await api.listProfileCapabilities({ params: { profileName: 'review' } });
     expect(capabilities.data.management).toBe('ctx');
     expect(capabilities.data.contributions.flatMap(entry => entry.rows).map(row => row.id)).toEqual(expect.arrayContaining(['demo-tool', 'home-preference']));
@@ -620,13 +619,13 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
 
     const plugins = new PluginsService('dsh', { registry, runtime });
     expect(plugins.listPlugins().plugins).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'demo-plugin', profile: 'default', readonly: true, pluginType: 'dsh-profile' })
+      expect.objectContaining({ name: 'demo-plugin', profile: 'default', installed: false, enabled: false, readonly: false, pluginType: 'dsh-profile' })
     ]));
     expect(plugins.getCapabilities()).toEqual(expect.objectContaining({
       supportsPlugins: true,
-      repositories: true,
-      install: false,
-      uninstall: false
+      repositories: false,
+      install: true,
+      uninstall: true
     }));
     expect(plugins.getRepos()).toEqual([]);
     expect((await plugins.installPlugin('demo-plugin')).success).toBe(false);

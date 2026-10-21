@@ -96,6 +96,9 @@ beforeEach(() => {
         gemini: {
           dir: path.join(testDir, '.gemini')
         },
+        omp: {
+          dir: path.join(testDir, '.omp')
+        },
         opencode: {
           config: path.join(testDir, '.config', 'opencode')
         }

@@ -795,7 +795,7 @@ describe('config-templates-service apply and preview', () => {
     });
   });
 
-  test('applies OMP template commands as prompt templates and skips project agents', async () => {
+  test('applies OMP template commands and project agents using manifest paths', async () => {
     const template = templatesService.createCustomTemplate({
       name: 'OMP Starter',
       cliType: 'omp',
@@ -831,8 +831,8 @@ describe('config-templates-service apply and preview', () => {
         aiConfigs: [],
         skills: { applied: 0, items: [] },
         agents: {
-          applied: 0,
-          files: []
+          applied: 1,
+          files: ['.omp/agents/reviewer.md']
         },
         commands: {
           applied: 1,
@@ -845,7 +845,6 @@ describe('config-templates-service apply and preview', () => {
         mcpServers: { applied: 1 },
         skipped: [
           { type: 'aiConfig', item: 'OMP command templates', reason: 'OMP 项目级命令模板通过 .omp/commands 写入，未生成单独 AI 配置文件' },
-          { type: 'agent', item: 'reviewer', reason: 'OMP agents 需通过扩展或包提供，项目目录应用时已跳过' }
         ]
       },
       template: 'OMP Starter'
@@ -865,7 +864,7 @@ describe('config-templates-service apply and preview', () => {
     });
     expect(readYaml(path.join(targetDir, '.omp', 'config.yml')).packages).toEqual(['plugin-a']);
     expect(fs.existsSync(path.join(targetDir, '.mcp.json'))).toBe(false);
-    expect(fs.existsSync(path.join(targetDir, '.omp', 'agents'))).toBe(false);
+    expect(fs.existsSync(path.join(targetDir, '.omp', 'agents', 'reviewer.md'))).toBe(true);
     expect(readJson(path.join(targetDir, '.ctx-config.json'))).toEqual(expect.objectContaining({
       templateId: template.id,
       aiConfigTypes: ['omp'],
@@ -875,7 +874,7 @@ describe('config-templates-service apply and preview', () => {
     }));
   });
 
-  test('previews OMP prompt-template command targets and unsupported project agents', () => {
+  test('previews OMP prompt-template command and project agent targets', () => {
     const template = templatesService.createCustomTemplate({
       name: 'OMP Preview',
       cliType: 'omp',
@@ -893,21 +892,20 @@ describe('config-templates-service apply and preview', () => {
     });
 
     expect(preview).toEqual({
-      willCreate: ['.omp/mcp.json', '.omp/config.yml'],
+      willCreate: ['.omp/agents/reviewer.md', '.omp/mcp.json', '.omp/config.yml'],
       willOverwrite: ['.omp/commands/sync.md'],
       skipped: [
         { type: 'aiConfig', item: 'OMP command templates', reason: 'OMP 项目级命令模板通过 .omp/commands 写入，预览不生成单独 AI 配置文件' },
-        { type: 'agent', item: 'reviewer', reason: 'OMP agents 需通过扩展或包提供，项目目录预览时已跳过' },
         { type: 'mcpServer', item: 'missing-server', reason: '未找到对应 MCP 服务配置，预览已跳过' }
       ],
       summary: {
         aiConfigs: [],
         skills: 0,
-        agents: 0,
+        agents: 1,
         commands: 1,
         plugins: 1,
         mcpServers: 1,
-        skipped: 3
+        skipped: 2
       }
     });
   });
