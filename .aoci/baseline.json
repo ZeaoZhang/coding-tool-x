@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-10-14T01:43:51Z",
-  "updated_at": "2026-10-20T13:36:23Z",
+  "updated_at": "2026-10-21T01:44:50Z",
   "files": {
     ".gitattributes": {
       "role": "index",
@@ -59,9 +59,9 @@
     },
     "aoci.code.txt": {
       "role": "index",
-      "sha256": "cd5519b52b75a6be127185f2d443f3bc89fee9bf721ebb4cd1604bc376d4036f",
-      "size": 216563,
-      "normalized_sha256": "cd5519b52b75a6be127185f2d443f3bc89fee9bf721ebb4cd1604bc376d4036f"
+      "sha256": "89c3b5d58cbc266a5217e1b80b1ff372e3a641a08137186b53998a9390314579",
+      "size": 217051,
+      "normalized_sha256": "89c3b5d58cbc266a5217e1b80b1ff372e3a641a08137186b53998a9390314579"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -110,9 +110,9 @@
     },
     "docs/memory-growth-2026-10-14.md": {
       "role": "index",
-      "sha256": "2f067fca8e08bc12b41dfd8ef2a60547e3e9c0af8d9a1acae018a988c34f1fbd",
-      "size": 25530,
-      "normalized_sha256": "2f067fca8e08bc12b41dfd8ef2a60547e3e9c0af8d9a1acae018a988c34f1fbd"
+      "sha256": "d97eb3fe0102c100ff56c376a0c726d50685e69683283f9e8245f7ba773eb05e",
+      "size": 26425,
+      "normalized_sha256": "d97eb3fe0102c100ff56c376a0c726d50685e69683283f9e8245f7ba773eb05e"
     },
     "docs/multi-channel-load-balancing.md": {
       "role": "index",
@@ -1938,9 +1938,9 @@
     },
     "src/server/services/config-templates-service.js": {
       "role": "index",
-      "sha256": "c43a1baca341e60056b7691231e4cbfa28c4210a27f4d6dd9c2b420c49a3e510",
-      "size": 40624,
-      "normalized_sha256": "c43a1baca341e60056b7691231e4cbfa28c4210a27f4d6dd9c2b420c49a3e510"
+      "sha256": "e2d7cf2cf1bd9c7fd714e74175d3ec07cad14782b3692677731f475efd6a9170",
+      "size": 40258,
+      "normalized_sha256": "e2d7cf2cf1bd9c7fd714e74175d3ec07cad14782b3692677731f475efd6a9170"
     },
     "src/server/services/control-manifest-store.js": {
       "role": "index",
@@ -2094,9 +2094,9 @@
     },
     "src/server/services/plugins-service.js": {
       "role": "index",
-      "sha256": "99cfca29ea202ec284183aa9285ba5f3ff8cbb3efe48a96360c82f7087db9155",
-      "size": 142623,
-      "normalized_sha256": "99cfca29ea202ec284183aa9285ba5f3ff8cbb3efe48a96360c82f7087db9155"
+      "sha256": "3dc7eaba5a2bda910996b554f26b1f5c7c84de90546a43abaec0bd42fe926f84",
+      "size": 142644,
+      "normalized_sha256": "3dc7eaba5a2bda910996b554f26b1f5c7c84de90546a43abaec0bd42fe926f84"
     },
     "src/server/services/project-config-service.js": {
       "role": "index",
@@ -2430,9 +2430,9 @@
     },
     "src/utils/native-config-patcher.js": {
       "role": "index",
-      "sha256": "d0fb5fa97dc06512ef0b70a81edb79ba5bb4ce6489d69476c3fd068a44a8b4e2",
-      "size": 17719,
-      "normalized_sha256": "d0fb5fa97dc06512ef0b70a81edb79ba5bb4ce6489d69476c3fd068a44a8b4e2"
+      "sha256": "e91be82a1b9ffec5f9ca49caba785b80745d2780b6052fbfcf2e520b316475ea",
+      "size": 17782,
+      "normalized_sha256": "e91be82a1b9ffec5f9ca49caba785b80745d2780b6052fbfcf2e520b316475ea"
     },
     "src/utils/port-helper.js": {
       "role": "index",
@@ -4180,9 +4180,9 @@
     },
     "tests/unit/platforms/dsh.test.js": {
       "role": "observe",
-      "sha256": "3df4ee87c1eb48376b497666660197e5c257b3913da9974f6a6a4fadb0784e98",
-      "size": 37801,
-      "normalized_sha256": "3df4ee87c1eb48376b497666660197e5c257b3913da9974f6a6a4fadb0784e98"
+      "sha256": "0be40edc57c8190a06c10e97a20eee5dbd407fa9239e33a6190e965477795283",
+      "size": 37694,
+      "normalized_sha256": "0be40edc57c8190a06c10e97a20eee5dbd407fa9239e33a6190e965477795283"
     },
     "tests/unit/platforms/generic-capability-drivers.test.js": {
       "role": "observe",
@@ -4270,9 +4270,9 @@
     },
     "tests/unit/services/agents-service.test.js": {
       "role": "observe",
-      "sha256": "f2dfaae70257f0da7b1e0166da47d95e69393de7e26cfb6b1a7f211e0b415159",
-      "size": 13551,
-      "normalized_sha256": "f2dfaae70257f0da7b1e0166da47d95e69393de7e26cfb6b1a7f211e0b415159"
+      "sha256": "d6bdf9268b0b47279d2df884f6f1dc824ce253a4e2fdbf00fcccead1ece99834",
+      "size": 13619,
+      "normalized_sha256": "d6bdf9268b0b47279d2df884f6f1dc824ce253a4e2fdbf00fcccead1ece99834"
     },
     "tests/unit/services/alias.test.js": {
       "role": "observe",
@@ -4420,9 +4420,9 @@
     },
     "tests/unit/services/config-templates-service.test.js": {
       "role": "observe",
-      "sha256": "17c93c985d39eb6624957b0099be1ee2d56b8bfe6f8d831ab49d43f1327e8be3",
-      "size": 33369,
-      "normalized_sha256": "17c93c985d39eb6624957b0099be1ee2d56b8bfe6f8d831ab49d43f1327e8be3"
+      "sha256": "1bb50ff071f864626e7b538f94bc12c33442b58ecbc4f82b766634cc20cff343",
+      "size": 33160,
+      "normalized_sha256": "1bb50ff071f864626e7b538f94bc12c33442b58ecbc4f82b766634cc20cff343"
     },
     "tests/unit/services/control-manifest-store.test.js": {
       "role": "observe",
@@ -4504,9 +4504,9 @@
     },
     "tests/unit/services/gemini-settings-manager.test.js": {
       "role": "observe",
-      "sha256": "e7dcc8078601f56687129770242cbf5f846d548d5c6e972b0c68ca50ea9a44f6",
-      "size": 5480,
-      "normalized_sha256": "e7dcc8078601f56687129770242cbf5f846d548d5c6e972b0c68ca50ea9a44f6"
+      "sha256": "bded872693840039dce46b44e916bc15ea6a4e799be6f16624766c4e0fc4c0c6",
+      "size": 5493,
+      "normalized_sha256": "bded872693840039dce46b44e916bc15ea6a4e799be6f16624766c4e0fc4c0c6"
     },
     "tests/unit/services/gemini-statistics-service.test.js": {
       "role": "observe",
@@ -4912,9 +4912,9 @@
     },
     "tests/unit/services/settings-manager.test.js": {
       "role": "observe",
-      "sha256": "51480969a4069aad20490857d90cb3c1a8504d345fa27c048408ee433dd0442e",
-      "size": 11898,
-      "normalized_sha256": "51480969a4069aad20490857d90cb3c1a8504d345fa27c048408ee433dd0442e"
+      "sha256": "2faa71eba95c29dd4f6a71d39d611fb9e22d9ac5914c3c61e28d65de46681d90",
+      "size": 11894,
+      "normalized_sha256": "2faa71eba95c29dd4f6a71d39d611fb9e22d9ac5914c3c61e28d65de46681d90"
     },
     "tests/unit/services/skill-artifact-store.test.js": {
       "role": "observe",
