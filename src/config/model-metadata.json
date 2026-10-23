@@ -1,7 +1,7 @@
 {
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
-  "lastUpdated": "2026-10-21",
+  "lastUpdated": "2026-10-23",
   "defaultModels": {
     "claude": [
       "claude-opus-4-7",
@@ -244,6 +244,8 @@
       },
       "name": "Qwen Flash",
       "pricing": {
+        "cacheCreation": 0.0625,
+        "cacheRead": 0.01,
         "input": 0.05,
         "output": 0.4
       },
@@ -338,6 +340,8 @@
       },
       "name": "Qwen Plus",
       "pricing": {
+        "cacheCreation": 0.5,
+        "cacheRead": 0.08,
         "input": 0.4,
         "output": 1.2
       },
@@ -757,6 +761,8 @@
       },
       "name": "Qwen3 Coder Flash",
       "pricing": {
+        "cacheCreation": 0.375,
+        "cacheRead": 0.06,
         "input": 0.3,
         "output": 1.5
       },
@@ -969,6 +975,8 @@
       },
       "name": "Qwen3-VL Plus",
       "pricing": {
+        "cacheCreation": 0.25,
+        "cacheRead": 0.04,
         "input": 0.2,
         "output": 1.6
       },
@@ -1265,7 +1273,7 @@
       "name": "Qwen3.7 Flash",
       "pricing": {
         "cacheCreation": 0.0375,
-        "cacheRead": 0.003,
+        "cacheRead": 0.006,
         "input": 0.03,
         "output": 0.13
       },
@@ -1316,7 +1324,7 @@
       "name": "Qwen3.7 Plus",
       "pricing": {
         "cacheCreation": 0.5,
-        "cacheRead": 0.04,
+        "cacheRead": 0.08,
         "input": 0.4,
         "output": 1.6
       },
@@ -3510,9 +3518,9 @@
       },
       "name": "Mistral Large 4",
       "pricing": {
-        "cacheRead": 0.07,
-        "input": 0.68,
-        "output": 2.09
+        "cacheRead": 0.14,
+        "input": 1.36,
+        "output": 4.18
       },
       "provider": "mistral",
       "reasoning": true,
