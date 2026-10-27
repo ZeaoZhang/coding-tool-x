@@ -1,7 +1,7 @@
 {
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
-  "lastUpdated": "2026-10-24",
+  "lastUpdated": "2026-10-27",
   "defaultModels": {
     "claude": [
       "claude-opus-4-7",
@@ -61,7 +61,8 @@
       "gpt-6-sol",
       "gpt-daybreak-blue-latest",
       "gpt-daybreak-red-latest",
-      "gpt-6.1-sol"
+      "gpt-6.1-sol",
+      "gpt-6.1-terra"
     ],
     "gemini": [
       "gemini-3.1-pro-preview",
@@ -3325,6 +3326,33 @@
       "provider": "openai",
       "reasoning": true,
       "sourceId": "openai/gpt-6.1-sol",
+      "supportsTools": true,
+      "toolTypes": [
+        "codex",
+        "opencode",
+        "omp"
+      ]
+    },
+    "gpt-6.1-terra": {
+      "id": "gpt-6.1-terra",
+      "input": [
+        "text",
+        "image"
+      ],
+      "limit": {
+        "context": 1050000,
+        "output": 128000
+      },
+      "name": "GPT-6.1 Terra",
+      "pricing": {
+        "cacheCreation": 1.25,
+        "cacheRead": 0.05,
+        "input": 1,
+        "output": 5
+      },
+      "provider": "openai",
+      "reasoning": true,
+      "sourceId": "openai/gpt-6.1-terra",
       "supportsTools": true,
       "toolTypes": [
         "codex",
