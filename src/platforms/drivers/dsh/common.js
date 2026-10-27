@@ -283,7 +283,10 @@ function listProfilePlugins(context = {}, profileName) {
   const manifest = profile.manifest || {};
   const profileConfig = isObject(manifest.dsh?.profile) ? manifest.dsh.profile : {};
   const bundleNames = Array.isArray(profileConfig.bundles) ? profileConfig.bundles : [];
-  const dependencyNames = Object.keys(isObject(manifest.dependencies) ? manifest.dependencies : {});
+  const dependencyNames = Object.keys({
+    ...(isObject(manifest.dependencies) ? manifest.dependencies : {}),
+    ...(isObject(manifest.devDependencies) ? manifest.devDependencies : {})
+  });
   const names = [...new Set([...bundleNames, ...dependencyNames])];
   const describePlugin = name => {
     const packageDir = resolvePackageDir(profile.profileDir, name, paths);

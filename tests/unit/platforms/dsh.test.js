@@ -402,6 +402,35 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
     expect(removed.data.plugins.plugins).toEqual([]);
   });
 
+  test('detects profile plugins declared only in devDependencies', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const profileDir = path.join(paths.profiles, 'dev-only');
+    writeJson(path.join(profileDir, 'package.json'), {
+      name: 'dsh-profile-dev-only',
+      devDependencies: { 'dsh-dev-plugin': '2.0.0' },
+      dsh: { profile: { bundles: [] } }
+    });
+    writeJson(path.join(profileDir, 'node_modules', 'dsh-dev-plugin', 'package.json'), {
+      name: 'dsh-dev-plugin', version: '2.0.0'
+    });
+
+    const api = createApiDriver({ paths, platform: 'dsh' });
+    const registry = { resolvePathContext: () => ({ customized: true, native: paths }) };
+    const runtime = { getDriver: () => api };
+    const plugins = new PluginsService('dsh', { registry, runtime }).listPlugins().plugins;
+
+    expect(plugins).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'dsh-dev-plugin',
+        profile: 'dev-only',
+        installed: true,
+        requestedVersion: '2.0.0',
+        pluginType: 'dsh-profile'
+      })
+    ]));
+  });
+
   test('runtime resolves all DSH declared capabilities to dedicated drivers', () => {
     const registry = createPlatformRegistry({ userFile: { platforms: [] } });
     const runtime = createPlatformRuntime({ registry, driverRegistry: getDriverRegistry() });
@@ -493,6 +522,126 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
     }));
     expect(plugins.getRepos()).toEqual([]);
     expect((await plugins.installPlugin('demo-plugin')).success).toBe(false);
+  });
+
+  test('sync imports all configured DSH providers without rewriting native settings', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const settingsText = [
+      'llm-pi-ai:',
+      '  providers:',
+      '    primary:',
+      '      displayName: Primary',
+      '      api: openai-completions',
+      '      baseURL: https://primary.example/v1',
+      '      apiKeyEnv: PRIMARY_API_KEY',
+      '      models:',
+      '        - id: primary-model',
+      '    secondary:',
+      '      displayName: Secondary',
+      '      api: anthropic-messages',
+      '      baseURL: https://secondary.example/v1',
+      '      apiKeyEnv: SECONDARY_API_KEY',
+      '      models:',
+      '        - id: secondary-model',
+      'agent-default-model:',
+      '  provider: primary',
+      '  model: primary-model',
+      ''
+    ].join('\n');
+    fs.writeFileSync(paths.settings, settingsText, 'utf8');
+    fs.writeFileSync(paths.credentials, [
+      'version: 1',
+      'refs:',
+      '  PRIMARY_API_KEY: sk-primary',
+      '  SECONDARY_API_KEY: sk-secondary',
+      'records: {}',
+      ''
+    ].join('\n'), { encoding: 'utf8', mode: 0o600 });
+    writeJson(path.join(tempHome, 'channels.json'), {
+      channels: [{
+        id: 'existing-primary',
+        name: 'Primary',
+        providerKey: 'primary',
+        providerApi: 'openai-completions',
+        baseUrl: 'https://primary.example/v1',
+        model: 'primary-model',
+        models: [{ id: 'primary-model' }],
+        apiKeyEnv: 'PRIMARY_API_KEY',
+        apiKey: 'sk-primary',
+        authMode: 'api_key',
+        gatewaySourceType: 'openai_compatible',
+        enabled: true,
+        weight: 1,
+        createdAt: 1000,
+        updatedAt: 1000
+      }]
+    });
+
+    const driver = createChannelDriver({ paths });
+    const synced = driver.sync({ route: { capability: 'channels', operation: 'sync' } });
+
+    expect(synced.status).toBe('ok');
+    expect(synced.data).toEqual(expect.objectContaining({ added: 1, updated: 0, skipped: 1 }));
+    expect(synced.data.channels.map(channel => channel.providerKey).sort()).toEqual(['primary', 'secondary']);
+    expect(synced.data.current).toEqual(expect.objectContaining({ id: 'existing-primary', providerKey: 'primary' }));
+    expect(synced.data.channels).toEqual(expect.arrayContaining([
+      expect.objectContaining({ providerKey: 'primary', enabled: true, apiKey: '[REDACTED]' }),
+      expect.objectContaining({ providerKey: 'secondary', enabled: false, apiKey: '[REDACTED]' })
+    ]));
+    expect(JSON.stringify(synced.data)).not.toContain('sk-primary');
+    expect(JSON.stringify(synced.data)).not.toContain('sk-secondary');
+    expect(fs.readFileSync(paths.settings, 'utf8')).toBe(settingsText);
+  });
+
+  test('sync enriches known DSH models with metadata while preserving provider overrides', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const settingsText = [
+      'llm-pi-ai:',
+      '  providers:',
+      '    deepseek:',
+      '      displayName: DeepSeek',
+      '      api: openai-completions',
+      '      baseURL: https://api.deepseek.com/v1',
+      '      models:',
+      '        - id: deepseek/deepseek-v4-pro',
+      '        - id: gpt-5.4',
+      '          contextWindow: 64000',
+      '          cost:',
+      '            input: 0.5',
+      '        - id: provider-specific-model',
+      'agent-default-model:',
+      '  provider: deepseek',
+      '  model: deepseek/deepseek-v4-pro',
+      ''
+    ].join('\n');
+    fs.writeFileSync(paths.settings, settingsText, 'utf8');
+
+    const driver = createChannelDriver({ paths });
+    const synced = driver.sync({ route: { capability: 'channels', operation: 'sync' } });
+    const importedChannels = JSON.parse(fs.readFileSync(path.join(tempHome, 'channels.json'), 'utf8')).channels;
+    const models = importedChannels[0].models;
+
+    expect(synced.data.added).toBe(1);
+    expect(models).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'deepseek/deepseek-v4-pro',
+        input: ['text'],
+        reasoning: true,
+        contextWindow: 1048576,
+        maxTokens: 393216,
+        cost: expect.objectContaining({ input: 0.66, output: 1.98, cacheRead: 0.022 })
+      }),
+      expect.objectContaining({
+        id: 'gpt-5.4',
+        contextWindow: 64000,
+        maxTokens: 128000,
+        cost: expect.objectContaining({ input: 0.5, output: 15, cacheRead: 0.25 })
+      }),
+      { id: 'provider-specific-model' }
+    ]));
+    expect(fs.readFileSync(paths.settings, 'utf8')).toBe(settingsText);
   });
 
   test('manages DSH channels and switches native config through the managed proxy', async () => {

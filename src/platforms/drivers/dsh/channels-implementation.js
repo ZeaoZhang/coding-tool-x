@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { getPlatformStatePath: resolveStatePath } = require('../../../config/paths');
+const { MODEL_METADATA, MODEL_ALIASES } = require('../../../config/model-metadata');
 const BaseChannelService = require('../../../shared/base-channel-service');
 const { writeYamlFile } = require('../../../utils/native-config-patcher');
 const {
@@ -12,6 +13,7 @@ const {
   DSH_YAML_SOURCE_TAGS,
   isObject
 } = require('./common');
+const { upsertSyncedChannels } = require('../../../server/services/channel-sync-utils');
 
 const PROVIDER_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const API_KEY_ENV_PATTERN = /^[A-Z][A-Z0-9_]{0,127}$/;
@@ -21,6 +23,15 @@ const SUPPORTED_PROVIDER_APIS = new Set([
   'anthropic-messages'
 ]);
 const REDACTED_API_KEY = '[REDACTED]';
+const MODEL_METADATA_BY_ID = new Map();
+for (const [id, metadata] of Object.entries(MODEL_METADATA)) {
+  MODEL_METADATA_BY_ID.set(id.toLowerCase(), metadata);
+  if (metadata.sourceId) MODEL_METADATA_BY_ID.set(String(metadata.sourceId).toLowerCase(), metadata);
+}
+for (const [alias, canonical] of Object.entries(MODEL_ALIASES)) {
+  const metadata = MODEL_METADATA_BY_ID.get(String(canonical).toLowerCase());
+  if (metadata) MODEL_METADATA_BY_ID.set(alias.toLowerCase(), metadata);
+}
 const getStatePath = typeof resolveStatePath === 'function'
   ? resolveStatePath
   : () => undefined;
@@ -63,7 +74,59 @@ function normalizeModels(models, fallbackModel) {
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
-  });
+  }).map(enrichDshModelMetadata);
+}
+
+function normalizeDshCost(value) {
+  if (!isObject(value)) return {};
+  const cost = {};
+  for (const key of ['input', 'output', 'cacheRead', 'cacheWrite']) {
+    if (typeof value[key] === 'number' && Number.isFinite(value[key]) && value[key] >= 0) {
+      cost[key] = value[key];
+    }
+  }
+  if (cost.cacheWrite === undefined && typeof value.cacheCreation === 'number') {
+    cost.cacheWrite = value.cacheCreation;
+  }
+  return cost;
+}
+
+function enrichDshModelMetadata(model) {
+  const id = String(model?.id || model?.name || '').trim();
+  if (!id) return model;
+  const metadata = MODEL_METADATA_BY_ID.get(id.toLowerCase());
+  if (!metadata) return { ...model, id };
+
+  const limit = isObject(metadata.limit) ? metadata.limit : {};
+  const pricing = isObject(metadata.pricing) ? metadata.pricing : {};
+  const catalogCost = typeof pricing.input === 'number' && typeof pricing.output === 'number'
+    ? {
+      input: pricing.input,
+      output: pricing.output,
+      cacheRead: typeof pricing.cacheRead === 'number' ? pricing.cacheRead : 0,
+      cacheWrite: typeof pricing.cacheCreation === 'number' ? pricing.cacheCreation : 0
+    }
+    : {};
+  const catalog = {
+    ...(typeof metadata.name === 'string' ? { name: metadata.name } : {}),
+    ...(typeof metadata.reasoning === 'boolean' ? { reasoning: metadata.reasoning } : {}),
+    ...(Array.isArray(metadata.input) ? { input: [...metadata.input] } : {}),
+    ...(typeof limit.context === 'number' ? { contextWindow: limit.context } : {}),
+    ...(typeof limit.output === 'number' ? { maxTokens: limit.output } : {}),
+    ...(Object.keys(catalogCost).length > 0 ? { cost: catalogCost } : {})
+  };
+  const explicitCost = normalizeDshCost(model.cost || model.pricing);
+  const enriched = { ...catalog, ...model, id };
+  if (Object.keys(catalogCost).length > 0 || Object.keys(explicitCost).length > 0) {
+    enriched.cost = { ...catalogCost, ...explicitCost };
+  }
+  if (model.contextWindow === undefined && typeof model.limit?.context === 'number') {
+    enriched.contextWindow = model.limit.context;
+  }
+  if (model.maxTokens === undefined && typeof model.limit?.output === 'number') {
+    enriched.maxTokens = model.limit.output;
+  }
+  return enriched;
 }
 
 function readActiveMarker() {
@@ -341,31 +404,89 @@ class DshChannelService extends BaseChannelService {
   }
 
   syncCurrentChannel() {
-    const current = this.getCurrentChannel();
-    if (current.channel) return { added: 0, updated: 0, skipped: 1, current: current.channel };
-    if (!current.providerKey) return { added: 0, updated: 0, skipped: 0, warnings: ['DSH 当前配置没有 agent-default-model.provider'] };
-
     const settings = this._nativeSettings();
-    const provider = settings['llm-pi-ai']?.providers?.[current.providerKey];
-    if (!isObject(provider) || !provider.baseURL) {
-      return { added: 0, updated: 0, skipped: 0, warnings: [`未找到可导入的 DSH provider: ${current.providerKey}`] };
+    const selected = isObject(settings['agent-default-model'])
+      ? settings['agent-default-model']
+      : {};
+    const selectedProviderKey = String(selected.provider || '').trim();
+    const llm = isObject(settings['llm-pi-ai']) ? settings['llm-pi-ai'] : {};
+    const providers = isObject(llm.providers) ? llm.providers : {};
+    const configuredProviders = Object.entries(providers)
+      .filter(([providerKey, provider]) => providerKey !== 'ctx-dsh-proxy' && isObject(provider));
+    if (configuredProviders.length === 0) {
+      return { added: 0, updated: 0, skipped: 0, channels: [], current: null, warnings: ['DSH 设置中没有可同步的 llm-pi-ai.providers'] };
     }
+
+    const channels = this.loadChannels().channels;
+    const activeMarker = readActiveMarker();
+    const activeChannel = activeMarker?.activeChannelId
+      ? channels.find(channel => channel.id === activeMarker.activeChannelId)
+      : null;
+    const activeProviderKey = activeChannel?.providerKey || selectedProviderKey;
     const credentials = readYamlFile(this.nativePaths.credentials, {});
-    const apiKeyEnv = String(provider.apiKeyEnv || '').trim();
-    const apiKey = apiKeyEnv && isObject(credentials.refs) ? String(credentials.refs[apiKeyEnv] || '') : '';
-    const channel = this.createChannel({
-      name: provider.displayName || current.providerKey,
-      providerKey: current.providerKey,
-      providerApi: provider.api || 'openai-completions',
-      baseUrl: provider.baseURL,
-      model: current.model || provider.models?.[0]?.id || provider.models?.[0] || 'default',
-      models: provider.models,
-      apiKeyEnv: apiKeyEnv || undefined,
-      apiKey,
-      authMode: apiKey ? 'api_key' : 'none',
-      enabled: true
+    const credentialRefs = isObject(credentials.refs) ? credentials.refs : {};
+    const candidates = [];
+
+    for (const [providerKey, provider] of configuredProviders) {
+      if (!PROVIDER_KEY_PATTERN.test(providerKey)) {
+        candidates.push({ skip: true, warning: `跳过无效的 DSH provider key: ${providerKey}` });
+        continue;
+      }
+      const baseUrl = String(provider.baseURL || '').trim();
+      if (!baseUrl) {
+        candidates.push({
+          skip: true,
+          warning: `DSH provider ${providerKey} 缺少 baseURL，已跳过`
+        });
+        continue;
+      }
+      try {
+        const parsed = new URL(baseUrl);
+        if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('unsupported protocol');
+      } catch (_) {
+        candidates.push({
+          skip: true,
+          warning: `DSH provider ${providerKey} 的 baseURL 无效，已跳过`
+        });
+        continue;
+      }
+
+      const apiKeyEnv = String(provider.apiKeyEnv || '').trim();
+      const apiKey = apiKeyEnv ? String(credentialRefs[apiKeyEnv] || '') : '';
+      const existing = channels.find(channel => channel.providerKey === providerKey);
+      const selectedModel = providerKey === selectedProviderKey ? String(selected.model || '').trim() : '';
+      const models = normalizeModels(provider.models, selectedModel || existing?.model || 'default');
+      const model = selectedModel || existing?.model || models[0]?.id || 'default';
+      if (!models.some(item => item.id.toLowerCase() === model.toLowerCase())) models.unshift({ id: model });
+      const authMode = apiKey
+        ? 'api_key'
+        : (existing?.authMode === 'api_key' && existing.apiKey ? 'api_key' : 'none');
+      candidates.push({
+        name: provider.displayName || providerKey,
+        providerKey,
+        providerApi: provider.api || 'openai-completions',
+        baseUrl,
+        model,
+        models,
+        apiKeyEnv: apiKeyEnv || undefined,
+        ...(apiKey ? { apiKey } : {}),
+        authMode,
+        enabled: providerKey === activeProviderKey
+      });
+    }
+
+    const result = upsertSyncedChannels({
+      toolType: 'dsh',
+      loadChannels: () => this.loadChannels(),
+      saveChannels: data => this.saveChannels(data),
+      applyDefaults: channel => this._applyDefaults(channel),
+      candidates,
+      matchers: [
+        (channel, candidate) => channel.providerKey === candidate.providerKey
+      ]
     });
-    return { added: 1, updated: 0, skipped: 0, current: channel };
+    const current = result.channels.find(channel => channel.providerKey === activeProviderKey) || null;
+    return { ...result, current };
   }
 
   setProxyConfig(port, { activeChannelId } = {}) {
@@ -453,7 +574,11 @@ function getCurrentChannel() {
 
 function syncCurrentDshChannel() {
   const result = getServiceInstance().syncCurrentChannel();
-  return { ...result, current: toPublicChannel(result.current) };
+  return {
+    ...result,
+    channels: Array.isArray(result.channels) ? result.channels.map(toPublicChannel) : [],
+    current: toPublicChannel(result.current)
+  };
 }
 
 module.exports = {

@@ -23,7 +23,7 @@
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
-        <n-button text :focusable="false" @click="handleRefresh" :loading="refreshing" class="action-btn">
+        <n-button v-if="capabilities.syncRepos || capabilities.market" text :focusable="false" @click="handleRefresh" :loading="refreshing" class="action-btn">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
           刷新
         </n-button>
@@ -41,7 +41,7 @@
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
-        <n-button text :focusable="false" @click="handleRefresh" :loading="refreshing" class="action-btn">
+        <n-button v-if="capabilities.syncRepos || capabilities.market" text :focusable="false" @click="handleRefresh" :loading="refreshing" class="action-btn">
           <template #icon><n-icon><RefreshOutline /></n-icon></template>
           刷新
         </n-button>
@@ -150,9 +150,9 @@ import PluginCard from './PluginCard.vue'
 import PluginRepoManager from './PluginRepoManager.vue'
 import PluginDetailDrawer from './PluginDetailDrawer.vue'
 import { getPlatformConfig } from '../config/platforms'
+import { getPlatformsByCapability, getRoutePlatform } from '../config/platformCatalog'
 import { usePlatformStore } from '../stores/platforms'
 import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
-import { getRoutePlatform } from '../config/platformCatalog'
 
 const props = defineProps({
   inDrawer: { type: Boolean, default: false },
@@ -193,8 +193,8 @@ const capabilities = ref({
   import: true,
   syncRepos: true
 })
-const { byCapability } = useEnabledCliPlatforms()
-const managedPluginPlatforms = computed(() => byCapability('plugins').map(platform => platform.key))
+const { catalog } = useEnabledCliPlatforms()
+const managedPluginPlatforms = computed(() => getPlatformsByCapability(catalog.value, 'plugins').map(platform => platform.key))
 const supportsCurrentPlatform = computed(() => managedPluginPlatforms.value.includes(currentPlatform.value))
 
 function setUnsupportedCapabilities() {
@@ -346,11 +346,14 @@ async function loadData() {
       const installedPlugins = installed.map(p => {
         const identity = p.pluginId || p.id || p.name
         const marketInfo = marketById[identity] || {}
+        const installedState = currentPlatform.value === 'dsh' && typeof p.installed === 'boolean'
+          ? p.installed
+          : true
         return {
           ...marketInfo,
           ...p,
-          installed: true,
-          key: p.key || `installed-${identity}-${p.scope || 'user'}`,
+          installed: installedState,
+          key: p.key || `${installedState ? 'installed' : 'uninstalled'}-${identity}-${p.scope || 'user'}`,
           description: p.description || marketInfo.description || '',
           repoProvider: p.repoProvider || marketInfo.repoProvider || '',
           repoHost: p.repoHost || marketInfo.repoHost || '',
@@ -428,7 +431,7 @@ async function waitForRefreshTask(task, platform) {
 }
 
 async function handleRefresh() {
-  if (refreshing.value || !supportsCurrentPlatform.value) return
+  if (refreshing.value || !supportsCurrentPlatform.value || !(capabilities.value.syncRepos || capabilities.value.market)) return
   const platform = currentPlatform.value
   refreshing.value = true
   try {
@@ -473,39 +476,41 @@ function handleRepositoriesUpdated() {
 
 async function handleInstall(plugin) {
   if (!supportsCurrentPlatform.value || !capabilities.value.install || plugin.readonly) return
-  if (!plugin.installSource && !plugin.repoOwner && !plugin.repoProjectPath && !plugin.repoLocalPath) {
+  if (currentPlatform.value !== 'dsh' && !plugin.installSource && !plugin.repoOwner && !plugin.repoProjectPath && !plugin.repoLocalPath) {
     return message.error('缺少可安装来源')
   }
   installingKeys.value[plugin.key] = true
   try {
-    const res = plugin.installSource
-      ? await installPlugin(
-        '',
-        null,
-        currentPlatform.value,
-        plugin.pluginId || plugin.installSource,
-        requestContext(plugin),
-        plugin
-      )
-      : await installPlugin(
-        plugin.directory,
-        {
-          id: plugin.repoId,
-          provider: plugin.repoProvider,
-          host: plugin.repoHost,
-          owner: plugin.repoOwner,
-          name: plugin.repoName,
-          branch: plugin.repoBranch || 'main',
-          projectPath: plugin.repoProjectPath,
-          localPath: plugin.repoLocalPath,
-          repoUrl: plugin.repoUrl,
-          marketplace: plugin.marketplace
-        },
-        currentPlatform.value,
-        '',
-        requestContext(plugin),
-        plugin
-      )
+    const res = currentPlatform.value === 'dsh'
+      ? await installDshPlugin(plugin.profile, plugin.name)
+      : plugin.installSource
+        ? await installPlugin(
+          '',
+          null,
+          currentPlatform.value,
+          plugin.pluginId || plugin.installSource,
+          requestContext(plugin),
+          plugin
+        )
+        : await installPlugin(
+          plugin.directory,
+          {
+            id: plugin.repoId,
+            provider: plugin.repoProvider,
+            host: plugin.repoHost,
+            owner: plugin.repoOwner,
+            name: plugin.repoName,
+            branch: plugin.repoBranch || 'main',
+            projectPath: plugin.repoProjectPath,
+            localPath: plugin.repoLocalPath,
+            repoUrl: plugin.repoUrl,
+            marketplace: plugin.marketplace
+          },
+          currentPlatform.value,
+          '',
+          requestContext(plugin),
+          plugin
+        )
     if (res.success) {
       message.success(`插件 "${plugin.name}" 安装成功`)
       invalidatePluginSessionCache(currentPlatform.value)

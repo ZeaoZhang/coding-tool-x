@@ -91,10 +91,19 @@ describe('platform catalog selection', () => {
   })
 
   it('filters capabilities in received catalog order', () => {
-    expect(getPlatformsByCapability(catalog, 'mcp').map(platform => platform.key)).toEqual(['demo-cli'])
+    expect(getPlatformsByCapability(catalog, 'mcp').map(platform => platform.key)).toEqual(['dsh', 'demo-cli'])
     expect(getPlatformsByCapability(catalog, 'sessions').map(platform => platform.key)).toEqual([
       'claude', 'codex', 'gemini', 'opencode', 'omp', 'dsh'
     ])
+  })
+
+  it('includes resource-capable platforms outside the enabled CLI selection', () => {
+    const resourceCatalog = normalizePublicPlatforms([
+      publicPlatform({ key: 'dsh', defaultEnabled: false, cliSelectable: false, resourceTypes: { plugins: true } })
+    ])
+
+    expect(resolveEnabledCliPlatforms({ catalog: resourceCatalog })).toEqual([])
+    expect(getPlatformsByCapability(resourceCatalog, 'plugins').map(platform => platform.key)).toEqual(['dsh'])
   })
 
   it('keeps empty resolved selections empty for capability and navigation helpers', () => {
