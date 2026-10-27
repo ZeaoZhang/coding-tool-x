@@ -2202,7 +2202,7 @@ async function loadNotificationSettings() {
       const { definitions, providerDefinitions } = applyNotificationResponseMetadata(data)
       const nextSettings = createNotificationSettingsState(
         data,
-        getVisibleNotificationPlatformDefinitions(definitions),
+        definitions,
         providerDefinitions
       )
       notificationSettings.value = nextSettings
@@ -2257,7 +2257,7 @@ async function handleSaveNotification() {
       const { definitions, providerDefinitions } = applyNotificationResponseMetadata(data)
       const nextSettings = createNotificationSettingsState(
         data,
-        getVisibleNotificationPlatformDefinitions(definitions),
+        definitions,
         providerDefinitions
       )
       notificationSettings.value = nextSettings

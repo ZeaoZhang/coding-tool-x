@@ -109,7 +109,7 @@ describe('SettingsDrawer platform catalog', () => {
   it('keeps notification settings aligned with visible CLI platforms', async () => {
     platformStore.all = [
       { key: 'claude', label: 'Claude', title: 'Claude', capabilities: {} },
-      { key: 'codex', label: 'Codex', title: 'Codex', capabilities: {} }
+      { key: 'opencode', label: 'OpenCode', title: 'OpenCode', capabilities: {} }
     ]
     getUIConfig.mockResolvedValue({
       success: true,
@@ -119,11 +119,11 @@ describe('SettingsDrawer platform catalog', () => {
       success: true,
       platformDefinitions: [
         { key: 'claude', label: 'Claude', title: 'Claude', capabilities: {} },
-        { key: 'codex', label: 'Codex', title: 'Codex', capabilities: {} }
+        { key: 'opencode', label: 'OpenCode', title: 'OpenCode', capabilities: {} }
       ],
       platforms: {
         claude: { enabled: true },
-        codex: { enabled: true }
+        opencode: { enabled: true }
       }
     }
     fetchMock.mockImplementation(async (url, options = {}) => {
@@ -151,7 +151,22 @@ describe('SettingsDrawer platform catalog', () => {
     expect(wrapper.vm.visibleNotificationPlatformDefinitions.map(platform => platform.key)).toEqual([
       'claude'
     ])
+    expect(wrapper.vm.notificationSettings.platforms.opencode).toEqual({
+      enabled: true,
+      type: 'notification',
+      external: false
+    })
 
+    wrapper.vm.toggleEnabledCliPlatform('opencode', true)
+    await nextTick()
+
+    expect(wrapper.vm.visibleNotificationPlatformDefinitions.map(platform => platform.key)).toEqual([
+      'claude', 'opencode'
+    ])
+    expect(wrapper.findAll('.notification-options .visibility-item')).toHaveLength(2)
+
+    wrapper.vm.toggleEnabledCliPlatform('opencode', false)
+    await nextTick()
     await wrapper.vm.handleSaveNotification()
 
     const saveCall = fetchMock.mock.calls.find(
