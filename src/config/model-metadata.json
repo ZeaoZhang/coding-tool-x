@@ -1,7 +1,7 @@
 {
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
-  "lastUpdated": "2026-10-27",
+  "lastUpdated": "2026-10-30",
   "defaultModels": {
     "claude": [
       "claude-opus-4-7",
@@ -152,6 +152,7 @@
     "mistral-large-2411": "mistral/mistral-large-2411",
     "mistral-large-2512": "mistral/mistral-large-2512",
     "mistral-large-4": "mistral/mistral-large-4",
+    "mistral-large-4-0-8": "mistral/mistral-large-4-0-8",
     "mistral-large-latest": "mistral/mistral-large-latest",
     "mistral-medium-2505": "mistral/mistral-medium-2505",
     "mistral-medium-2508": "mistral/mistral-medium-2508",
@@ -3548,13 +3549,38 @@
       },
       "name": "Mistral Large 4",
       "pricing": {
-        "cacheRead": 0.14,
-        "input": 1.36,
-        "output": 4.18
+        "cacheRead": 0.07,
+        "input": 0.7,
+        "output": 2.1
       },
       "provider": "mistral",
       "reasoning": true,
       "sourceId": "mistral/mistral-large-4",
+      "supportsTools": true,
+      "toolTypes": [
+        "opencode",
+        "omp"
+      ]
+    },
+    "mistral/mistral-large-4-0-8": {
+      "id": "mistral/mistral-large-4-0-8",
+      "input": [
+        "text",
+        "image"
+      ],
+      "limit": {
+        "context": 1048576,
+        "output": 262144
+      },
+      "name": "Mistral Large 4.0.8",
+      "pricing": {
+        "cacheRead": 0.07,
+        "input": 0.7,
+        "output": 2.1
+      },
+      "provider": "mistral",
+      "reasoning": true,
+      "sourceId": "mistral/mistral-large-4-0-8",
       "supportsTools": true,
       "toolTypes": [
         "opencode",
