@@ -18,12 +18,14 @@ import {
   getPlatformRouteUrl,
   getPlatformChannels,
   syncCurrentDshChannel,
+  fetchDshModelsFromConfig,
   updatePlatformChannel
 } from '../channels'
 
 const apiRoutes = [
   { method: 'GET', path: '/channels', capability: 'channels', operation: 'list' },
   { method: 'POST', path: '/channels/sync-now', capability: 'channels', operation: 'sync' },
+  { method: 'POST', path: '/channels/models', capability: 'channels', operation: 'modelsFromConfig' },
   { method: 'PUT', path: '/channels/:channelId', capability: 'channels', operation: 'update' },
   { method: 'GET', path: '/channels/scheduler', capability: 'channels', operation: 'poolStatus' },
   { method: 'GET', path: '/projects', capability: 'projects', operation: 'listProjects' },
@@ -49,6 +51,21 @@ it('dispatches channel listing through the route advertised by the platform cata
 
   expect(mocks.get).toHaveBeenNthCalledWith(1, '/platforms')
   expect(mocks.get).toHaveBeenNthCalledWith(2, '/platforms/dsh/channels', undefined)
+})
+
+it('uses the DSH manifest route to discover models before a channel is saved', async () => {
+  await fetchDshModelsFromConfig({
+    baseUrl: 'https://api.example.test/v1',
+    apiKey: 'secret',
+    providerApi: 'openai-completions'
+  }, { forceRefresh: true })
+
+  expect(mocks.post).toHaveBeenCalledWith('/platforms/dsh/channels/models', {
+    baseUrl: 'https://api.example.test/v1',
+    apiKey: 'secret',
+    providerApi: 'openai-completions',
+    forceRefresh: true
+  }, undefined)
 })
 
 it('uses configured operation paths and safely encodes route parameters', async () => {

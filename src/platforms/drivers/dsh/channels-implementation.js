@@ -254,6 +254,16 @@ class DshChannelService extends BaseChannelService {
     if (!SUPPORTED_PROVIDER_APIS.has(channel.providerApi)) {
       throw new Error(`Unsupported DSH provider api: ${channel.providerApi}`);
     }
+    const previous = _allChannels.find(item => item.id === channel.id);
+    const enablingUnsupported = channel.enabled !== false
+      && channel.providerApi !== 'openai-completions'
+      && (!previous || previous.enabled === false || previous.providerApi !== channel.providerApi);
+    if (isProxyModeEnabled() && enablingUnsupported) {
+      const error = new Error('DSH 动态代理仅支持 OpenAI Chat Completions；请先停止代理或禁用该渠道');
+      error.statusCode = 409;
+      error.code = 'dsh_proxy_provider_api_unsupported';
+      throw error;
+    }
     if (!channel.model || !channel.models.length) {
       throw new Error('DSH channel requires at least one model');
     }

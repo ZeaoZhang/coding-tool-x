@@ -17,7 +17,7 @@
               {{ formatSize(store.totalSize) }}
             </n-tag>
             <div class="header-actions">
-              <template v-if="selectionMode">
+              <template v-if="selectionMode && !projectReadOnly">
                 <n-checkbox
                   :checked="allSessionsSelected"
                   :indeterminate="partiallySelected"
@@ -44,7 +44,7 @@
                 </n-button>
               </template>
               <template v-else>
-                <n-button size="small" type="error" secondary @click="enterSelectionMode">
+                <n-button v-if="!projectReadOnly" size="small" type="error" secondary @click="enterSelectionMode">
                   <template #icon>
                     <n-icon><TrashOutline /></n-icon>
                   </template>
@@ -128,7 +128,7 @@
           @mouseleave="hoveredSession = null"
           @click="handleSessionClick(session)"
         >
-          <div v-if="selectionMode" class="selection-checkbox" @click.stop>
+          <div v-if="selectionMode && !session.readOnly && !projectReadOnly" class="selection-checkbox" @click.stop>
             <n-checkbox
               :checked="isSessionSelected(session.sessionId)"
               @update:checked="toggleSessionSelection(session.sessionId, $event)"
@@ -194,6 +194,7 @@
             <div v-if="!selectionMode" class="session-actions">
               <n-space>
                 <n-button
+                  v-if="!session.readOnly && !projectReadOnly"
                   v-show="hoveredSession === session.sessionId"
                   size="small"
                   type="error"
@@ -223,13 +224,13 @@
                   </template>
                   {{ isFavorite(currentChannel, effectiveProjectName, session.sessionId) ? '已收藏' : '收藏' }}
                 </n-button>
-                <n-button v-if="currentChannel !== 'opencode'" size="small" @click.stop="handleFork(session.sessionId)">
+                <n-button v-if="currentChannel !== 'opencode' && !session.readOnly" size="small" @click.stop="handleFork(session.sessionId)">
                   <template #icon>
                     <n-icon><GitBranchOutline /></n-icon>
                   </template>
                   Fork
                 </n-button>
-                <n-button size="small" type="primary" @click.stop="handleLaunchTerminal(session.sessionId)">
+                <n-button v-if="!session.readOnly" size="small" type="primary" @click.stop="handleLaunchTerminal(session.sessionId)">
                   <template #icon>
                     <n-icon><TerminalOutline /></n-icon>
                   </template>
@@ -322,7 +323,7 @@
               </n-text>
               <n-tag size="small" :bordered="false">{{ session.matchCount }} 个匹配</n-tag>
             </div>
-            <n-button size="small" type="primary" @click="handleLaunchTerminal(session.sessionId)">
+            <n-button v-if="!session.readOnly" size="small" type="primary" @click="handleLaunchTerminal(session.sessionId)">
               <template #icon>
                 <n-icon><TerminalOutline /></n-icon>
               </template>
@@ -450,6 +451,14 @@ const currentProject = computed(() => {
     || null
 })
 
+const projectReadOnly = computed(() => currentProject.value?.readOnly === true
+  || store.currentProjectInfo?.readOnly === true
+  || (orderedSessions.value.length > 0 && orderedSessions.value.every(session => session.readOnly === true)))
+
+watch(projectReadOnly, readOnly => {
+  if (readOnly && selectionMode.value) exitSelectionMode()
+})
+
 const projectConfigPath = computed(() => {
   const candidates = [
     store.currentProjectInfo?.fullPath,
@@ -566,6 +575,7 @@ async function handleSearch() {
 }
 
 function enterSelectionMode() {
+  if (projectReadOnly.value) return
   selectionMode.value = true
   hoveredSession.value = null
 }
@@ -643,13 +653,14 @@ function closeForkDialog() {
 }
 
 async function handleFork(sessionId) {
+  const session = orderedSessions.value.find(item => item.sessionId === sessionId)
+  if (projectReadOnly.value || session?.readOnly) return
   if (currentChannel.value === 'opencode') {
     message.warning('OpenCode 当前不支持该 Fork 操作')
     return
   }
 
   try {
-    const session = orderedSessions.value.find(item => item.sessionId === sessionId)
     editingForkSession.value = session || { sessionId }
     forkAlias.value = ''
     selectedForkPoint.value = FULL_FORK_POINT
@@ -683,7 +694,10 @@ async function handleFork(sessionId) {
 }
 
 async function confirmFork() {
-  if (!editingForkSession.value) return
+  if (!editingForkSession.value || projectReadOnly.value || editingForkSession.value.readOnly) {
+    closeForkDialog()
+    return
+  }
 
   try {
     forking.value = true
@@ -729,6 +743,8 @@ function syncDeletedSessionState(sessionIds) {
 }
 
 async function handleLaunchTerminal(sessionId) {
+  const session = orderedSessions.value.find(item => item.sessionId === sessionId)
+  if (projectReadOnly.value || session?.readOnly) return
   try {
     const { copyResult } = await copySessionLaunchCommand(effectiveProjectName.value, sessionId, currentChannel.value)
     if (copyResult?.method === 'manual') {
@@ -742,6 +758,8 @@ async function handleLaunchTerminal(sessionId) {
 }
 
 function handleDelete(sessionId) {
+  const session = orderedSessions.value.find(item => item.sessionId === sessionId)
+  if (projectReadOnly.value || session?.readOnly) return
   dialog.warning({
     title: '删除会话',
     content: '确定要删除这个会话吗？此操作不可恢复！',
@@ -760,6 +778,9 @@ function handleDelete(sessionId) {
 }
 
 function handleBatchDelete() {
+  if (projectReadOnly.value || selectedSessionIds.value.some(sessionId => (
+    orderedSessions.value.find(session => session.sessionId === sessionId)?.readOnly
+  ))) return
   if (selectedCount.value === 0) {
     message.warning('请先选择要删除的会话')
     return

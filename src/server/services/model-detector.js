@@ -161,6 +161,18 @@ const PROVIDER_CAPABILITIES = {
   }
 };
 
+function getProviderCapability(channelType, channel) {
+  if (channelType === 'claude' && channel?.providerApi === 'anthropic-messages') {
+    return {
+      supportsModelList: true,
+      modelListEndpoint: '/v1/models',
+      authHeader: 'x-api-key',
+      anthropicVersion: '2023-06-01'
+    };
+  }
+  return PROVIDER_CAPABILITIES[channelType];
+}
+
 /**
  * Auto-detect channel type based on baseUrl
  * @param {Object} channel - Channel configuration
@@ -324,6 +336,9 @@ function buildRequestHeaders(channelType, channel) {
   // For OpenAI-compatible APIs, add additional headers
   if (channelType === 'codex' || channelType === 'openai_compatible') {
     headers['OpenAI-Beta'] = 'assistants=v2';
+  }
+  if (channelType === 'claude' && channel?.providerApi === 'anthropic-messages') {
+    headers['anthropic-version'] = '2023-06-01';
   }
 
   return headers;
@@ -693,6 +708,7 @@ function buildChannelCacheSignature(channel, payload = {}) {
     name: channel?.name || '',
     baseUrl: channel?.baseUrl || '',
     apiKey: channel?.apiKey || '',
+    providerApi: channel?.providerApi || '',
     gatewaySourceType: channel?.gatewaySourceType || '',
     wireApi: channel?.wireApi || '',
     model: channel?.model || '',
@@ -1011,7 +1027,7 @@ async function fetchModelsFromProvider(channel, channelType, options = {}) {
   }
 
   // Check if provider supports model listing
-  const capability = PROVIDER_CAPABILITIES[channelType];
+  const capability = getProviderCapability(channelType, channel);
   if (!capability || !capability.supportsModelList) {
     return {
       models: [],
@@ -1050,8 +1066,11 @@ async function fetchModelsFromProvider(channel, channelType, options = {}) {
       const headers = buildRequestHeaders(channelType, channel);
 
       // Add authentication header
-      if (capability.authHeader) {
-        if (channel.apiKey) {
+      if (capability.authHeader && channel.apiKey) {
+        if (capability.authHeader.toLowerCase() === 'x-api-key') {
+          headers[capability.authHeader] = channel.apiKey;
+          if (capability.anthropicVersion) headers['anthropic-version'] = capability.anthropicVersion;
+        } else {
           headers['Authorization'] = `Bearer ${channel.apiKey}`;
         }
       }

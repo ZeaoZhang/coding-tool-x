@@ -118,6 +118,16 @@ function createDriver(context = {}) {
         forceRefresh: request?.query?.forceRefresh === 'true' || request?.query?.force === '1'
       });
     }),
+    modelsFromConfig: request => withAsyncResult(request, 'modelsFromConfig', async () => {
+      const { fetchModelsFromProvider } = require('../../../server/services/model-detector');
+      const channel = bodyOf(request);
+      if (!String(channel.baseUrl || '').trim()) {
+        throw Object.assign(new Error('DSH channel baseUrl is required'), { statusCode: 400 });
+      }
+      return fetchModelsFromProvider(channel, channelTypeForSpeed(channel), {
+        forceRefresh: channel.forceRefresh === true || channel.force === true
+      });
+    }),
     probeModels: request => withAsyncResult(request, 'probeModels', async () => {
       const { probeModelAvailability } = require('../../../server/services/model-detector');
       const input = bodyOf(request);

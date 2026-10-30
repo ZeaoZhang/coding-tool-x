@@ -26,6 +26,7 @@ function buildListSignature(channel, channelType) {
     name: channel.name || '',
     baseUrl: channel.baseUrl || '',
     apiKey: channel.apiKey || '',
+    providerApi: channel.providerApi || '',
     gatewaySourceType: channel.gatewaySourceType || '',
     wireApi: channel.wireApi || '',
     model: channel.model || '',
@@ -219,6 +220,33 @@ describe('model-detector helpers and cache management', () => {
       cached: false,
       error: null
     });
+  });
+
+  test('discovers models from DSH Anthropic Messages providers with Anthropic authentication', async () => {
+    const channel = {
+      id: 'dsh-anthropic',
+      name: 'DSH Anthropic',
+      baseUrl: 'https://api.anthropic.test/v1',
+      apiKey: 'anthropic-secret',
+      providerApi: 'anthropic-messages'
+    };
+    const { calls } = mockHttpsRequestSequence([{
+      statusCode: 200,
+      body: JSON.stringify({ data: [{ id: 'claude-live-model' }] })
+    }]);
+
+    await expect(modelDetector.fetchModelsFromProvider(channel, 'claude')).resolves.toEqual(expect.objectContaining({
+      models: ['claude-live-model'],
+      supported: true,
+      fallbackUsed: false,
+      error: null
+    }));
+    expect(calls[0].path).toBe('/v1/models');
+    expect(calls[0].headers).toEqual(expect.objectContaining({
+      'x-api-key': 'anthropic-secret',
+      'anthropic-version': '2023-06-01'
+    }));
+    expect(calls[0].headers.Authorization).toBeUndefined();
   });
 
   test('reuses cached /v1/models results when the channel signature matches', async () => {

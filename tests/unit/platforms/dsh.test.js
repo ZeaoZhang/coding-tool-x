@@ -55,7 +55,7 @@ describe('DSH platform integration', () => {
     tempHome = null;
   });
 
-  test('publishes DSH as a config/session platform without generic resource plugins', () => {
+  test('publishes DSH as a config/session platform with dedicated agent resources', () => {
     const registry = createPlatformRegistry({ userFile: { platforms: [] } });
     const manifest = registry.resolve('dsh');
 
@@ -63,7 +63,7 @@ describe('DSH platform integration', () => {
       key: 'dsh',
       defaultEnabled: false,
       cliSelectable: false,
-      resourceTypes: expect.objectContaining({ skills: true, commands: false, agents: false, plugins: true })
+      resourceTypes: expect.objectContaining({ skills: true, commands: false, agents: true, plugins: true })
     }));
     expect(registry.getCapability('dsh', 'projects')).toBe('dsh-projects');
     expect(registry.getCapability('dsh', 'sessions')).toBe('dsh-sessions');
@@ -258,8 +258,10 @@ describe('DSH platform integration', () => {
     const api = createApiDriver({ paths, platform: 'dsh', route: { capability: 'api', operation: 'listProfilePlugins' } });
     const pluginsBefore = await api.listProfilePlugins({ params: { profileName: 'review' } });
     expect(pluginsBefore.data.plugins).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'demo-bundle', installed: true, bundle: true, management: 'ctx+dsh-plugin' }),
-      expect.objectContaining({ name: '@deepseek-ai/dsh-base', inBundleList: true, management: 'ctx+dsh-plugin' })
+      expect.objectContaining({ name: 'demo-bundle', installed: true, bundle: true, management: 'ctx+dsh-plugin' })
+    ]));
+    expect(pluginsBefore.data.plugins).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: '@deepseek-ai/dsh-base' })
     ]));
     const capabilities = await api.listProfileCapabilities({ params: { profileName: 'review' } });
     expect(capabilities.data.management).toBe('ctx');
@@ -512,13 +514,19 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
 
     const plugins = new PluginsService('dsh', { registry, runtime });
     expect(plugins.listPlugins().plugins).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'demo-plugin', profile: 'default', readonly: true, pluginType: 'dsh-profile' })
+      expect.objectContaining({
+        name: 'demo-plugin',
+        profile: 'default',
+        readonly: false,
+        installed: false,
+        pluginType: 'dsh-profile'
+      })
     ]));
     expect(plugins.getCapabilities()).toEqual(expect.objectContaining({
       supportsPlugins: true,
-      repositories: true,
-      install: false,
-      uninstall: false
+      repositories: false,
+      install: true,
+      uninstall: true
     }));
     expect(plugins.getRepos()).toEqual([]);
     expect((await plugins.installPlugin('demo-plugin')).success).toBe(false);
@@ -592,6 +600,37 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
     expect(JSON.stringify(synced.data)).not.toContain('sk-primary');
     expect(JSON.stringify(synced.data)).not.toContain('sk-secondary');
     expect(fs.readFileSync(paths.settings, 'utf8')).toBe(settingsText);
+  });
+
+  test('discovers models for an unsaved DSH provider through the channel driver', async () => {
+    tempHome = makeTempHome();
+    const modelDetector = require('../../../src/server/services/model-detector');
+    const originalFetch = modelDetector.fetchModelsFromProvider;
+    const calls = [];
+    modelDetector.fetchModelsFromProvider = async (...args) => {
+      calls.push(args);
+      return { models: ['claude-live-model'], supported: true, fallbackUsed: false };
+    };
+    try {
+      const driver = createChannelDriver({ paths: dshPaths(tempHome) });
+      const result = await driver.modelsFromConfig({
+        body: {
+          baseUrl: 'https://api.anthropic.example/v1',
+          apiKey: 'sk-anthropic',
+          providerApi: 'anthropic-messages'
+        },
+        route: { capability: 'channels', operation: 'modelsFromConfig' }
+      });
+      expect(result).toEqual(expect.objectContaining({
+        status: 'ok',
+        data: expect.objectContaining({ models: ['claude-live-model'] })
+      }));
+      expect(calls).toHaveLength(1);
+      expect(calls[0][1]).toBe('claude');
+      expect(calls[0][2]).toEqual({ forceRefresh: false });
+    } finally {
+      modelDetector.fetchModelsFromProvider = originalFetch;
+    }
   });
 
   test('sync enriches known DSH models with metadata while preserving provider overrides', () => {
@@ -708,6 +747,73 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
       params: { channelId: second.data.channel.id },
       route: { capability: 'channels', operation: 'remove' }
     }).status).toBe('ok');
+  });
+
+  test('rejects starting the managed proxy with enabled non-completions providers', async () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const channelDriver = createChannelDriver({ paths });
+    const created = channelDriver.create({
+      body: {
+        name: 'Anthropic provider',
+        providerKey: 'anthropic-provider',
+        providerApi: 'anthropic-messages',
+        baseUrl: 'https://api.anthropic.example/v1',
+        model: 'claude-live-model',
+        models: ['claude-live-model'],
+        apiKey: 'sk-anthropic'
+      },
+      route: { capability: 'channels', operation: 'create' }
+    });
+    expect(created.status).toBe('ok');
+
+    const proxyDriver = createProxyDriver({
+      paths,
+      pathContext: {
+        native: paths,
+        customized: true,
+        state: {
+          channels: path.join(tempHome, 'channels.json'),
+          activeChannel: path.join(tempHome, 'active-channel.json'),
+          proxyRuntime: path.join(tempHome, 'dsh-proxy.json')
+        }
+      }
+    });
+    const started = await proxyDriver.start({ port: 0 });
+
+    expect(started.status).toBe('failed');
+    expect(started.error).toContain('仅支持 OpenAI Chat Completions');
+    expect(started.error).toContain('Anthropic provider');
+  });
+
+  test('rejects enabling non-completions channels while the managed proxy is active', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const channelDriver = createChannelDriver({ paths });
+    const created = channelDriver.create({
+      body: {
+        name: 'Anthropic provider',
+        providerKey: 'anthropic-provider',
+        providerApi: 'anthropic-messages',
+        baseUrl: 'https://api.anthropic.example/v1',
+        model: 'claude-live-model',
+        models: ['claude-live-model'],
+        apiKey: 'sk-anthropic',
+        enabled: false
+      },
+      route: { capability: 'channels', operation: 'create' }
+    });
+    expect(created.status).toBe('ok');
+    writeJson(path.join(tempHome, 'active-channel.json'), { activeChannelId: 'active-channel' });
+
+    const enabled = channelDriver.update({
+      params: { channelId: created.data.channel.id },
+      body: { enabled: true },
+      route: { capability: 'channels', operation: 'update' }
+    });
+
+    expect(enabled.status).toBe('conflict');
+    expect(enabled.error).toContain('仅支持 OpenAI Chat Completions');
   });
 
   test('mounts DSH descriptor routes through the shared platform API factory', async () => {

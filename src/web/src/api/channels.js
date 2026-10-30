@@ -65,6 +65,12 @@ export function fetchDshChannelModels(channelId, { forceRefresh = false } = {}) 
   })
 }
 
+export function fetchDshModelsFromConfig({ baseUrl, apiKey, providerApi } = {}, { forceRefresh = false } = {}) {
+  return channelOperation('dsh', 'modelsFromConfig', {
+    body: { baseUrl, apiKey, providerApi, forceRefresh }
+  })
+}
+
 export function getChannelAuth(platform, channelId = '') {
   return channelOperation(platform, 'getAuth', { query: channelId ? { channelId } : undefined })
 }

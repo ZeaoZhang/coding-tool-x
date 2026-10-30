@@ -136,6 +136,42 @@ it('does not pass a relative project name to project configuration', async () =>
   expect(wrapper.findComponent(drawerStub).props('projectPath')).toBe('')
 })
 
+it('hides unsupported mutations for read-only projects and sessions', async () => {
+  store.projects = [{
+    name: 'project-display-name',
+    displayName: 'Project',
+    fullPath: '/tmp/project',
+    readOnly: true
+  }]
+  store.currentProjectInfo = { displayName: 'Project', fullPath: '/tmp/project', readOnly: true }
+  store.sessionsWithAlias = [{
+    sessionId: 'readonly-session',
+    readOnly: true,
+    mtime: Date.now(),
+    size: 24,
+    firstMessage: 'Read-only history'
+  }]
+  const wrapper = mount(SessionList, {
+    props: { projectName: 'project-display-name' },
+    global: {
+      stubs: {
+        draggable: { template: '<div><slot /></div>' },
+        ChatHistoryDrawer: true,
+        ProjectConfigDrawer: true
+      }
+    }
+  })
+
+  await nextTick()
+  expect(wrapper.find('.header-actions').text()).not.toContain('管理')
+  const actions = wrapper.find('.session-actions').text()
+  expect(actions).toContain('别名')
+  expect(actions).not.toContain('删除')
+  expect(actions).not.toContain('Fork')
+  expect(actions).not.toContain('使用对话')
+  wrapper.unmount()
+})
+
 it('focuses the current-project search input on Cmd/Ctrl+K', async () => {
   const wrapper = mount(SessionList, {
     props: { projectName: 'project-display-name' },

@@ -115,7 +115,7 @@ const CAPABILITY_OPERATIONS = Object.freeze({
     'updateSkill',
     'deleteSkill'
   ]),
-  channels: new Set(['applyToSettings', 'bestForRestore', 'catalogMetadata', 'create', 'current', 'enabled', 'getAuth', 'getAuthQuota', 'list', 'models', 'order', 'poolStatus', 'probeModels', 'remove', 'resetHealth', 'speedTest', 'sync', 'syncLocalAuth', 'update']),
+  channels: new Set(['applyToSettings', 'bestForRestore', 'catalogMetadata', 'create', 'current', 'enabled', 'getAuth', 'getAuthQuota', 'list', 'models', 'modelsFromConfig', 'order', 'poolStatus', 'probeModels', 'remove', 'resetHealth', 'speedTest', 'sync', 'syncLocalAuth', 'update']),
   health: new Set(['healthCheck']),
   hooks: new Set(['getHooks', 'saveHooks', 'testHooks']),
   projects: new Set(['createProject', 'deleteProject', 'listProjects', 'saveProjectOrder']),

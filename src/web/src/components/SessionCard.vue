@@ -78,7 +78,7 @@
       </n-button>
 
       <!-- Launch Button with Dropdown -->
-      <n-button type="primary" size="small" @click="$emit('launch', session)">
+      <n-button v-if="!session.readOnly" type="primary" size="small" @click="$emit('launch', session)">
         <template #icon>
           <n-icon><TerminalOutline /></n-icon>
         </template>
@@ -87,7 +87,7 @@
 
       <!-- Fork Button (only show if not hideFork) -->
       <n-button
-        v-if="!hideFork"
+        v-if="!hideFork && !session.readOnly"
         size="small"
         @click="$emit('fork', session)"
       >
@@ -99,7 +99,7 @@
 
       <!-- Delete Button (only show if not hideDelete) -->
       <n-button
-        v-if="!hideDelete"
+        v-if="!hideDelete && !session.readOnly"
         size="small"
         type="error"
         @click="$emit('delete', session)"

@@ -13,6 +13,9 @@ const {
   createOpenCodeChannel,
   createOmpChannel,
   updateOmpChannel,
+  createDshChannel,
+  fetchDshChannelModels,
+  fetchDshModelsFromConfig,
   getAllModelsByToolType,
   loadDefaultModels,
   probeOmpChannelModels,
@@ -30,6 +33,9 @@ const {
   createOpenCodeChannel: vi.fn(),
   createOmpChannel: vi.fn(),
   updateOmpChannel: vi.fn(),
+  createDshChannel: vi.fn(),
+  fetchDshChannelModels: vi.fn(),
+  fetchDshModelsFromConfig: vi.fn(),
   getAllModelsByToolType: vi.fn(),
   loadDefaultModels: vi.fn(),
   probeOmpChannelModels: vi.fn(),
@@ -50,6 +56,9 @@ vi.mock('../../../api/channels', async () => ({
   createOpenCodeChannel,
   createOmpChannel,
   updateOmpChannel,
+  createDshChannel,
+  fetchDshChannelModels,
+  fetchDshModelsFromConfig,
   probeOmpChannelModels,
   probeOpenCodeChannelModels
 }))
@@ -72,6 +81,7 @@ describe('channel panel model catalogs', () => {
     fetchOpenCodeChannels.mockReset().mockResolvedValue([{ id: 'opencode-1' }])
     getAllModelsByToolType.mockImplementation(toolType => ({
       codex: ['gpt-5.5'],
+      dsh: ['catalog-model', 'fallback-model'],
       opencode: ['deepseek/deepseek-v4-pro'],
       omp: ['deepseek/deepseek-v4-pro']
     }[toolType] || []))
@@ -87,6 +97,9 @@ describe('channel panel model catalogs', () => {
     createOmpChannel.mockReset().mockResolvedValue({ id: 'created' })
     createOpenCodeChannel.mockReset().mockResolvedValue({ id: 'created-opencode' })
     updateOmpChannel.mockReset().mockResolvedValue({ id: 'updated' })
+    createDshChannel.mockReset().mockResolvedValue({ id: 'created-dsh' })
+    fetchDshChannelModels.mockReset()
+    fetchDshModelsFromConfig.mockReset()
   })
 
   it('keeps array channel responses from the platform API', async () => {
@@ -159,6 +172,46 @@ describe('channel panel model catalogs', () => {
       required: true,
       type: 'password'
     }))
+  })
+
+  it('uses live DSH models before the offline catalog for unsaved channels', async () => {
+    fetchDshModelsFromConfig.mockResolvedValueOnce({
+      models: ['remote-model', 'catalog-model'],
+      supported: true,
+      fallbackUsed: false
+    })
+    const config = channelPanelFactories.dsh()
+    const form = {
+      baseUrl: 'https://api.example.test/v1',
+      apiKey: 'secret',
+      providerApi: 'openai-completions',
+      availableModels: [],
+      models: [],
+      modelsFetchError: null,
+      modelsFetchErrorHint: null
+    }
+
+    await config.fetchModelsForChannel(null, form)
+
+    expect(fetchDshModelsFromConfig).toHaveBeenCalledWith(form, { forceRefresh: false })
+    expect(form.availableModels.map(option => option.value)).toEqual([
+      'remote-model',
+      'catalog-model',
+      'fallback-model'
+    ])
+    expect(config.mapChannelToForm({ models: [{ id: 'persisted-model' }] }).models)
+      .toEqual(['persisted-model'])
+
+    await config.api.create({
+      ...config.getInitialForm(),
+      name: 'DSH test',
+      providerKey: 'dsh-test',
+      baseUrl: form.baseUrl,
+      apiKey: form.apiKey,
+      model: 'remote-model',
+      models: ['remote-model']
+    })
+    expect(createDshChannel).toHaveBeenCalledWith(expect.objectContaining({ models: ['remote-model'] }))
   })
 
   it('restores model settings from legacy extra data for every CLI', async () => {

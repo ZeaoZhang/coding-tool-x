@@ -442,7 +442,11 @@ function createDriver(context = {}) {
     return {
       sessions,
       totalSize: all.reduce((sum, session) => sum + (Number(session.size) || 0), 0),
-      projectInfo: { sessionCount: all.length, totalSize: all.reduce((sum, session) => sum + (Number(session.size) || 0), 0) },
+      projectInfo: {
+        sessionCount: all.length,
+        totalSize: all.reduce((sum, session) => sum + (Number(session.size) || 0), 0),
+        readOnly: true
+      },
       pagination: { page, limit, total: all.length, hasMore: page * limit < all.length }
     };
   };

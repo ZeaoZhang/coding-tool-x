@@ -66,6 +66,7 @@ import {
   applyDshChannelToSettings,
   syncCurrentDshChannel,
   fetchDshChannelModels,
+  fetchDshModelsFromConfig,
   testDshChannelSpeed
 } from '../../api/channels'
 import { useDefaultModels } from '../../composables/useDefaultModels.js'
@@ -599,11 +600,11 @@ const channelPanelFactories = {
     fetchModelsForChannel: async (channelId, form, { forceRefresh = false } = {}) => {
       await loadDefaultModels()
       const defaultOptions = getToolModelOptions('dsh')
-      if (!channelId) {
-        form.availableModels = defaultOptions
-        return
-      }
-      const result = await fetchDshChannelModels(channelId, { forceRefresh })
+      const result = channelId
+        ? await fetchDshChannelModels(channelId, { forceRefresh })
+        : form.baseUrl
+          ? await fetchDshModelsFromConfig(form, { forceRefresh })
+          : null
       const models = Array.isArray(result?.models)
         ? result.models.map(model => typeof model === 'string' ? model : model?.id).filter(Boolean)
         : []

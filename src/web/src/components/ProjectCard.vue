@@ -13,7 +13,7 @@
         </n-icon>
         <span class="project-name">{{ projectName }}</span>
         <n-button
-          v-show="showDelete"
+          v-if="!project.readOnly && showDelete"
           text
           type="error"
           size="tiny"

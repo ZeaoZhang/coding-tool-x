@@ -169,7 +169,7 @@
               <!-- 多选模型选择器 -->
               <n-select
                 v-else-if="field.type === 'model-multi-select'"
-                v-model:value="state.formData.allowedModels"
+                :value="getNestedValue(state.formData, field.key)"
                 :options="state.formData.availableModels || []"
                 :placeholder="field.placeholder"
                 :loading="state.formData.modelsFetching"
@@ -178,6 +178,7 @@
                 clearable
                 tag
                 @focus="handleModelDropdownFocus"
+                @update:value="value => setNestedValue(state.formData, field.key, value)"
               />
               <!-- 测速模型选择器 (支持手动输入) -->
               <n-auto-complete

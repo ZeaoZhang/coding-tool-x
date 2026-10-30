@@ -153,7 +153,7 @@
               </n-text>
               <n-tag size="small" :bordered="false">{{ session.matchCount }} 个匹配</n-tag>
             </div>
-            <n-button size="small" type="primary" @click="handleLaunchTerminalFromGlobal(session.projectName, session.sessionId, session.channel)">
+            <n-button v-if="!session.readOnly" size="small" type="primary" @click="handleLaunchTerminalFromGlobal(session.projectName, session.sessionId, session.channel)">
               <template #icon>
                 <n-icon><TerminalOutline /></n-icon>
               </template>
@@ -263,6 +263,7 @@ function handleProjectClick(projectName) {
 }
 
 function handleDeleteProject(project) {
+  if (project?.readOnly) return
   // 使用解析后的完整路径
   const projectPath = project.fullPath || project.name
   const sessionCount = project.sessionCount || 0

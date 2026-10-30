@@ -63,7 +63,13 @@ async function startDshProxyServer(options = {}) {
     return { success: true, port: currentPort, provider: 'ctx-dsh-proxy', activeChannel };
   }
 
-  if (openAiChannels().length === 0) {
+  const enabledChannels = getEnabledChannels();
+  const incompatibleChannels = enabledChannels.filter(channel => channel.providerApi !== 'openai-completions');
+  if (incompatibleChannels.length > 0) {
+    const names = incompatibleChannels.map(channel => channel.name || channel.providerKey).join(', ');
+    throw new Error(`DSH 动态代理仅支持 OpenAI Chat Completions；请先禁用不兼容渠道：${names}`);
+  }
+  if (enabledChannels.length === 0) {
     throw new Error('DSH 动态代理当前只支持 openai-completions；请先添加并启用至少一个兼容渠道');
   }
 

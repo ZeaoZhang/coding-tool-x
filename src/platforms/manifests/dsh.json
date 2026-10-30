@@ -261,6 +261,14 @@
       },
       {
         "method": "POST",
+        "path": "/channels/models",
+        "capability": "channels",
+        "operation": "modelsFromConfig",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
         "path": "/channels/:channelId/speed-test",
         "capability": "channels",
         "operation": "speedTest",
