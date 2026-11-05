@@ -73,12 +73,15 @@ export default function useChannelManager(config) {
   let channelMetaRefreshTimer = null
   let loadPromise = null
   let channelMetaRefreshAttempt = 0
+  // 保存请求进行中时禁止再次提交：慢请求或卡住时用户重复点击会重复创建渠道。
+  let saving = false
 
   const state = reactive({
     channels: [],
     channelMeta: null,
     balances: {},
     loading: false,
+    saving: false,
     balanceLoading: false,
     balanceError: null,
     syncing: false,
@@ -437,6 +440,7 @@ export default function useChannelManager(config) {
   }
 
   function openAddDialog() {
+    if (saving) return
     state.editingChannel = null
     state.formData = {
       authMode: 'api_key',
@@ -449,11 +453,13 @@ export default function useChannelManager(config) {
   }
 
   function closeDialog() {
+    if (saving) return
     state.showDialog = false
     state.editingChannel = null
     state.formData = config.getInitialForm()
   }
   function handleEdit(channel) {
+    if (saving) return
     state.editingChannel = channel
     state.formData = {
       authMode: channel.authMode || 'api_key',
@@ -541,6 +547,19 @@ export default function useChannelManager(config) {
   }
 
   async function handleSave() {
+    // 同步占位，保证重复点击/回车在同一 tick 内就被拦截，而不是等下一次渲染。
+    if (saving) return false
+    saving = true
+    state.saving = true
+    try {
+      return await submitChannelForm()
+    } finally {
+      saving = false
+      state.saving = false
+    }
+  }
+
+  async function submitChannelForm() {
     if (!runValidation()) {
       const details = Object.values(validation)
         .map(item => item?.message)
@@ -548,22 +567,26 @@ export default function useChannelManager(config) {
       message.error(details.length > 0
         ? `请检查表单：${details.join('；')}`
         : '请检查表单填写是否完整')
-      return
+      return false
     }
 
+    const editing = Boolean(state.editingChannel)
     try {
-      const editing = Boolean(state.editingChannel)
       const result = editing
         ? await config.api.update(state.editingChannel, state.formData)
         : await config.api.create(state.formData)
       const applied = applyMutationResult(result, { allowInsert: !editing })
       message.success(`${config.displayName} 渠道已${editing ? '更新' : '添加'}`)
-      closeDialog()
+      state.showDialog = false
+      state.editingChannel = null
+      state.formData = config.getInitialForm()
       if (!applied) {
         await loadChannels()
       }
+      return true
     } catch (error) {
       message.error(resolveError(error))
+      return false
     }
   }
 
@@ -763,6 +786,7 @@ export default function useChannelManager(config) {
       toggleCollapse,
       handleEdit,
       handleSave,
+      isSaving: () => saving,
       handleDelete,
       handleToggleEnabled,
       handleSyncCurrentChannels,

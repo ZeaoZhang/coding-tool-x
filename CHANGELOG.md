@@ -23,6 +23,7 @@
 - **依赖安全升级** - adm-zip 升至 0.6.0（GHSA-xcpc-8h2w-3j85）、js-yaml 升至 4.3.1（GHSA-h67p-54hq-rp68 / GHSA-52cp-r559-cp3m / GHSA-5p4m-2wfm-xmqj）、pm2 升至 7.0.3（GHSA-x5gf-qvw8-r2rm），overrides 同步更新 basic-ftp / qs / systeminformation / js-yaml；`npm audit` 报告归零
 
 ### Fixed
+- **渠道添加重复提交** - 添加/编辑渠道的请求进行中时锁定保存按钮并同步拦截重复提交，请求卡住时反复点击不会再创建重复渠道；提交期间弹窗不可关闭，失败后解除锁定可重试。
 - **代理连接与内存回收** - 修复各 CLI 请求残留、客户端断开后的上游取消和渠道释放；后台退出时排空代理请求，延长上游空闲超时；OMP 重试取消失败响应，过滤连接保活头，并增加内存压力回收。
 - **CLI 状态和错误子命令** - 修复 `ctx status` 的代理 Driver 状态解析；错误子命令返回非零退出码，不再进入控制面。
 - **Claude / Gemini 原生 wire 兼容** - OpenCode Claude / Gemini 代理、模型探测和测速统一使用 Anthropic Messages 与 Google Generative AI（含 Gemini CLI）原生请求格式、认证头与目标 URL；OMP managed provider 写入 `anthropic-messages` / `google-generative-ai` 标识，避免代理、adapter 与探测各自维护不一致的请求格式

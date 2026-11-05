@@ -49,6 +49,9 @@
       class="channel-dialog"
       :style="{ width: config.modalWidth + 'px', maxHeight: '80vh' }"
       :content-style="{ maxHeight: 'calc(80vh - 100px)', overflowY: 'auto' }"
+      :mask-closable="!state.saving"
+      :close-on-esc="!state.saving"
+      :closable="!state.saving"
     >
       <n-form label-placement="left" :label-width="config.formLabelWidth" class="channel-form">
         <template v-for="section in config.formSections" :key="section.title">
@@ -264,9 +267,15 @@
       </n-form>
       <template #footer>
         <div class="dialog-footer">
-          <n-button @click="actions.closeDialog">取消</n-button>
-          <n-button type="primary" @click="actions.handleSave">
-            {{ state.editingChannel ? '保存修改' : '添加渠道' }}
+          <n-button :disabled="state.saving" @click="actions.closeDialog">取消</n-button>
+          <n-button
+            type="primary"
+            :loading="state.saving"
+            :disabled="state.saving"
+            data-test="channel-save"
+            @click="actions.handleSave"
+          >
+            {{ state.saving ? '提交中…' : (state.editingChannel ? '保存修改' : '添加渠道') }}
           </n-button>
         </div>
       </template>
