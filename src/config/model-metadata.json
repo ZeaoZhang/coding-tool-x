@@ -1,7 +1,7 @@
 {
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
-  "lastUpdated": "2026-10-30",
+  "lastUpdated": "2026-11-10",
   "defaultModels": {
     "claude": [
       "claude-opus-4-7",
@@ -20,7 +20,8 @@
       "claude-sonnet-4-5",
       "claude-opus-5-5",
       "claude-sonnet-5-5",
-      "claude-haiku-5-5"
+      "claude-haiku-5-5",
+      "claude-fable-5-2"
     ],
     "codex": [
       "gpt-5.5",
@@ -1465,6 +1466,33 @@
       "provider": "anthropic",
       "reasoning": true,
       "sourceId": "anthropic/claude-fable-5-1",
+      "supportsTools": true,
+      "toolTypes": [
+        "claude",
+        "opencode",
+        "omp"
+      ]
+    },
+    "claude-fable-5-2": {
+      "id": "claude-fable-5-2",
+      "input": [
+        "text",
+        "image"
+      ],
+      "limit": {
+        "context": 1000000,
+        "output": 128000
+      },
+      "name": "Claude Fable 5.2",
+      "pricing": {
+        "cacheCreation": 10,
+        "cacheRead": 0.2,
+        "input": 8,
+        "output": 40
+      },
+      "provider": "anthropic",
+      "reasoning": true,
+      "sourceId": "anthropic/claude-fable-5-2",
       "supportsTools": true,
       "toolTypes": [
         "claude",
