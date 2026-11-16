@@ -57,11 +57,13 @@ afterEach(() => {
 
 test('preserves OMP managed mode during process shutdown', async () => {
   const index = require('../../src/index');
+  const { resolveShutdownBudget } = require('../../src/server/services/shutdown-budget');
 
   await index._test.stopOwnedOmpGatewayBeforeExit();
 
   expect(stopOmpProxyServer).toHaveBeenCalledWith({
-    forceAfterMs: 120000,
+    // 排空窗口由关闭预算决定，不再写死 120 秒
+    forceAfterMs: resolveShutdownBudget().drainMs,
     preserveManagedMode: true
   });
 });
