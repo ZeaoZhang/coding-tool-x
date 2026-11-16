@@ -1,7 +1,7 @@
 {
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
-  "lastUpdated": "2026-11-13",
+  "lastUpdated": "2026-11-16",
   "defaultModels": {
     "claude": [
       "claude-opus-4-7",
@@ -2185,7 +2185,7 @@
       "name": "Nano Banana 2 Lite",
       "pricing": {
         "input": 0.25,
-        "output": 30
+        "output": 1.5
       },
       "provider": "google",
       "reasoning": true,
