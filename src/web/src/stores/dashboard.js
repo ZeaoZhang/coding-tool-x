@@ -254,6 +254,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     isLoading,
     isLoaded,
     loadDashboard,
+    scheduleRefresh,
     enableAutoRefresh,
     disableAutoRefresh,
     refreshChannels,

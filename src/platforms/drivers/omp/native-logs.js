@@ -26,6 +26,11 @@ function createDriver({ pathContext } = {}) {
       const native = createOmpUsageEventCursor(getOmpSessionPaths().sessions, { skipInitialParse, onDiagnostic });
       return {
         initialize() { native.read(); },
+        initializeAsync(options = {}) {
+          return typeof native.initializeAsync === 'function'
+            ? native.initializeAsync(options)
+            : Promise.resolve(native.read());
+        },
         readNewEvents() {
           return native.read().map(event => ({
             id: event.id,

@@ -196,3 +196,136 @@ test('returns unsupported for missing Driver operations on GET and POST routes',
     body: { error: { code: 'unsupported', operation: 'listProjects' } }
   });
 });
+
+test('deduplicates identical channel create retries within the retry window', async () => {
+  const route = {
+    path: '/channels',
+    method: 'POST',
+    capability: 'channels',
+    operation: 'create',
+    request: 'default',
+    response: 'default'
+  };
+  const definition = {
+    key: 'dedupe-demo',
+    capabilities: { channels: 'fake-channels' },
+    api: { prefix: 'dedupe-demo', routes: [route] }
+  };
+  const registry = {
+    list: () => [definition],
+    resolve: () => definition,
+    getCapability: () => 'fake-channels'
+  };
+  let calls = 0;
+  const runtime = {
+    getDriver: () => ({
+      create: async () => {
+        calls += 1;
+        await new Promise(resolve => setTimeout(resolve, 10));
+        return {
+          status: 'ok',
+          platform: 'dedupe-demo',
+          capability: 'channels',
+          operation: 'create',
+          data: { id: 'channel-1', name: 'same-channel' }
+        };
+      }
+    })
+  };
+  const app = express();
+  app.use(express.json());
+  app.use('/api/platforms', createPlatformRouter({ registry, runtime }));
+  const body = {
+    name: 'same-channel',
+    baseUrl: 'https://dedupe.example.com',
+    apiKey: 'dedupe-key'
+  };
+
+  const [first, concurrent] = await Promise.all([
+    request(app, 'POST', '/api/platforms/dedupe-demo/channels', body),
+    request(app, 'POST', '/api/platforms/dedupe-demo/channels', body)
+  ]);
+  const retry = await request(app, 'POST', '/api/platforms/dedupe-demo/channels', body);
+
+  expect(calls).toBe(1);
+  expect(concurrent.body).toEqual(first.body);
+  expect(retry.body).toEqual(first.body);
+  expect(first.body).toMatchObject({ id: 'channel-1', name: 'same-channel' });
+});
+
+test('clears cached channel create results after a successful channel mutation', async () => {
+  const routes = [
+    {
+      path: '/channels',
+      method: 'POST',
+      capability: 'channels',
+      operation: 'create',
+      request: 'default',
+      response: 'default'
+    },
+    {
+      path: '/channels/:channelId',
+      method: 'DELETE',
+      capability: 'channels',
+      operation: 'remove',
+      request: 'default',
+      response: 'default'
+    }
+  ];
+  const definition = {
+    key: 'dedupe-invalidate',
+    capabilities: { channels: 'fake-channels' },
+    api: { prefix: 'dedupe-invalidate', routes }
+  };
+  const registry = {
+    list: () => [definition],
+    resolve: () => definition,
+    getCapability: () => 'fake-channels'
+  };
+  let createCalls = 0;
+  let removeCalls = 0;
+  const runtime = {
+    getDriver: () => ({
+      create: async () => {
+        createCalls += 1;
+        return {
+          status: 'ok',
+          platform: 'dedupe-invalidate',
+          capability: 'channels',
+          operation: 'create',
+          data: { id: `channel-${createCalls}`, name: 'recreated-channel' }
+        };
+      },
+      remove: async () => {
+        removeCalls += 1;
+        return {
+          status: 'ok',
+          platform: 'dedupe-invalidate',
+          capability: 'channels',
+          operation: 'remove',
+          data: { success: true }
+        };
+      }
+    })
+  };
+  const app = express();
+  app.use(express.json());
+  app.use('/api/platforms', createPlatformRouter({ registry, runtime }));
+  const body = {
+    name: 'recreated-channel',
+    baseUrl: 'https://dedupe-invalidate.example.com',
+    apiKey: 'dedupe-key'
+  };
+
+  const first = await request(app, 'POST', '/api/platforms/dedupe-invalidate/channels', body);
+  const cachedRetry = await request(app, 'POST', '/api/platforms/dedupe-invalidate/channels', body);
+  expect(createCalls).toBe(1);
+  expect(cachedRetry.body).toEqual(first.body);
+
+  await request(app, 'DELETE', '/api/platforms/dedupe-invalidate/channels/channel-1');
+  expect(removeCalls).toBe(1);
+
+  const recreated = await request(app, 'POST', '/api/platforms/dedupe-invalidate/channels', body);
+  expect(createCalls).toBe(2);
+  expect(recreated.body.id).toBe('channel-2');
+});

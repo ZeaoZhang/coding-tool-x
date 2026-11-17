@@ -11,8 +11,18 @@ const path = require('path');
 // Constants
 // ---------------------------------------------------------------------------
 
-/** @type {number} Maximum time a source inventory is considered fresh */
-const INDEX_INVENTORY_TTL_MS = 30000;
+function readIndexTtlMs(envName, fallbackMs, minMs = 5000) {
+  const raw = Number(process.env[envName]);
+  return Number.isFinite(raw) && raw >= minMs ? Math.floor(raw) : fallbackMs;
+}
+
+/** @type {number} Metadata/summary scan freshness (cheap: stats only) */
+const INDEX_SUMMARY_TTL_MS = readIndexTtlMs('CC_TOOL_SESSION_SUMMARY_TTL_MS', 60 * 1000);
+/** @type {number} Full content inventory freshness (expensive: parses changed files) */
+const INDEX_CONTENT_TTL_MS = readIndexTtlMs('CC_TOOL_SESSION_CONTENT_TTL_MS', 10 * 60 * 1000);
+// Session lists only need a preview. Storing the full first user message
+// (often a multi-KB AGENTS.md) duplicated hundreds of megabytes.
+const FIRST_MESSAGE_PREVIEW_MAX_CHARS = 1024;
 
 
 /** @type {number} Maximum time a cold stale-ok read waits for inventory */
@@ -27,6 +37,18 @@ const INVENTORY_PARSE_BATCH_SIZE = 8;
 const INVENTORY_PARSE_CONCURRENCY = 2;
 const SUMMARY_REFRESH_CONCURRENCY = 8;
 const SUMMARY_VERSION = 1;
+// A relational `instr()` scan over 200k user messages costs ~115ms on a warm
+// local SQLite file; FTS5 trigram is only worth the round trip above this
+// point. Below it the scan cannot drift from the rows it queries.
+const FTS_ACCELERATOR_MIN_MESSAGES = 50 * 1000;
+const SOURCE_MESSAGE_COUNT_TTL_MS = 60 * 1000;
+// Small sessions parse in a few milliseconds; spawning a child costs more.
+const CONTENT_WORKER_MIN_BYTES = 1024 * 1024;
+// One page read may fetch several drawer pages at once (live sync).
+const MAX_MESSAGE_PAGE_LIMIT = 1000;
+// Bounded memory for recently served message pages keyed by file version.
+const MESSAGES_PAGE_CACHE_MAX_BYTES = 32 * 1024 * 1024;
+const MESSAGES_PAGE_CACHE_ITEM_OVERHEAD = 256;
 const BUILTIN_SESSION_SOURCES = new Set(['claude', 'codex', 'gemini', 'omp']);
 // Keep synchronized with the parserVersion exposed by the built-in session drivers.
 const BUILTIN_SESSION_PARSER_VERSIONS = Object.freeze({ claude: 2, codex: 2, gemini: 2, omp: 2 });
@@ -312,17 +334,27 @@ CREATE VIRTUAL TABLE IF NOT EXISTS session_message_fts USING fts5(
   tokenize='trigram'
 );
 
-CREATE TRIGGER IF NOT EXISTS session_message_fts_insert AFTER INSERT ON session_message BEGIN
+DROP TRIGGER IF EXISTS session_message_fts_insert;
+DROP TRIGGER IF EXISTS session_message_fts_delete;
+DROP TRIGGER IF EXISTS session_message_fts_update;
+
+CREATE TRIGGER IF NOT EXISTS session_message_fts_insert AFTER INSERT ON session_message
+WHEN new.role = 'user'
+BEGIN
   INSERT INTO session_message_fts(rowid, content) VALUES (new.rowid, new.content);
 END;
 
-CREATE TRIGGER IF NOT EXISTS session_message_fts_delete AFTER DELETE ON session_message BEGIN
+CREATE TRIGGER IF NOT EXISTS session_message_fts_delete AFTER DELETE ON session_message
+WHEN old.role = 'user'
+BEGIN
   INSERT INTO session_message_fts(session_message_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
 END;
 
 CREATE TRIGGER IF NOT EXISTS session_message_fts_update AFTER UPDATE ON session_message BEGIN
-  INSERT INTO session_message_fts(session_message_fts, rowid, content) VALUES ('delete', old.rowid, old.content);
-  INSERT INTO session_message_fts(rowid, content) VALUES (new.rowid, new.content);
+  INSERT INTO session_message_fts(session_message_fts, rowid, content)
+    SELECT 'delete', old.rowid, old.content WHERE old.role = 'user';
+  INSERT INTO session_message_fts(rowid, content)
+    SELECT new.rowid, new.content WHERE new.role = 'user';
 END;
 `;
 
@@ -353,7 +385,7 @@ function _normalizePageOpts(options = {}) {
   const order = options.order === 'asc' ? 'ASC' : 'DESC';
   if (page < 1) page = 1;
   if (limit < 1) limit = 1;
-  if (limit > 200) limit = 200;
+  if (limit > MAX_MESSAGE_PAGE_LIMIT) limit = MAX_MESSAGE_PAGE_LIMIT;
   return { page, limit, order };
 }
 
@@ -586,6 +618,10 @@ function _normalizeRuntimeSummaryResult(result, descriptor = {}) {
  * @param {object} [opts.adapterRegistry] - source → { inventory, parse }
  * @param {object} [opts.runtime] - runtime with getDriver(source, capability)
  * @param {Function} [opts.workerRunner] - (source, indexDbPath) => Promise<void>
+ * @param {Function} [opts.messagesWorkerRunner] - (source, indexDbPath, sessionId, options) => Promise<object|null>
+ * @param {boolean} [opts.storeAssistantContent] - persist assistant bodies too (tests/embedders)
+ * @param {number} [opts.messagesPageCacheMaxBytes] - page cache byte budget
+ * @param {number} [opts.ftsAcceleratorMinMessages] - user-message count that turns on FTS acceleration
  * @param {boolean|null} [opts.ftsEnabledOverride] - override FTS detection for tests
  * @returns {object} index API
  */
@@ -598,15 +634,68 @@ function createSessionHistoryIndex(opts = {}) {
   const runtimeProvided = !explicitAdapters && process.env.NODE_ENV === 'test' && _isUsableRuntime(opts.runtime);
   const runtime = explicitAdapters ? null : (runtimeProvided ? opts.runtime : platformRuntime.getPlatformRuntime());
   const workerRunner = opts.workerRunner || _defaultWorkerRunner;
+  const messagesWorkerRunner = opts.messagesWorkerRunner
+    || ((source, indexDbPath, sessionId, options) => require('./session-history-worker').runMessagesWorker(source, indexDbPath, sessionId, options));
+  // Assistant/tool bodies are read live from the native file and must not be
+  // persisted twice. Embedders/tests may opt in to keep them in SQLite.
+  const storeAssistantContent = opts.storeAssistantContent === true;
   const ftsEnabled = opts.ftsEnabledOverride !== undefined
     ? opts.ftsEnabledOverride
     : null;
+  const ftsAcceleratorMinMessages = Number.isFinite(opts.ftsAcceleratorMinMessages)
+    ? Math.max(0, opts.ftsAcceleratorMinMessages)
+    : FTS_ACCELERATOR_MIN_MESSAGES;
   const shouldUseWorker = process.env.NODE_ENV !== 'test' && process.env.CC_TOOL_SESSION_HISTORY_CHILD !== '1';
   let _db = null;
   /** @type {Map<string, {size: number, mtimeMs: number, checkedAt: number, filePath: string}>} */
   const fileVersions = new Map();
   const fileChecks = new Map();
   const sourceFreshness = new Map();
+  const messagesPageCache = new Map();
+  const MESSAGES_PAGE_CACHE_TTL_MS = 30 * 1000;
+  const messagesPageCacheMaxBytes = Number.isFinite(opts.messagesPageCacheMaxBytes)
+    ? Math.max(0, opts.messagesPageCacheMaxBytes)
+    : MESSAGES_PAGE_CACHE_MAX_BYTES;
+  let messagesPageCacheBytes = 0;
+  const _messagesPageBytes = value => {
+    if (!value || !Array.isArray(value.messages)) return 0;
+    return value.messages.reduce((total, message) => {
+      const contentBytes = typeof message.content === 'string'
+        ? Buffer.byteLength(message.content, 'utf8')
+        : 0;
+      return total + contentBytes + MESSAGES_PAGE_CACHE_ITEM_OVERHEAD;
+    }, 0);
+  };
+  const _dropMessagesPageCache = key => {
+    const entry = messagesPageCache.get(key);
+    if (!entry) return;
+    messagesPageCacheBytes = Math.max(0, messagesPageCacheBytes - entry.bytes);
+    messagesPageCache.delete(key);
+  };
+  const _clearMessagesPageCache = (source, sessionId = null) => {
+    const prefix = sessionId ? `${source}:${sessionId}:` : `${source}:`;
+    for (const key of messagesPageCache.keys()) {
+      if (key.startsWith(prefix)) _dropMessagesPageCache(key);
+    }
+  };
+  const _rememberMessagesPage = (key, value) => {
+    // Never cache misses: a session that is still being indexed would pin a
+    // null result for the whole TTL.
+    if (!value) return;
+    const bytes = _messagesPageBytes(value);
+    _dropMessagesPageCache(key);
+    messagesPageCache.set(key, {
+      value,
+      bytes,
+      expiresAt: Date.now() + MESSAGES_PAGE_CACHE_TTL_MS
+    });
+    messagesPageCacheBytes += bytes;
+    while (messagesPageCache.size > 8 || messagesPageCacheBytes > messagesPageCacheMaxBytes) {
+      const oldestKey = messagesPageCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      _dropMessagesPageCache(oldestKey);
+    }
+  };
   let _ftsAvailable = null;
   /** @type {Map<string, Promise<void>>} */
   const _inflight = new Map();
@@ -614,6 +703,8 @@ function createSessionHistoryIndex(opts = {}) {
   const _summaryInflight = new Map();
   /** @type {Map<string, Promise<void>>} */
   const _contentInflight = new Map();
+  /** @type {Map<string, Promise<object|null>>} one parse per session read */
+  const _sessionReadInflight = new Map();
 
   function _getDb() {
     if (_db) return _db;
@@ -677,7 +768,7 @@ function createSessionHistoryIndex(opts = {}) {
       || (explicitAdapters && _hasParserMigrationPending(source));
     const baseFresh = Boolean(
       row?.last_inventory_ms
-      && Date.now() - Number(row.last_inventory_ms) < INDEX_INVENTORY_TTL_MS
+      && Date.now() - Number(row.last_inventory_ms) < INDEX_CONTENT_TTL_MS
       && !migrationPending
     );
 
@@ -691,7 +782,7 @@ function createSessionHistoryIndex(opts = {}) {
       if (baseFresh && scope?.kind === 'source') return true;
       return scope?.kind === 'project'
         && scope.projectName === projectName
-        && Date.now() - scope.at < INDEX_INVENTORY_TTL_MS;
+        && Date.now() - scope.at < INDEX_CONTENT_TTL_MS;
     }
     if (!baseFresh) return false;
     // A project-scoped refresh deliberately does not make the complete source
@@ -773,7 +864,7 @@ function createSessionHistoryIndex(opts = {}) {
     ).get(source);
     return Boolean(
       row?.summary_inventory_ms
-      && Date.now() - Number(row.summary_inventory_ms) < INDEX_INVENTORY_TTL_MS
+      && Date.now() - Number(row.summary_inventory_ms) < INDEX_SUMMARY_TTL_MS
     );
   }
 
@@ -855,7 +946,7 @@ function createSessionHistoryIndex(opts = {}) {
       summary.projectName || 'unknown',
       summary.projectDisplayName || summary.projectName || 'unknown',
       summary.projectFullPath || null,
-      summary.firstMessage || null,
+      _previewText(summary.firstMessage),
       summary.gitBranch || null,
       summary.provider || null,
       summary.model || null,
@@ -921,6 +1012,10 @@ function createSessionHistoryIndex(opts = {}) {
           const index = next++;
           if (index >= changed.length) return;
           const descriptor = changed[index];
+          // `adapter.summarize` reads the file head synchronously. Yield to
+          // the event loop between files so a background inventory never
+          // freezes HTTP/WebSocket traffic while it walks the history.
+          await new Promise(resolve => setImmediate(resolve));
           try {
             summaries[index] = { descriptor, value: await _summarizeDescriptor(adapter, descriptor) };
           } catch (error) {
@@ -1326,6 +1421,13 @@ function createSessionHistoryIndex(opts = {}) {
   }
 
 
+  function _previewText(value) {
+    if (typeof value !== 'string' || value.length <= FIRST_MESSAGE_PREVIEW_MAX_CHARS) {
+      return value ?? null;
+    }
+    return value.slice(0, FIRST_MESSAGE_PREVIEW_MAX_CHARS);
+  }
+
   function _insertSession(statements, source, descriptor, session, messages, parserVersion) {
     const { deletePath, deleteSession, insertFile, insertMessage } = statements;
     deletePath.run(source, descriptor.filePath);
@@ -1339,7 +1441,7 @@ function createSessionHistoryIndex(opts = {}) {
       session.projectName || '',
       session.projectDisplayName || null,
       session.projectFullPath || null,
-      session.firstMessage || null,
+      _previewText(session.firstMessage),
       session.gitBranch || null,
       session.provider || null,
       session.model || null,
@@ -1362,7 +1464,7 @@ function createSessionHistoryIndex(opts = {}) {
         msg.role || null,
         msg.type || null,
         msg.subtype || null,
-        msg.content || null,
+        storeAssistantContent || msg.role === 'user' ? (msg.content || null) : null,
         msg.timestamp || null,
         msg.model || null,
         msg.provider || null,
@@ -1582,53 +1684,126 @@ function createSessionHistoryIndex(opts = {}) {
     return { descriptor, parseResult };
   }
 
+  function _sessionFileRow(db, source, sessionId, filePath) {
+    return db.prepare(`
+      SELECT * FROM session_file
+      WHERE source = ? AND session_id = ? AND file_path = ?
+    `).get(source, sessionId, filePath);
+  }
+
+  function _isFileRowCurrent(row, stat) {
+    return Boolean(row)
+      && Number(row.size) === Number(stat.size)
+      && Number(row.mtime_ms) === Number(stat.mtimeMs)
+      && Number(row.content_indexed ?? 1) === 1;
+  }
+
   /**
-   * Parse and index exactly one file for detail requests. This map is shared
-   * by outline, messages, and status callers so opening a session while the
-   * drawer fires concurrent requests cannot duplicate the expensive parse.
+   * Resolve one session's summary row. A full summary inventory is only
+   * triggered when the row is missing: reading one session must never rescan
+   * every session of the source.
+   */
+  async function _loadSessionSummaryRow(source, sessionId, options = {}) {
+    const db = _getDb();
+    let row = db.prepare(
+      'SELECT * FROM session_summary WHERE source = ? AND session_id = ?'
+    ).get(source, sessionId);
+    if (row) return row;
+    await ensureSummaryIndexed(source, {
+      force: options.force === true,
+      consistency: 'complete',
+      config: options.config || indexConfig
+    });
+    row = db.prepare(
+      'SELECT * FROM session_summary WHERE source = ? AND session_id = ?'
+    ).get(source, sessionId);
+    return row || null;
+  }
+
+  function _deleteSessionIndexRows(db, source, filePath) {
+    db.prepare('DELETE FROM session_summary WHERE source = ? AND file_path = ?').run(source, filePath);
+    db.prepare('DELETE FROM session_file WHERE source = ? AND file_path = ?').run(source, filePath);
+  }
+
+  function _writeSessionRows(db, source, descriptor, afterStat, parsed, parserVersion) {
+    const deletePath = db.prepare('DELETE FROM session_file WHERE source = ? AND file_path = ?');
+    const deleteSession = db.prepare('DELETE FROM session_file WHERE source = ? AND session_id = ?');
+    const insertFile = db.prepare(`
+      INSERT INTO session_file(
+        source, file_path, size, mtime_ms, session_id,
+        project_name, project_display_name, project_full_path,
+        first_message, git_branch, provider, model,
+        started_at, updated_at, message_count, usage_json, extra_json,
+        parser_version
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const insertMessage = db.prepare(`
+      INSERT INTO session_message(
+        source, session_id, ordinal, message_id, role, type, subtype,
+        content, timestamp, model, provider, user_message_number, extra_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      _insertSession(
+        { deletePath, deleteSession, insertFile, insertMessage, db },
+        source,
+        { ...descriptor, size: afterStat.size, mtimeMs: afterStat.mtimeMs },
+        parsed.parseResult.session,
+        parsed.parseResult.messages,
+        parserVersion
+      );
+      db.exec('COMMIT');
+    } catch (error) {
+      try { db.exec('ROLLBACK'); } catch (_) {}
+      throw error;
+    }
+    return db.prepare(
+      'SELECT * FROM session_file WHERE source = ? AND session_id = ?'
+    ).get(source, parsed.parseResult.session.sessionId);
+  }
+
+  /**
+   * Parse exactly one file for detail requests. This map is shared by outline
+   * and message reads so concurrent requests for the same session parse once.
    */
   async function ensureSessionContentIndexed(source, sessionId, options = {}) {
     const key = `content:${source}:${sessionId}`;
     if (_contentInflight.has(key)) return _contentInflight.get(key);
     const promise = (async () => {
-      await ensureSummaryIndexed(source, {
-        force: options.force === true,
-        consistency: 'complete',
-        config: options.config || indexConfig
-      });
+      const config = options.config || indexConfig;
       const db = _getDb();
-      const summaryRow = db.prepare(
-        'SELECT * FROM session_summary WHERE source = ? AND session_id = ?'
-      ).get(source, sessionId);
+      const summaryRow = await _loadSessionSummaryRow(source, sessionId, options);
       if (!summaryRow) return null;
 
       let stat;
       try {
         stat = await fs.promises.stat(summaryRow.file_path);
       } catch (_) {
-        db.prepare('DELETE FROM session_summary WHERE source = ? AND file_path = ?')
-          .run(source, summaryRow.file_path);
-        db.prepare('DELETE FROM session_file WHERE source = ? AND file_path = ?')
-          .run(source, summaryRow.file_path);
+        _deleteSessionIndexRows(db, source, summaryRow.file_path);
         return null;
       }
 
-      const current = db.prepare(`
-        SELECT * FROM session_file
-        WHERE source = ? AND session_id = ? AND file_path = ?
-      `).get(source, sessionId, summaryRow.file_path);
-      if (current
-        && Number(current.size) === Number(stat.size)
-        && Number(current.mtime_ms) === Number(stat.mtimeMs)
-        && Number(current.content_indexed ?? 1) === 1) {
-        return current;
+      const current = _sessionFileRow(db, source, sessionId, summaryRow.file_path);
+      if (options.force !== true && _isFileRowCurrent(current, stat)) return current;
+
+      if (shouldUseWorker
+        && !explicitAdapters
+        && Number(stat.size) > CONTENT_WORKER_MIN_BYTES) {
+        // The child re-stats and parses; the parent only waits for the IPC
+        // completion, so a multi-megabyte rollout never freezes HTTP.
+        const { runContentWorker } = require('./session-history-worker');
+        await runContentWorker(source, dbPath, sessionId, {
+          force: options.force === true,
+          projectsDir: explicitProjectsDir
+        });
+        return db.prepare(
+          'SELECT * FROM session_file WHERE source = ? AND session_id = ?'
+        ).get(source, sessionId) || null;
       }
 
-      const parsed = await _parseSingleSessionContent(source, {
-        ...summaryRow,
-        size: stat.size,
-        mtime_ms: stat.mtimeMs
-      }, options.config || indexConfig);
+      const parseRow = { ...summaryRow, size: stat.size, mtime_ms: stat.mtimeMs };
+      const parsed = await _parseSingleSessionContent(source, parseRow, config);
       let afterStat;
       try {
         afterStat = await fs.promises.stat(summaryRow.file_path);
@@ -1640,42 +1815,15 @@ function createSessionHistoryIndex(opts = {}) {
         // request retries it after the writer has produced a stable file.
         return null;
       }
-
-      const deletePath = db.prepare('DELETE FROM session_file WHERE source = ? AND file_path = ?');
-      const deleteSession = db.prepare('DELETE FROM session_file WHERE source = ? AND session_id = ?');
-      const insertFile = db.prepare(`
-        INSERT INTO session_file(
-          source, file_path, size, mtime_ms, session_id,
-          project_name, project_display_name, project_full_path,
-          first_message, git_branch, provider, model,
-          started_at, updated_at, message_count, usage_json, extra_json,
-          parser_version
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      const insertMessage = db.prepare(`
-        INSERT INTO session_message(
-          source, session_id, ordinal, message_id, role, type, subtype,
-          content, timestamp, model, provider, user_message_number, extra_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `);
-      db.exec('BEGIN IMMEDIATE');
-      try {
-        _insertSession(
-          { deletePath, deleteSession, insertFile, insertMessage, db },
-          source,
-          { ...parsed.descriptor, size: afterStat.size, mtimeMs: afterStat.mtimeMs },
-          parsed.parseResult.session,
-          parsed.parseResult.messages,
-          _parserVersionForSource(source, _resolveSessionsAdapter(source, options.config || indexConfig))
-        );
-        db.exec('COMMIT');
-      } catch (error) {
-        try { db.exec('ROLLBACK'); } catch (_) {}
-        throw error;
-      }
-      return db.prepare(
-        'SELECT * FROM session_file WHERE source = ? AND session_id = ?'
-      ).get(source, parsed.parseResult.session.sessionId);
+      const adapter = _resolveSessionsAdapter(source, config);
+      return _writeSessionRows(
+        db,
+        source,
+        parsed.descriptor,
+        afterStat,
+        parsed,
+        _parserVersionForSource(source, adapter)
+      );
     })();
     _contentInflight.set(key, promise);
     promise.finally(() => {
@@ -1713,18 +1861,40 @@ function createSessionHistoryIndex(opts = {}) {
    * @returns {Promise<{sessionId, items: Array}|null>}
    */
   async function getSessionOutline(source, sessionId, options = {}) {
-    await ensureSessionContentIndexed(source, sessionId, options);
+    // Reads refresh exactly one session's index, never the whole source.
+    const indexed = await ensureSessionContentIndexed(source, sessionId, options);
+    if (!indexed) {
+      return messagesWorkerRunner(source, dbPath, sessionId, { operation: 'outline' });
+    }
     const db = _getDb();
 
-    const rows = db.prepare(`
+    let rows = db.prepare(`
       SELECT user_message_number, content, timestamp
       FROM session_message
       WHERE source = ? AND session_id = ? AND user_message_number IS NOT NULL
       ORDER BY ordinal ASC
     `).all(source, sessionId);
 
+    if (rows.length === 0 && Number(indexed.message_count) > 0) {
+      const anyMessageRow = db.prepare(
+        'SELECT 1 AS present FROM session_message WHERE source = ? AND session_id = ? LIMIT 1'
+      ).get(source, sessionId);
+      if (!anyMessageRow) {
+        // Indexed session with missing message rows (legacy/partial write):
+        // repair this one session instead of returning an empty outline.
+        const repaired = await ensureSessionContentIndexed(source, sessionId, { ...options, force: true });
+        if (repaired) {
+          rows = db.prepare(`
+            SELECT user_message_number, content, timestamp
+            FROM session_message
+            WHERE source = ? AND session_id = ? AND user_message_number IS NOT NULL
+            ORDER BY ordinal ASC
+          `).all(source, sessionId);
+        }
+      }
+    }
+
     if (rows.length === 0) {
-      // Check session exists at all
       const sf = db.prepare('SELECT 1 FROM session_file WHERE source = ? AND session_id = ?').get(source, sessionId);
       if (!sf) return null;
       return { sessionId, items: [] };
@@ -1741,12 +1911,158 @@ function createSessionHistoryIndex(opts = {}) {
   }
 
   /**
-   * @param {string} source
-   * @param {string} sessionId
-   * @param {object} [options]
-   * @returns {Promise<{messages: Array, metadata: object, pagination: object}|null>}
+   * Parse one session file for a detail read and refresh its indexed rows in
+   * the same pass. Runs in the messages worker child in production, so the
+   * parse never blocks the HTTP thread while reads keep the current session's
+   * index (and only that session) up to date.
    */
+  async function _loadSessionRead(source, sessionId, options = {}) {
+    if (!dbPath || !fs.existsSync(dbPath)) return null;
+    const db = openDatabase(dbPath, { timeout: 5000 });
+    const summary = db.prepare(
+      'SELECT * FROM session_summary WHERE source = ? AND session_id = ?'
+    ).get(source, sessionId);
+    if (!summary) return null;
+
+    let stat;
+    try {
+      stat = await fs.promises.stat(summary.file_path);
+    } catch (_) {
+      _deleteSessionIndexRows(db, source, summary.file_path);
+      return null;
+    }
+
+    const adapter = _resolveSessionsAdapter(source, options.config || indexConfig);
+    const descriptor = {
+      filePath: summary.file_path,
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      sessionId,
+      projectHint: summary.project_name,
+      projectsDir: explicitProjectsDir
+    };
+    const parsed = await adapter.parse(descriptor);
+    if (_isTypedFailureResult(parsed)) throw _typedFailureToError(parsed);
+    if (!parsed || !Array.isArray(parsed.messages)) return null;
+
+    let fileRow = db.prepare(
+      'SELECT * FROM session_file WHERE source = ? AND session_id = ? AND file_path = ?'
+    ).get(source, sessionId, summary.file_path);
+    let afterStat = null;
+    try {
+      afterStat = await fs.promises.stat(summary.file_path);
+    } catch (_) {
+      afterStat = null;
+    }
+    if (!afterStat) return null;
+    const stable = afterStat.size === stat.size && afterStat.mtimeMs === stat.mtimeMs;
+    if (stable && !_isFileRowCurrent(fileRow, afterStat)) {
+      fileRow = _writeSessionRows(
+        db,
+        source,
+        descriptor,
+        afterStat,
+        { descriptor, parseResult: parsed },
+        _parserVersionForSource(source, adapter)
+      );
+    }
+    return { summary, parsed, fileRow };
+  }
+
+  async function _loadSessionReadShared(source, sessionId, options = {}) {
+    const key = `read:${source}:${sessionId}`;
+    const existing = _sessionReadInflight.get(key);
+    if (existing) return existing;
+    const task = _loadSessionRead(source, sessionId, options).finally(() => {
+      if (_sessionReadInflight.get(key) === task) _sessionReadInflight.delete(key);
+    });
+    _sessionReadInflight.set(key, task);
+    return task;
+  }
+
+  async function readSessionMessagesPage(source, sessionId, options = {}) {
+    const loaded = await _loadSessionReadShared(source, sessionId, options);
+    if (!loaded) return null;
+    const { summary, parsed, fileRow } = loaded;
+    const total = parsed.messages.length;
+    const page = Math.max(1, Number.parseInt(options.page, 10) || 1);
+    const limit = Math.max(1, Math.min(MAX_MESSAGE_PAGE_LIMIT, Number.parseInt(options.limit, 10) || 20));
+    const descending = String(options.order || 'desc').toLowerCase() !== 'asc';
+    const ordered = descending ? parsed.messages.slice().reverse() : parsed.messages;
+    const messages = ordered.slice((page - 1) * limit, page * limit).map(message => ({
+      messageId: message.messageId,
+      role: message.role,
+      type: message.type,
+      subtype: message.subtype,
+      content: message.content,
+      timestamp: message.timestamp,
+      model: message.model,
+      provider: message.provider,
+      userMessageNumber: message.userMessageNumber,
+      extra: _safeParseObject(message.extraJson)
+    }));
+    return {
+      messages,
+      metadata: _buildMessageMetadata(fileRow || { ...summary, message_count: total }),
+      pagination: {
+        page,
+        limit,
+        total,
+        hasMore: (page - 1) * limit + limit < total
+      }
+    };
+  }
+
+  async function readSessionOutline(source, sessionId, options = {}) {
+    const loaded = await _loadSessionReadShared(source, sessionId, options);
+    if (!loaded) return null;
+    const messages = loaded.parsed.messages;
+    return {
+      sessionId,
+      items: messages
+        .filter(message => message.userMessageNumber !== null && message.userMessageNumber !== undefined)
+        .map(message => ({
+          userMessageNumber: message.userMessageNumber,
+          preview: _buildPreview(message.content),
+          timestamp: message.timestamp
+        }))
+    };
+  }
+
   async function getMessagePage(source, sessionId, options = {}) {
+    if (!storeAssistantContent) {
+      await ensureSummaryIndexed(source, {
+        consistency: 'stale-ok',
+        config: options.config || indexConfig
+      });
+      const summary = _getDb().prepare(
+        'SELECT size, mtime_ms FROM session_summary WHERE source = ? AND session_id = ?'
+      ).get(source, sessionId);
+      const page = Math.max(1, Number.parseInt(options.page, 10) || 1);
+      const limit = Math.max(1, Math.min(MAX_MESSAGE_PAGE_LIMIT, Number.parseInt(options.limit, 10) || 20));
+      const order = String(options.order || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
+      const cacheKey = `${source}:${sessionId}:${summary?.size || 0}:${summary?.mtime_ms || 0}:${page}:${limit}:${order}`;
+      const cached = messagesPageCache.get(cacheKey);
+      if (cached) {
+        if (Date.now() < cached.expiresAt) return cached.value;
+        _dropMessagesPageCache(cacheKey);
+      }
+      // The worker parses the file once, refreshes this session's index rows
+      // (including the summary size/mtime) and returns the page; nothing here
+      // touches the HTTP thread's event loop.
+      const value = await messagesWorkerRunner(source, dbPath, sessionId, {
+        page,
+        limit,
+        order,
+        projectsDir: explicitProjectsDir
+      });
+      const latest = _getDb().prepare(
+        'SELECT size, mtime_ms FROM session_summary WHERE source = ? AND session_id = ?'
+      ).get(source, sessionId);
+      const cacheKeyAfterRead = `${source}:${sessionId}:${latest?.size || 0}:${latest?.mtime_ms || 0}:${page}:${limit}:${order}`;
+      _rememberMessagesPage(cacheKeyAfterRead, value);
+      return value;
+    }
     await ensureSessionContentIndexed(source, sessionId, options);
     const db = _getDb();
     const { page, limit, order } = _normalizePageOpts(options);
@@ -1835,15 +2151,36 @@ function createSessionHistoryIndex(opts = {}) {
    * @param {object} [options]
    * @returns {Promise<Array>}
    */
+  const sourceMessageCounts = new Map();
+  function _sourceMessageCount(db, source) {
+    const now = Date.now();
+    const cached = sourceMessageCounts.get(source);
+    if (cached && now - cached.cachedAt < SOURCE_MESSAGE_COUNT_TTL_MS) {
+      return cached.count;
+    }
+    const row = db.prepare(
+      "SELECT COUNT(*) AS count FROM session_message WHERE source = ? AND role = 'user'"
+    ).get(source);
+    const count = Number(row?.count) || 0;
+    sourceMessageCounts.set(source, { count, cachedAt: now });
+    return count;
+  }
+
   async function searchSessions(source, keyword, options = {}) {
     if (!String(keyword || '').trim()) return [];
     const projectName = typeof options.projectName === 'string' && options.projectName.trim()
       ? options.projectName.trim()
       : null;
     const resultLimit = Math.max(1, Math.min(200, Number.parseInt(options.limit, 10) || 100));
+    const consistency = options.consistency || 'stale-ok';
     await ensureSourceIndexed(source, {
       force: options.force === true,
-      consistency: options.consistency || 'complete',
+      consistency,
+      // Search is interactive: return the current index and refresh in the
+      // background instead of blocking for minutes on a cold inventory.
+      allowStaleData: options.allowStaleData !== undefined
+        ? options.allowStaleData === true
+        : consistency !== 'complete',
       projectName,
       config: options.config
     });
@@ -1851,40 +2188,44 @@ function createSessionHistoryIndex(opts = {}) {
     const contextLength = Math.max(1, Math.min(200, Number(options.contextLength) || 35));
 
     // Build candidate query
+    const needle = String(keyword);
+    const useFtsAccelerator = _ftsAvailable
+      && [...needle].length >= 3
+      && _sourceMessageCount(db, source) > ftsAcceleratorMinMessages;
     let candidates;
-    if (_ftsAvailable) {
-      // FTS5 trigram search for needles >= 3 chars
-      const needle = String(keyword);
-      if ([...needle].length >= 3) {
-        const ftsRows = db.prepare(`
-          WITH matched_sessions AS (
-            SELECT sm.source, sm.session_id, MAX(sf.updated_at) AS updated_at
-            FROM session_message_fts fts
-            JOIN session_message sm ON sm.rowid = fts.rowid
-            JOIN session_file sf ON sf.source = sm.source AND sf.session_id = sm.session_id
-            WHERE sm.source = ? AND session_message_fts MATCH ?
-            ${projectName ? 'AND sf.project_name = ?' : ''}
-            GROUP BY sm.source, sm.session_id
-            ORDER BY updated_at DESC, sm.session_id ASC
-            LIMIT ?
-          )
-          SELECT sm.source, sm.session_id, sm.ordinal, sm.content, sm.role, sm.type, sm.timestamp,
-                 sf.project_name, sf.project_display_name, sf.project_full_path,
-                 sf.file_path, sf.first_message, sf.updated_at
+    if (useFtsAccelerator) {
+      const ftsRows = db.prepare(`
+        WITH matched_sessions AS (
+          SELECT sm.source, sm.session_id, MAX(sf.updated_at) AS updated_at
           FROM session_message_fts fts
           JOIN session_message sm ON sm.rowid = fts.rowid
-          JOIN matched_sessions ms ON ms.source = sm.source AND ms.session_id = sm.session_id
           JOIN session_file sf ON sf.source = sm.source AND sf.session_id = sm.session_id
-          WHERE session_message_fts MATCH ?
-          ORDER BY ms.updated_at DESC, sm.ordinal ASC, sm.rowid ASC
-        `);
-        const params = [source, _ftsQuote(needle)];
-        if (projectName) params.push(projectName);
-        params.push(resultLimit);
-        params.push(_ftsQuote(needle));
-        candidates = ftsRows.all(...params);
-      } else {
-        // Short needle: scan all messages for this source
+          WHERE sm.source = ? AND session_message_fts MATCH ?
+          AND sm.role = 'user'
+          ${projectName ? 'AND sf.project_name = ?' : ''}
+          GROUP BY sm.source, sm.session_id
+          ORDER BY updated_at DESC, sm.session_id ASC
+          LIMIT ?
+        )
+        SELECT sm.source, sm.session_id, sm.ordinal, sm.content, sm.role, sm.type, sm.timestamp,
+               sf.project_name, sf.project_display_name, sf.project_full_path,
+               sf.file_path, sf.first_message, sf.updated_at
+        FROM session_message_fts fts
+        JOIN session_message sm ON sm.rowid = fts.rowid
+        JOIN matched_sessions ms ON ms.source = sm.source AND ms.session_id = sm.session_id
+        JOIN session_file sf ON sf.source = sm.source AND sf.session_id = sm.session_id
+        WHERE session_message_fts MATCH ?
+        AND sm.role = 'user'
+        ORDER BY ms.updated_at DESC, sm.ordinal ASC, sm.rowid ASC
+      `);
+      const params = [source, _ftsQuote(needle)];
+      if (projectName) params.push(projectName);
+      params.push(resultLimit);
+      params.push(_ftsQuote(needle));
+      candidates = ftsRows.all(...params);
+      // An external-content FTS index can lag behind rows rewritten by a
+      // parser migration. Never report "no results" from the accelerator alone.
+      if (candidates.length === 0) {
         candidates = _scanMessagesRelational(db, source, keyword, projectName, resultLimit);
       }
     } else {
@@ -1980,6 +2321,7 @@ function createSessionHistoryIndex(opts = {}) {
       FROM session_message sm
       JOIN session_file sf ON sf.source = sm.source AND sf.session_id = sm.session_id
       WHERE sm.source = ?
+      AND sm.role = 'user'
       ${projectName ? 'AND sf.project_name = ?' : ''}
     `;
 
@@ -1993,6 +2335,7 @@ function createSessionHistoryIndex(opts = {}) {
           FROM session_message sm
           JOIN session_file sf ON sf.source = sm.source AND sf.session_id = sm.session_id
           WHERE sm.source = ?
+          AND sm.role = 'user'
           ${projectName ? 'AND sf.project_name = ?' : ''}
           AND instr(lower(sm.content), lower(?)) > 0
         ),
@@ -2094,7 +2437,7 @@ function createSessionHistoryIndex(opts = {}) {
         'SELECT last_inventory_ms FROM source_state WHERE source = ?'
       ).get(source);
       const fullIndexIsFresh = fullState?.last_inventory_ms
-        && Date.now() - Number(fullState.last_inventory_ms) < INDEX_INVENTORY_TTL_MS;
+        && Date.now() - Number(fullState.last_inventory_ms) < INDEX_CONTENT_TTL_MS;
       // A completed legacy inventory with no matching session row is a
       // definitive miss (including malformed files). Do not start a second
       // summary scan merely because this status probe is lightweight.
@@ -2113,7 +2456,7 @@ function createSessionHistoryIndex(opts = {}) {
     const fileKey = `${source}:${row.file_path}`;
     const now = Date.now();
     const cached = fileVersions.get(fileKey);
-    if (cached && now - cached.checkedAt < INDEX_INVENTORY_TTL_MS) return;
+    if (cached && now - cached.checkedAt < INDEX_SUMMARY_TTL_MS) return;
 
     const activeCheck = fileChecks.get(fileKey);
     if (activeCheck) {
@@ -2177,6 +2520,8 @@ function createSessionHistoryIndex(opts = {}) {
     db.prepare(
       'UPDATE source_state SET summary_inventory_ms = NULL, summary_error = NULL WHERE source = ?'
     ).run(source);
+    _clearMessagesPageCache(source, options.deleted ? options.sessionId || null : null);
+    sourceMessageCounts.delete(source);
     for (const key of fileVersions.keys()) {
       if (key.startsWith(`${source}:`)) fileVersions.delete(key);
     }
@@ -2192,7 +2537,7 @@ function createSessionHistoryIndex(opts = {}) {
       ? Number(row.summary_inventory_ms)
       : (row?.last_inventory_ms ? Number(row.last_inventory_ms) : null);
     const error = row?.summary_error || row?.last_error || null;
-    const stale = Boolean(error) || !generatedAt || Date.now() - generatedAt >= INDEX_INVENTORY_TTL_MS;
+    const stale = Boolean(error) || !generatedAt || Date.now() - generatedAt >= INDEX_SUMMARY_TTL_MS;
     const refreshing = _summaryInflight.has(`summary:${source}`)
       || [..._inflight.keys()].some(key => key === `ensure:${source}:*` || key.startsWith(`ensure:${source}:`))
       || _hasActiveInventoryLock(dbPath);
@@ -2211,7 +2556,11 @@ function createSessionHistoryIndex(opts = {}) {
     fileChecks.clear();
     _summaryInflight.clear();
     _contentInflight.clear();
+    _sessionReadInflight.clear();
     sourceFreshness.clear();
+    messagesPageCache.clear();
+    messagesPageCacheBytes = 0;
+    sourceMessageCounts.clear();
   }
 
   // Build the API object
@@ -2227,6 +2576,8 @@ function createSessionHistoryIndex(opts = {}) {
     getSessionStatus,
     getSessionOutline,
     getMessagePage,
+    readSessionMessagesPage,
+    readSessionOutline,
     getRecentSessions,
     searchSessions,
     invalidateSource,

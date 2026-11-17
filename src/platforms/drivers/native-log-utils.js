@@ -825,6 +825,9 @@ function createIncrementalJsonlCursor({
   let fileStates = new Map();
   let recentEventIds = new Map();
   let initialized = false;
+  let initializing = false;
+  let initPromise = null;
+  let stateGeneration = 0;
 
   const rememberEvent = (eventId) => {
     if (!eventId) return true;
@@ -1067,119 +1070,185 @@ function createIncrementalJsonlCursor({
     return complete && state.offset >= stat.size;
   };
 
-  const read = () => {
-    const events = [];
-    const files = scanFiles();
-    const currentFiles = new Set(files);
-    const isInitialRead = !initialized;
-    const stats = {
-      files: files.length,
-      bytesRead: 0,
-      parsedRecords: 0,
-      maxLineLength: 0,
-      parseErrors: 0,
-      readErrors: 0
-    };
-    let baselineReady = true;
-    for (const filePath of fileStates.keys()) {
-      if (!currentFiles.has(filePath)) fileStates.delete(filePath);
+  const processFile = (filePath, isInitialRead, events, stats) => {
+    let stat;
+    try { stat = fsImpl.statSync(filePath); } catch (_) {
+      stats.readErrors += 1;
+      return !(skipInitialParse && isInitialRead);
+    }
+    let state = fileStates.get(filePath);
+    const replaced = state && isReplaced(filePath, state, stat);
+    if (!state || replaced) {
+      state = makeState(filePath, stat, state, Boolean(replaced));
+      fileStates.set(filePath, state);
     }
 
-    for (const filePath of files) {
-      let stat;
-      try { stat = fsImpl.statSync(filePath); } catch (_) {
-        stats.readErrors += 1;
-        if (skipInitialParse && isInitialRead) baselineReady = false;
-        continue;
-      }
-      let state = fileStates.get(filePath);
-      const replaced = state && isReplaced(filePath, state, stat);
-      if (!state || replaced) {
-        state = makeState(filePath, stat, state, Boolean(replaced));
-        fileStates.set(filePath, state);
-      }
-
-      if (skipInitialParse && !state.baselineReady) {
-        const baselineSize = stat.size;
-        const readErrorsBefore = stats.readErrors;
-        let bootstrapResult = true;
-        let baselineAnchors;
-        try {
-          baselineAnchors = readAnchorSnapshot(filePath, baselineSize, stats);
-          bootstrapResult = bootstrapFile ? bootstrapFile(filePath, state, stat, stats) : true;
-          if (bootstrapResult && typeof bootstrapResult === 'object') bootstrapResult = bootstrapResult.ok !== false;
-        } catch (error) {
-          stats.parseErrors += 1;
-          onError(error, filePath);
-          bootstrapResult = false;
-        }
-        let currentStat;
-        let currentAnchors;
-        try { currentStat = fsImpl.statSync(filePath); } catch (_) { currentStat = null; }
-        try { currentAnchors = readAnchorSnapshot(filePath, baselineSize, stats); } catch (_) { currentAnchors = null; }
-        if (!bootstrapResult || !currentStat
-          || stats.readErrors > readErrorsBefore
-          || currentStat.dev !== stat.dev || currentStat.ino !== stat.ino || currentStat.size < baselineSize
-          || !currentAnchors
-          || !currentAnchors.prefix.equals(baselineAnchors?.prefix || Buffer.alloc(0))
-          || !currentAnchors.tail.equals(baselineAnchors?.tail || Buffer.alloc(0))) {
-          baselineReady = false;
-          stats.parseErrors += 1;
-          onError(new Error('Native log baseline did not reach a stable file watermark'), filePath);
-          continue;
-        }
-        state.offset = findTrailingLineOffset(filePath, baselineSize, fsImpl, stats);
-        state.size = stat.size;
-        state.dev = stat.dev;
-        state.ino = stat.ino;
-        state.mtimeMs = stat.mtimeMs;
-        state.ctimeMs = stat.ctimeMs;
-        setAnchors(filePath, state, state.offset, stats);
-        state.baselineReady = true;
-        continue;
-      }
-
-      const unchanged = !replaced
-        && state.size === stat.size
-        && state.mtimeMs === stat.mtimeMs
-        && state.ctimeMs === stat.ctimeMs;
-      if (unchanged) continue;
-
-      const shouldEmit = initialized;
-      let readCompleted = false;
+    if (skipInitialParse && !state.baselineReady) {
+      const baselineSize = stat.size;
+      const readErrorsBefore = stats.readErrors;
+      let bootstrapResult = true;
+      let baselineAnchors;
       try {
-        if (!readChangedBytes(filePath, state, stat, events, shouldEmit, stats)) {
-          throw new Error('Native log read ended before the requested file range');
-        }
-        const trailing = afterRead?.(filePath, state, { initialized, replaced: Boolean(replaced) });
-        const trailingEvents = Array.isArray(trailing) ? trailing : [trailing];
-        trailingEvents.forEach(event => collectEvent(event, filePath, events, shouldEmit));
-        readCompleted = true;
+        baselineAnchors = readAnchorSnapshot(filePath, baselineSize, stats);
+        bootstrapResult = bootstrapFile ? bootstrapFile(filePath, state, stat, stats) : true;
+        if (bootstrapResult && typeof bootstrapResult === 'object') bootstrapResult = bootstrapResult.ok !== false;
       } catch (error) {
+        stats.parseErrors += 1;
         onError(error, filePath);
+        bootstrapResult = false;
       }
-      if (!readCompleted) continue;
+      let currentStat;
+      let currentAnchors;
+      try { currentStat = fsImpl.statSync(filePath); } catch (_) { currentStat = null; }
+      try { currentAnchors = readAnchorSnapshot(filePath, baselineSize, stats); } catch (_) { currentAnchors = null; }
+      if (!bootstrapResult || !currentStat
+        || stats.readErrors > readErrorsBefore
+        || currentStat.dev !== stat.dev || currentStat.ino !== stat.ino || currentStat.size < baselineSize
+        || !currentAnchors
+        || !currentAnchors.prefix.equals(baselineAnchors?.prefix || Buffer.alloc(0))
+        || !currentAnchors.tail.equals(baselineAnchors?.tail || Buffer.alloc(0))) {
+        stats.parseErrors += 1;
+        onError(new Error('Native log baseline did not reach a stable file watermark'), filePath);
+        return false;
+      }
+      state.offset = findTrailingLineOffset(filePath, baselineSize, fsImpl, stats);
       state.size = stat.size;
       state.dev = stat.dev;
       state.ino = stat.ino;
       state.mtimeMs = stat.mtimeMs;
       state.ctimeMs = stat.ctimeMs;
+      setAnchors(filePath, state, state.offset, stats);
       state.baselineReady = true;
+      return true;
     }
-    for (const state of fileStates.values()) {
-      if (skipInitialParse && !state.baselineReady) baselineReady = false;
+
+    const unchanged = !replaced
+      && state.size === stat.size
+      && state.mtimeMs === stat.mtimeMs
+      && state.ctimeMs === stat.ctimeMs;
+    if (unchanged) return true;
+
+    const shouldEmit = initialized;
+    let readCompleted = false;
+    try {
+      if (!readChangedBytes(filePath, state, stat, events, shouldEmit, stats)) {
+        throw new Error('Native log read ended before the requested file range');
+      }
+      const trailing = afterRead?.(filePath, state, { initialized, replaced: Boolean(replaced) });
+      const trailingEvents = Array.isArray(trailing) ? trailing : [trailing];
+      trailingEvents.forEach(event => collectEvent(event, filePath, events, shouldEmit));
+      readCompleted = true;
+    } catch (error) {
+      onError(error, filePath);
     }
-    initialized = baselineReady;
+    if (!readCompleted) return true;
+    state.size = stat.size;
+    state.dev = stat.dev;
+    state.ino = stat.ino;
+    state.mtimeMs = stat.mtimeMs;
+    state.ctimeMs = stat.ctimeMs;
+    state.baselineReady = true;
+    return true;
+  };
+
+  const createStats = files => ({
+    files: files.length,
+    bytesRead: 0,
+    parsedRecords: 0,
+    maxLineLength: 0,
+    parseErrors: 0,
+    readErrors: 0
+  });
+
+  const pruneMissingFiles = files => {
+    const currentFiles = new Set(files);
+    for (const filePath of fileStates.keys()) {
+      if (!currentFiles.has(filePath)) fileStates.delete(filePath);
+    }
+  };
+
+  const finalizeBaseline = (baselineReady, stats) => {
+    // Unstable files keep their own `baselineReady=false` flag and are retried
+    // in the cheap per-file baseline branch. Never reset the whole cursor:
+    // active session logs change during startup, and re-running the full
+    // history walk on the next poll blocked the event loop for ~40s.
+    initialized = skipInitialParse ? true : baselineReady;
     try { onDiagnostic({ ...stats, initialized }); } catch (_) {}
+  };
+
+  const read = () => {
+    if (initializing) return [];
+    const events = [];
+    const files = scanFiles();
+    pruneMissingFiles(files);
+    const isInitialRead = !initialized;
+    const stats = createStats(files);
+    let baselineReady = true;
+    for (const filePath of files) {
+      if (!processFile(filePath, isInitialRead, events, stats)) baselineReady = false;
+    }
+    finalizeBaseline(baselineReady, stats);
     return events;
+  };
+
+  /**
+   * Establish the initial watermark without blocking the event loop for the
+   * whole history. A cold host can hold thousands of session files; the
+   * synchronous `initialize()` blocked HTTP/WebSocket for ~40s.
+   */
+  const initializeAsync = ({ batchSize = 1 } = {}) => {
+    if (initialized) return Promise.resolve([]);
+    if (initPromise) return initPromise;
+    initializing = true;
+    const generation = stateGeneration;
+    initPromise = (async () => {
+      const events = [];
+      const files = scanFiles();
+      pruneMissingFiles(files);
+      const stats = createStats(files);
+      let baselineReady = true;
+      let processed = 0;
+      for (const filePath of files) {
+        if (generation !== stateGeneration) return [];
+        if (!processFile(filePath, true, events, stats)) baselineReady = false;
+        processed += 1;
+        if (batchSize > 0 && processed % batchSize === 0) {
+          await new Promise(resolve => setImmediate(resolve));
+        }
+      }
+      if (generation !== stateGeneration) return [];
+      finalizeBaseline(baselineReady, stats);
+      return events;
+    })().finally(() => {
+      if (generation !== stateGeneration) return;
+      initializing = false;
+      initPromise = null;
+    });
+    return initPromise;
   };
 
   return {
     initialize() { read(); },
+    initializeAsync,
+    isInitialized: () => initialized,
     readNewEvents: read,
     read,
-    reset() { fileStates = new Map(); recentEventIds = new Map(); initialized = false; },
-    close() { fileStates.clear(); recentEventIds.clear(); initialized = false; }
+    reset() {
+      stateGeneration += 1;
+      fileStates = new Map();
+      recentEventIds = new Map();
+      initialized = false;
+      initializing = false;
+      initPromise = null;
+    },
+    close() {
+      stateGeneration += 1;
+      fileStates.clear();
+      recentEventIds.clear();
+      initialized = false;
+      initializing = false;
+      initPromise = null;
+    }
   };
 }
 
@@ -1194,11 +1263,11 @@ function createScannedFileCursor({
   let seenByFile = new Map();
   let fileStates = new Map();
   let initialized = false;
+  let initializing = false;
+  let initPromise = null;
+  let stateGeneration = 0;
 
-  const read = () => {
-    const events = [];
-    const files = scanFiles();
-    const isInitialRead = !initialized;
+  const pruneMissingFiles = files => {
     const currentFiles = new Set(files);
     for (const filePath of fileStates.keys()) {
       if (!currentFiles.has(filePath)) {
@@ -1206,44 +1275,32 @@ function createScannedFileCursor({
         seenByFile.delete(filePath);
       }
     }
+  };
 
-    for (const filePath of files) {
-      let stat;
-      try { stat = fsImpl.statSync(filePath); } catch (_) { continue; }
-      const previousState = fileStates.get(filePath);
-      const replaced = previousState
-        && (previousState.dev !== stat.dev
-          || previousState.ino !== stat.ino
-          || stat.size < previousState.size);
-      const changed = !previousState
-        || replaced
-        || previousState.size !== stat.size
-        || previousState.mtimeMs !== stat.mtimeMs
-        || previousState.ctimeMs !== stat.ctimeMs;
-      const unchanged = previousState && !changed;
-      if (!previousState || replaced) {
-        seenByFile.set(filePath, new Set());
+  const processFile = (filePath, isInitialRead, events) => {
+    let stat;
+    try { stat = fsImpl.statSync(filePath); } catch (_) { return; }
+    const previousState = fileStates.get(filePath);
+    const replaced = previousState
+      && (previousState.dev !== stat.dev
+        || previousState.ino !== stat.ino
+        || stat.size < previousState.size);
+    const changed = !previousState
+      || replaced
+      || previousState.size !== stat.size
+      || previousState.mtimeMs !== stat.mtimeMs
+      || previousState.ctimeMs !== stat.ctimeMs;
+    const unchanged = previousState && !changed;
+    if (!previousState || replaced) {
+      seenByFile.set(filePath, new Set());
+    }
+    if (unchanged) return;
+    if (isInitialRead && skipInitialParse) {
+      try {
+        shouldParseFile(filePath, stat, { isInitialRead, previousState, skipInitialParse: true });
+      } catch (_) {
+        // Baseline setup must remain non-blocking; the next file change will retry.
       }
-      if (unchanged) continue;
-      if (isInitialRead && skipInitialParse) {
-        try {
-          shouldParseFile(filePath, stat, { isInitialRead, previousState, skipInitialParse: true });
-        } catch (_) {
-          // Baseline setup must remain non-blocking; the next file change will retry.
-        }
-        fileStates.set(filePath, {
-          dev: stat.dev,
-          ino: stat.ino,
-          size: stat.size,
-          mtimeMs: stat.mtimeMs,
-          ctimeMs: stat.ctimeMs
-        });
-        continue;
-      }
-      if (!shouldParseFile(filePath, stat, { isInitialRead, previousState, skipInitialParse: false })) continue;
-
-      let parsed;
-      try { parsed = parseFile(filePath) || []; } catch (_) { continue; }
       fileStates.set(filePath, {
         dev: stat.dev,
         ino: stat.ino,
@@ -1251,26 +1308,92 @@ function createScannedFileCursor({
         mtimeMs: stat.mtimeMs,
         ctimeMs: stat.ctimeMs
       });
-      const seen = seenByFile.get(filePath) || new Set();
-      seenByFile.set(filePath, seen);
-      for (const raw of parsed) {
-        const event = normalizeEvent(raw, filePath);
-        if (!event || !event.id || !hasUsage(event.tokens)) continue;
-        if (seen.has(event.id)) continue;
-        seen.add(event.id);
-        if (initialized) events.push(event);
-      }
+      return;
     }
+    if (!shouldParseFile(filePath, stat, { isInitialRead, previousState, skipInitialParse: false })) return;
+
+    let parsed;
+    try { parsed = parseFile(filePath) || []; } catch (_) { return; }
+    fileStates.set(filePath, {
+      dev: stat.dev,
+      ino: stat.ino,
+      size: stat.size,
+      mtimeMs: stat.mtimeMs,
+      ctimeMs: stat.ctimeMs
+    });
+    const seen = seenByFile.get(filePath) || new Set();
+    seenByFile.set(filePath, seen);
+    for (const raw of parsed) {
+      const event = normalizeEvent(raw, filePath);
+      if (!event || !event.id || !hasUsage(event.tokens)) continue;
+      if (seen.has(event.id)) continue;
+      seen.add(event.id);
+      if (initialized) events.push(event);
+    }
+  };
+
+  const read = () => {
+    if (initializing) return [];
+    const events = [];
+    const files = scanFiles();
+    const isInitialRead = !initialized;
+    pruneMissingFiles(files);
+    for (const filePath of files) processFile(filePath, isInitialRead, events);
     initialized = true;
     return events;
   };
 
+  const initializeAsync = ({ batchSize = 1 } = {}) => {
+    if (initialized) return Promise.resolve([]);
+    if (initPromise) return initPromise;
+    initializing = true;
+    const generation = stateGeneration;
+    initPromise = (async () => {
+      const events = [];
+      const files = scanFiles();
+      pruneMissingFiles(files);
+      let processed = 0;
+      for (const filePath of files) {
+        if (generation !== stateGeneration) return [];
+        processFile(filePath, true, events);
+        processed += 1;
+        if (batchSize > 0 && processed % batchSize === 0) {
+          await new Promise(resolve => setImmediate(resolve));
+        }
+      }
+      if (generation !== stateGeneration) return [];
+      initialized = true;
+      return events;
+    })().finally(() => {
+      if (generation !== stateGeneration) return;
+      initializing = false;
+      initPromise = null;
+    });
+    return initPromise;
+  };
+
   return {
     initialize() { read(); },
+    initializeAsync,
+    isInitialized: () => initialized,
     readNewEvents: read,
     read,
-    reset() { seenByFile = new Map(); fileStates = new Map(); initialized = false; },
-    close() { seenByFile.clear(); fileStates.clear(); initialized = false; }
+    reset() {
+      stateGeneration += 1;
+      seenByFile = new Map();
+      fileStates = new Map();
+      initialized = false;
+      initializing = false;
+      initPromise = null;
+    },
+    close() {
+      stateGeneration += 1;
+      seenByFile.clear();
+      fileStates.clear();
+      initialized = false;
+      initializing = false;
+      initPromise = null;
+    }
   };
 }
 

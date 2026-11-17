@@ -229,10 +229,9 @@ describe('gemini-sessions project discovery and querying', () => {
       expect.objectContaining({
         sessionId: 'jsonl-session',
         projectHash,
-        matchCount: 2,
+        matchCount: 1,
         matches: [
-          expect.objectContaining({ role: 'user', context: 'Find JSONL needle' }),
-          expect.objectContaining({ role: 'gemini', context: 'JSONL Needle answer' })
+          expect.objectContaining({ role: 'user', context: 'Find JSONL needle' })
         ]
       })
     ]);
@@ -400,15 +399,9 @@ describe('gemini-sessions project discovery and querying', () => {
             role: 'user',
             context: '... the needle in t...',
             timestamp: '2026-03-17T09:00:00.000Z'
-          },
-          {
-            messageIndex: 1,
-            role: 'assistant',
-            context: 'Needle summ...',
-            timestamp: '2026-03-17T09:01:00.000Z'
           }
         ],
-        matchCount: 2,
+        matchCount: 1,
         source: 'gemini'
       }
     ]);

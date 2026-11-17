@@ -28,6 +28,7 @@ const { startMemoryReclaimer, trackMemoryActivity } = require('./services/memory
 const { inspectWebBuildState, ensureWebDistReady } = require('./services/web-build');
 const { ensureHttpsCredentials } = require('./services/https-cert');
 const { scheduleSessionHistoryMaintenance } = require('./services/session-history-maintenance');
+const { filterEnabledPlatforms } = require('./services/active-platforms');
 const notificationHooks = require('../platforms/notification-hooks');
 const {
   prepareNativeCliLogObserver,
@@ -383,12 +384,12 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
 }
 
 // 自动恢复代理状态
-async function autoRestoreProxies({ registry, runtime, config, fsImpl = require('fs') } = {}) {
+async function autoRestoreProxies({ registry, runtime, config, fsImpl = require('fs'), filterPlatforms = filterEnabledPlatforms } = {}) {
   const resolvedRegistry = registry || require('../platforms/runtime').getPlatformRegistry();
   const resolvedRuntime = runtime || require('../platforms/runtime').getPlatformRuntime();
   const resolvedConfig = config || loadConfig();
   const platforms = typeof resolvedRegistry.list === 'function'
-    ? resolvedRegistry.list({ enabledOnly: true })
+    ? filterPlatforms(resolvedRegistry.list({ enabledOnly: true }))
     : [];
 
   const summary = { attempted: 0, restored: 0, failed: 0 };
@@ -438,16 +439,16 @@ async function autoRestoreProxies({ registry, runtime, config, fsImpl = require(
 }
 
 // 启动时执行健康检查
-async function performStartupHealthCheck({ config = loadConfig() } = {}) {
+async function performStartupHealthCheck({ config = loadConfig(), filterPlatforms = filterEnabledPlatforms } = {}) {
   try {
     console.log(chalk.cyan('\n[SEARCH] 正在进行启动健康检查...'));
 
     const { getPlatformCatalog } = require('./services/platform-catalog');
     const catalog = getPlatformCatalog();
-    const platforms = catalog.list({ capability: 'health' });
+    const platforms = filterPlatforms(catalog.list({ capability: 'health' }));
     const summary = { total: 0, created: 0, errors: 0, healthy: 0 };
     if (platforms.length === 0) {
-      console.log(chalk.gray('   未配置健康检查能力，跳过健康检查'));
+      console.log(chalk.gray('   未启用需要健康检查的平台，跳过健康检查'));
       return { success: true, summary };
     }
 

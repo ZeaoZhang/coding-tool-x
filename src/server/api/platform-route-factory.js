@@ -1,8 +1,86 @@
 'use strict';
 
+const crypto = require('crypto');
 const { applyRequestCodec, applyResponseCodec } = require('./platform-api-config');
 
 const STATUS_CODES = Object.freeze({ ok: 200, invalid: 400, conflict: 409, unprocessable: 422, unsupported: 404, unavailable: 503, failed: 500 });
+const CHANNEL_CREATE_DEDUPE_TTL_MS = 120 * 1000;
+const CHANNEL_CREATE_DEDUPE_LIMIT = 128;
+const channelCreateResults = new Map();
+const channelCreateInflight = new Map();
+const READ_ONLY_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+function stableStringify(value) {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort()
+      .map(key => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function channelCreateDedupeKey(platform, invocation) {
+  if (!invocation?.body || typeof invocation.body !== 'object') return null;
+  const digest = crypto.createHash('sha1')
+    .update(stableStringify(invocation.body))
+    .digest('hex');
+  return `${platform}:${invocation.remoteAddress || ''}:${digest}`;
+}
+
+function clearChannelCreateResults(platform) {
+  const prefix = `${platform}:`;
+  for (const key of channelCreateResults.keys()) {
+    if (key.startsWith(prefix)) channelCreateResults.delete(key);
+  }
+}
+
+async function invokeDriverOperation({ driver, operation, invocation, platform, route }) {
+  const isChannelCreate = route.capability === 'channels' && operation === 'create';
+  const dedupeKey = isChannelCreate
+    ? channelCreateDedupeKey(platform, invocation)
+    : null;
+  if (!dedupeKey) {
+    const value = await driver[operation](invocation);
+    // A successful create/update/delete makes previously cached create results
+    // stale (delete then re-create the same channel within the window must
+    // execute). Read routes must not clear the retry window.
+    const isChannelMutation = route.capability === 'channels'
+      && !READ_ONLY_METHODS.has(String(route.method || 'GET').toUpperCase());
+    if (isChannelMutation && value && value.status === 'ok') {
+      clearChannelCreateResults(platform);
+    }
+    return value;
+  }
+
+  const cached = channelCreateResults.get(dedupeKey);
+  if (cached) {
+    if (Date.now() < cached.expiresAt) return cached.value;
+    channelCreateResults.delete(dedupeKey);
+  }
+  const inflight = channelCreateInflight.get(dedupeKey);
+  if (inflight) return inflight;
+
+  const task = Promise.resolve().then(() => driver[operation](invocation));
+  channelCreateInflight.set(dedupeKey, task);
+  try {
+    const value = await task;
+    if (value && value.status === 'ok') {
+      channelCreateResults.set(dedupeKey, {
+        value,
+        expiresAt: Date.now() + CHANNEL_CREATE_DEDUPE_TTL_MS
+      });
+      while (channelCreateResults.size > CHANNEL_CREATE_DEDUPE_LIMIT) {
+        channelCreateResults.delete(channelCreateResults.keys().next().value);
+      }
+    }
+    return value;
+  } finally {
+    if (channelCreateInflight.get(dedupeKey) === task) {
+      channelCreateInflight.delete(dedupeKey);
+    }
+  }
+}
 
 const DEFAULT_ROUTES = Object.freeze([
   { method: 'GET', path: '/projects', capability: 'projects', operation: 'listProjects', request: 'projects-list', response: 'projects-list' },
@@ -163,7 +241,7 @@ async function invokeRoute({ registry, runtime, config, request, response, manif
       ? applyRequestCodec(request, manifest, route, config)
       : legacyArguments(route, request);
     const value = isDescriptorRoute
-      ? await driver[operation](invocation)
+      ? await invokeDriverOperation({ driver, operation, invocation, platform, route })
       : await driver[operation](...invocation);
     return isDescriptorRoute
       ? sendDriverResult(response, value, route, { ...context, ...invocation })

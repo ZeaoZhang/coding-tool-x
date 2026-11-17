@@ -265,6 +265,64 @@ class EffectiveControlService {
     return entry ? clone(entry) : null;
   }
 
+  /**
+   * Read every Skill entry for one scope/platform in a single manifest read.
+   * Lists that resolve hundreds of Skills must not re-read and re-parse the
+   * (hundreds of kilobytes) manifest per Skill.
+   */
+  getSkillEntries({ scope = 'user', projectPath = null, platform = null } = {}) {
+    const scopeOptions = normalizeScope(scope, projectPath);
+    const manifest = this._readScope(scopeOptions);
+    const entries = {};
+    for (const [controlKey, entry] of Object.entries(manifest.skills || {})) {
+      if (!entry) continue;
+      if (platform && entry.platform !== platform) continue;
+      if (entry.scope !== scopeOptions.scope) continue;
+      if (scopeOptions.scope === 'project'
+        ? entry.projectPath !== scopeOptions.projectPath
+        : entry.projectPath !== null) continue;
+      entries[controlKey] = clone(entry);
+    }
+    return { scopeOptions, entries };
+  }
+
+  /**
+   * Register several Skill entries with one manifest read and one write.
+   * Ordering and identity de-duplication match repeated `registerSkill` calls.
+   */
+  registerSkills(entries = [], { scope = 'user', projectPath = null } = {}) {
+    const sourceEntries = Array.isArray(entries) ? entries : [];
+    if (sourceEntries.length === 0) return new Map();
+    const scopeOptions = normalizeScope(scope, projectPath);
+    const normalizedEntries = sourceEntries.map(entry => this._normalizeSkill(entry));
+    for (const normalized of normalizedEntries) {
+      if (normalized.scope !== scopeOptions.scope) {
+        throw new Error('Skill control entry scope does not match the request');
+      }
+      if (scopeOptions.scope === 'project'
+        ? normalized.projectPath !== scopeOptions.projectPath
+        : normalized.projectPath !== null) {
+        throw new Error('Skill control entry projectPath does not match the request');
+      }
+    }
+
+    const manifest = this._readScope(scopeOptions);
+    const skills = ensureMap(manifest, 'skills');
+    const registered = new Map();
+    for (const normalized of normalizedEntries) {
+      const identity = skillIdentity(normalized);
+      for (const [key, existing] of Object.entries(skills)) {
+        if (key !== normalized.controlKey && existing && skillIdentity(existing) === identity) {
+          delete skills[key];
+        }
+      }
+      skills[normalized.controlKey] = normalized;
+      registered.set(normalized.controlKey, clone(normalized));
+    }
+    this._writeScope(scopeOptions, manifest);
+    return registered;
+  }
+
   _updateSkill(controlKey, scopeOptions, updater) {
     const manifest = this._readScope(scopeOptions);
     const skills = ensureMap(manifest, 'skills');
@@ -418,6 +476,48 @@ class EffectiveControlService {
     mcp[normalized.controlKey] = normalized;
     this._writeScope(scopeOptions, manifest);
     return clone(normalized);
+  }
+
+  getMcpEntries({ scope = 'user', projectPath = null, platform = null } = {}) {
+    const scopeOptions = normalizeScope(scope, projectPath);
+    const manifest = this._readScope(scopeOptions);
+    const entries = {};
+    for (const [controlKey, entry] of Object.entries(manifest.mcp || {})) {
+      if (!entry) continue;
+      if (platform && entry.platform !== platform) continue;
+      if (entry.scope !== scopeOptions.scope) continue;
+      if (scopeOptions.scope === 'project'
+        ? entry.projectPath !== scopeOptions.projectPath
+        : entry.projectPath !== null) continue;
+      entries[controlKey] = clone(entry);
+    }
+    return { scopeOptions, entries };
+  }
+
+  registerMcpEntries(entries = [], { scope = 'user', projectPath = null } = {}) {
+    const sourceEntries = Array.isArray(entries) ? entries : [];
+    if (sourceEntries.length === 0) return new Map();
+    const scopeOptions = normalizeScope(scope, projectPath);
+    const normalizedEntries = sourceEntries.map(entry => this._normalizeMcp(entry));
+    for (const normalized of normalizedEntries) {
+      if (normalized.scope !== scopeOptions.scope) {
+        throw new Error('MCP control entry scope does not match the request');
+      }
+      if (scopeOptions.scope === 'project'
+        ? normalized.projectPath !== scopeOptions.projectPath
+        : normalized.projectPath !== null) {
+        throw new Error('MCP control entry projectPath does not match the request');
+      }
+    }
+    const manifest = this._readScope(scopeOptions);
+    const mcp = ensureMap(manifest, 'mcp');
+    const registered = new Map();
+    for (const normalized of normalizedEntries) {
+      mcp[normalized.controlKey] = normalized;
+      registered.set(normalized.controlKey, clone(normalized));
+    }
+    this._writeScope(scopeOptions, manifest);
+    return registered;
   }
 
   getMcp(controlKey, options = {}) {

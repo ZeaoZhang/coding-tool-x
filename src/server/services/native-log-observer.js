@@ -5,6 +5,7 @@ const { getPlatformRegistry, getPlatformRuntime } = require('../../platforms/run
 const { buildSuccessLogPayload, hasMeaningfulUsage, normalizeUsageTokens } = require('./usage-log-utils');
 const { resolveNativeLogChannel, unwrapChannels, isChannelPlaceholder } = require('./native-log-channel-resolver');
 const { broadcastLog } = require('../websocket-server');
+const { filterEnabledPlatforms } = require('./active-platforms');
 
 const DEFAULT_INTERVAL_MS = 5000;
 let pollTimer = null;
@@ -14,6 +15,11 @@ let cursors = new Map();
 let cursorDiagnostics = new Map();
 let firstPollObserved = false;
 let configSavedListener = null;
+let uiConfigListener = null;
+let lastRuntime = null;
+let lastRegistry = null;
+let platformFilter = filterEnabledPlatforms;
+let listenerOptions = {};
 let lifecycleState = 'stopped';
 
 function memoryTraceEnabled() {
@@ -66,10 +72,13 @@ function closeCursor(cursor) {
   try { cursor?.close?.(); } catch (_) {}
 }
 
-function resolveCursors(runtime = getPlatformRuntime(), registry = getPlatformRegistry()) {
+function resolveCursors(runtime = getPlatformRuntime(), registry = getPlatformRegistry(), filterPlatforms = platformFilter) {
   const next = new Map();
   const traceEnabled = memoryTraceEnabled();
-  const platforms = registry.list({ enabledOnly: true });
+  lastRuntime = runtime;
+  lastRegistry = registry;
+  platformFilter = filterPlatforms;
+  const platforms = filterPlatforms(registry.list({ enabledOnly: true }));
   for (const platform of platforms) {
     const key = platform.key;
     let driver;
@@ -86,10 +95,24 @@ function resolveCursors(runtime = getPlatformRuntime(), registry = getPlatformRe
       cursor = driver.createNativeLogCursor(options);
       const startedAt = traceClock();
       traceMemory(key, 'cursor-initialize-before', {}, 0);
-      try { cursor.initialize?.(); } catch (error) {
-        console.warn(`[Native Logs] Failed to initialize ${key}:`, error.message);
+      if (typeof cursor.initializeAsync === 'function') {
+        // The baseline walks every native log file. Run it in chunks so HTTP
+        // and WebSocket traffic keep flowing while it warms up.
+        Promise.resolve()
+          .then(() => cursor.initializeAsync())
+          .then(() => {
+            traceMemory(key, 'cursor-initialize-after', cursorDiagnostics.get(key), traceClock() - startedAt);
+          })
+          .catch((error) => {
+            console.warn(`[Native Logs] Failed to initialize ${key}:`, error.message);
+            traceMemory(key, 'cursor-initialize-after', cursorDiagnostics.get(key), traceClock() - startedAt);
+          });
+      } else {
+        try { cursor.initialize?.(); } catch (error) {
+          console.warn(`[Native Logs] Failed to initialize ${key}:`, error.message);
+        }
+        traceMemory(key, 'cursor-initialize-after', cursorDiagnostics.get(key), traceClock() - startedAt);
       }
-      traceMemory(key, 'cursor-initialize-after', cursorDiagnostics.get(key), traceClock() - startedAt);
     }
     next.set(key, cursor);
   }
@@ -202,10 +225,11 @@ function startTimer(options) {
 }
 
 function ensureConfigListener(options) {
+  listenerOptions = options;
   if (configSavedListener) return;
   configSavedListener = ({ config } = {}) => {
     const next = config?.nativeCliLogs || {};
-    const nextOptions = { ...options, enabled: next.enabled, intervalSeconds: next.intervalSeconds };
+    const nextOptions = { ...listenerOptions, enabled: next.enabled, intervalSeconds: next.intervalSeconds };
     if (lifecycleState === 'running') {
       configureNativeCliLogObserver(nextOptions);
     } else {
@@ -213,15 +237,26 @@ function ensureConfigListener(options) {
     }
   };
   eventBus.on('config:saved', configSavedListener);
+  if (!uiConfigListener) {
+    uiConfigListener = () => {
+      if (lifecycleState === 'stopped') return;
+      resolveCursors(
+        lastRuntime || getPlatformRuntime(),
+        lastRegistry || getPlatformRegistry()
+      );
+    };
+    eventBus.on('ui-config:saved', uiConfigListener);
+  }
 }
 
 function prepareNativeCliLogObserver({
   enabled: nextEnabled = true,
   intervalSeconds = 5,
   runtime = getPlatformRuntime(),
-  registry = getPlatformRegistry()
+  registry = getPlatformRegistry(),
+  filterPlatforms = platformFilter
 } = {}) {
-  ensureConfigListener({ runtime, registry });
+  ensureConfigListener({ runtime, registry, filterPlatforms });
   enabled = nextEnabled !== false;
   intervalMs = normalizeInterval(intervalSeconds);
   if (!enabled) {
@@ -233,7 +268,7 @@ function prepareNativeCliLogObserver({
     lifecycleState = 'stopped';
     return getStatus();
   }
-  resolveCursors(runtime, registry);
+  resolveCursors(runtime, registry, filterPlatforms);
   if (pollTimer) clearTimer();
   lifecycleState = 'prepared';
   return getStatus();
@@ -242,10 +277,11 @@ function prepareNativeCliLogObserver({
 function startNativeCliLogObserver({
   runtime = getPlatformRuntime(),
   registry = getPlatformRegistry(),
+  filterPlatforms = platformFilter,
   pollImmediately = true
 } = {}) {
   if (!enabled) return getStatus();
-  resolveCursors(runtime, registry);
+  resolveCursors(runtime, registry, filterPlatforms);
   if (pollImmediately) {
     try { pollNativeCliLogs({ runtime, registry }); } catch (error) {
       console.warn('[Native Logs] Initial poll failed:', error.message);
@@ -279,6 +315,14 @@ function shutdownNativeCliLogObserver() {
     eventBus.off('config:saved', configSavedListener);
     configSavedListener = null;
   }
+  if (uiConfigListener) {
+    eventBus.off('ui-config:saved', uiConfigListener);
+    uiConfigListener = null;
+  }
+  lastRuntime = null;
+  lastRegistry = null;
+  platformFilter = filterEnabledPlatforms;
+  listenerOptions = {};
   return getStatus();
 }
 

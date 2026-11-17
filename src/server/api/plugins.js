@@ -671,7 +671,7 @@ router.delete('/:name', async (req, res) => {
     const options = await getRequestOptions(req, service);
     const pluginId = req.query.pluginId || name;
 
-    const result = service.uninstallPlugin(pluginId, options);
+    const result = await service.uninstallPlugin(pluginId, options);
 
     if (!result.success) {
       return res.status(400).json({
@@ -710,7 +710,7 @@ router.put('/:name/toggle', async (req, res) => {
       });
     }
 
-    const plugin = invokeWithOptions(service.togglePlugin.bind(service), [pluginId, enabled], options);
+    const plugin = await invokeWithOptions(service.togglePlugin.bind(service), [pluginId, enabled], options);
 
     res.json({
       success: true,
@@ -743,7 +743,7 @@ router.put('/:name/config', async (req, res) => {
       });
     }
 
-    const result = invokeWithOptions(service.updatePluginConfig.bind(service), [pluginId, config], options);
+    const result = await invokeWithOptions(service.updatePluginConfig.bind(service), [pluginId, config], options);
 
     res.json({
       success: true,

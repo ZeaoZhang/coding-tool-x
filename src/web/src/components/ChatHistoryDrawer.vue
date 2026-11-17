@@ -142,6 +142,9 @@ const emit = defineEmits(['update:show', 'error'])
 const { drawerWidth } = useResponsiveDrawer(960, 840)
 const TOC_SAFETY_GAP = 12
 const PAGE_SIZE = 20
+// Live sync refetches all loaded pages. The index worker accepts up to 1000
+// messages per request, so one request covers the usual drawer depth.
+const LIVE_SYNC_LIMIT = 1000
 
 const visible = computed({
   get: () => props.show,
@@ -519,13 +522,16 @@ async function reloadMessagesForLiveSync() {
 
   try {
     loading.value = true
+    const targetMessageCount = targetPageCount * PAGE_SIZE
+    const chunkLimit = Math.min(LIVE_SYNC_LIMIT, targetMessageCount)
+    const chunkCount = Math.max(1, Math.ceil(targetMessageCount / chunkLimit))
     const pageResponses = []
-    for (let page = 1; page <= targetPageCount; page += 1) {
+    for (let chunk = 0; chunk < chunkCount; chunk += 1) {
       pageResponses.push(await getSessionMessages(
         props.projectName,
         props.sessionId,
-        page,
-        PAGE_SIZE,
+        chunk + 1,
+        chunkLimit,
         'desc',
         props.channel
       ))
@@ -536,6 +542,11 @@ async function reloadMessagesForLiveSync() {
       const response = pageResponses[index]
       const pageMessages = Array.isArray(response?.messages) ? response.messages : []
       nextMessages.push(...pageMessages.slice().reverse())
+    }
+    if (nextMessages.length > targetMessageCount) {
+      // A full-size final chunk can over-fetch; keep exactly the pages the
+      // drawer has loaded so `currentPage` stays consistent.
+      nextMessages.splice(0, nextMessages.length - targetMessageCount)
     }
 
     messages.value = nextMessages
@@ -568,10 +579,11 @@ async function checkForLiveUpdates() {
 
     if (lastStatusSignature && nextSignature !== lastStatusSignature) {
       lastStatusSignature = nextSignature
-      await Promise.all([
-        loadOutline(),
-        reloadMessagesForLiveSync()
-      ])
+      // Message reads refresh the current session's index; the outline must
+      // run after them so it consumes the freshly written rows instead of
+      // reparsing the same file.
+      await reloadMessagesForLiveSync()
+      await loadOutline()
       return
     }
 
@@ -611,8 +623,7 @@ function open(options) {
   lastStatusSignature = ''
 
   Promise.all([
-    loadOutline(),
-    loadMessages(1, { skipFirstPageScroll: Boolean(pendingJumpTarget.value) }),
+    loadMessages(1, { skipFirstPageScroll: Boolean(pendingJumpTarget.value) }).then(() => loadOutline()),
     syncSessionStatus()
   ])
     .then(() => {

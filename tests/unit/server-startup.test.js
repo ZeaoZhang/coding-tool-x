@@ -26,6 +26,7 @@ test('autoRestoreProxies restores platforms sequentially and continues after fai
   };
   const result = await _test.autoRestoreProxies({
     config: { marker: 'shared-config' },
+    filterPlatforms: platforms => platforms,
     registry: {
       list: () => Object.keys(drivers).map(key => ({ key, label: key }))
     },

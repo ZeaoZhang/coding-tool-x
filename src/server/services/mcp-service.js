@@ -713,32 +713,113 @@ function ensureExternalNativeMcpControl(platform, id, spec) {
 /**
  * 获取所有 MCP 服务器
  */
+function createMcpControlCache() {
+  if (!MCP_CONTROL_SERVICE || typeof MCP_CONTROL_SERVICE.getMcpEntries !== 'function') {
+    return null;
+  }
+  return {
+    snapshot: MCP_CONTROL_SERVICE.getMcpEntries({ scope: 'user' }),
+    pending: new Map()
+  };
+}
+
+function resolveCachedMcpControlEntry(server, platform, cache, source = 'catalog') {
+  if (!MCP_CONTROL_SERVICE || !server?.id) return null;
+  if (!cache) {
+    return source === 'native'
+      ? ensureExternalNativeMcpControl(platform, server.id, server.server)
+      : ensureMcpControlEntry(server, platform);
+  }
+  const controlKey = mcpControlKey(platform, server.id);
+  const existing = cache.snapshot.entries[controlKey] || null;
+  const policy = deriveMcpPolicy({ transport: server.server?.type, scope: 'user' });
+  const secretRefs = secretRefsForServer(server);
+  if (existing) {
+    const needsUpdate = existing.transport !== policy.transport
+      || existing.riskTier !== policy.riskTier
+      || existing.egressProfile !== policy.egressProfile
+      || !existing.source
+      || JSON.stringify(existing.secretRefs || []) !== JSON.stringify(secretRefs);
+    if (!needsUpdate) return existing;
+    const next = {
+      ...existing,
+      ...policy,
+      source: existing.source || source,
+      secretRefs
+    };
+    cache.snapshot.entries[controlKey] = next;
+    cache.pending.set(controlKey, next);
+    return next;
+  }
+  const next = {
+    kind: 'mcp',
+    controlKey,
+    platform,
+    scope: 'user',
+    name: server.id,
+    source,
+    enabled: source === 'native' ? false : server.apps?.[platform] === true,
+    trust: 'approved',
+    ...policy,
+    secretRefs,
+    managed: source !== 'native'
+  };
+  cache.snapshot.entries[controlKey] = next;
+  cache.pending.set(controlKey, next);
+  return next;
+}
+
+function flushMcpControlCache(cache) {
+  if (!cache || cache.pending.size === 0) return;
+  const entries = [...cache.pending.values()];
+  cache.pending.clear();
+  if (typeof MCP_CONTROL_SERVICE.registerMcpEntries === 'function') {
+    MCP_CONTROL_SERVICE.registerMcpEntries(entries, { scope: 'user' });
+    return;
+  }
+  for (const entry of entries) {
+    MCP_CONTROL_SERVICE.registerMcp(entry);
+  }
+}
+
 function getAllServers() {
   const persisted = readJsonFile(MCP_SERVERS_FILE, {});
   const servers = {};
+  const controlCache = createMcpControlCache();
 
-  for (const [rawId, server] of Object.entries(persisted)) {
-    const normalizedId = validateMcpId(server?.id || rawId);
-    if (!server || typeof server !== 'object' || Array.isArray(server)) {
-      continue;
+  try {
+    for (const [rawId, server] of Object.entries(persisted)) {
+      const normalizedId = validateMcpId(server?.id || rawId);
+      if (!server || typeof server !== 'object' || Array.isArray(server)) {
+        continue;
+      }
+      server.id = normalizedId;
+      server.apps = server.apps == null
+        ? normalizeServerApps(server.apps)
+        : normalizeServerApps(server.apps, {});
+      server.server = normalizeServerSpec(server.server);
+      for (const platform of getControlMcpPlatformKeys()) {
+        const entry = resolveCachedMcpControlEntry(server, platform, controlCache, 'catalog');
+        server.apps[platform] = entry
+          ? entry.managed === true && entry.trust === 'approved' && entry.enabled === true
+          : server.apps?.[platform] === true;
+      }
+      servers[normalizedId] = server;
     }
-    server.id = normalizedId;
-    server.apps = server.apps == null
-      ? normalizeServerApps(server.apps)
-      : normalizeServerApps(server.apps, {});
-    server.server = normalizeServerSpec(server.server);
-    for (const platform of getControlMcpPlatformKeys()) {
-      server.apps[platform] = getMcpControlEnabled(server, platform);
-    }
-    servers[normalizedId] = server;
-  }
 
-  for (const entry of readNativeMcpEntries()) {
-    if (!servers[entry.id]) {
-      ensureExternalNativeMcpControl(entry.platform, entry.id, entry.spec);
+    for (const entry of readNativeMcpEntries()) {
+      if (!servers[entry.id]) {
+        resolveCachedMcpControlEntry({
+          id: entry.id,
+          server: entry.spec,
+          apps: {}
+        }, entry.platform, controlCache, 'native');
+      }
     }
+    return servers;
+  } finally {
+    flushMcpControlCache(controlCache);
   }
-  return servers;
 }
 
 /**

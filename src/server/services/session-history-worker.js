@@ -3,7 +3,7 @@
 const childProcess = require('child_process');
 const path = require('path');
 
-const WORKER_TIMEOUT_MS = 180000;
+const WORKER_TIMEOUT_MS = 30 * 60 * 1000;
 const MAX_SERIALIZED_ERROR_TEXT_LENGTH = 4096;
 
 function _safeErrorText(value, fallback = '') {
@@ -143,9 +143,10 @@ function _deserializeWorkerError(payload, fallbackMessage = 'Inventory worker fa
 }
 
 
-function runInventoryWorker(source, indexDbPath, options = {}) {
+const CONTENT_WORKER_TIMEOUT_MS = 10 * 60 * 1000;
+
+function runWorkerProcess({ source, indexDbPath, env = {}, timeoutMs = WORKER_TIMEOUT_MS, label = 'Inventory' } = {}) {
   return new Promise((resolve, reject) => {
-    const timeoutMs = options.timeoutMs || WORKER_TIMEOUT_MS;
     const workerPath = path.resolve(__dirname, 'session-history-worker.js');
 
     let stderr = '';
@@ -156,9 +157,7 @@ function runInventoryWorker(source, indexDbPath, options = {}) {
         CC_TOOL_SESSION_HISTORY_CHILD: '1',
         CC_TOOL_SESSION_HISTORY_SOURCE: source,
         CC_TOOL_SESSION_HISTORY_DB: indexDbPath,
-        CC_TOOL_SESSION_HISTORY_FORCE: options.force === true ? '1' : '0',
-        CC_TOOL_SESSION_HISTORY_PROJECT_NAME: options.projectName || '',
-        CC_TOOL_SESSION_HISTORY_PROJECTS_DIR: options.projectsDir || ''
+        ...env
       },
       silent: true,
       stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
@@ -180,7 +179,7 @@ function runInventoryWorker(source, indexDbPath, options = {}) {
     let settled = false;
     let timer = null;
 
-    const finish = (error) => {
+    const finish = (error, result) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -191,21 +190,21 @@ function runInventoryWorker(source, indexDbPath, options = {}) {
       if (error) {
         reject(error);
       } else {
-        resolve();
+        resolve(result);
       }
     };
 
     timer = setTimeout(() => {
-      finish(new Error(`Inventory worker for ${source} timed out after ${timeoutMs}ms`));
+      finish(new Error(`${label} worker for ${source} timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
     child.on('message', (msg) => {
       if (msg && msg.type === 'done') {
-        finish();
+        finish(null, msg.result);
       } else if (msg && msg.type === 'error') {
-        finish(_deserializeWorkerError(msg.error || { message: msg.message }, 'Inventory worker failed'));
+        finish(_deserializeWorkerError(msg.error || { message: msg.message }, `${label} worker failed`));
       } else {
-        finish(new Error(`Inventory worker protocol error: unknown message from ${source}`));
+        finish(new Error(`${label} worker protocol error: unknown message from ${source}`));
       }
     });
 
@@ -213,9 +212,9 @@ function runInventoryWorker(source, indexDbPath, options = {}) {
       if (settled) return;
       const suffix = stderr.trim() ? `: ${stderr.trim()}` : '';
       if (code === 0) {
-        finish(new Error(`Inventory worker protocol error: exited before done for ${source}${suffix}`));
+        finish(new Error(`${label} worker protocol error: exited before done for ${source}${suffix}`));
       } else {
-        finish(new Error(`Inventory worker exited with code ${code}${suffix}`));
+        finish(new Error(`${label} worker exited with code ${code}${suffix}`));
       }
     });
 
@@ -225,13 +224,64 @@ function runInventoryWorker(source, indexDbPath, options = {}) {
   });
 }
 
+function runInventoryWorker(source, indexDbPath, options = {}) {
+  return runWorkerProcess({
+    source,
+    indexDbPath,
+    timeoutMs: options.timeoutMs,
+    env: {
+      CC_TOOL_SESSION_HISTORY_MODE: 'inventory',
+      CC_TOOL_SESSION_HISTORY_FORCE: options.force === true ? '1' : '0',
+      CC_TOOL_SESSION_HISTORY_PROJECT_NAME: options.projectName || '',
+      CC_TOOL_SESSION_HISTORY_PROJECTS_DIR: options.projectsDir || ''
+    }
+  });
+}
+
+function runContentWorker(source, indexDbPath, sessionId, options = {}) {
+  return runWorkerProcess({
+    source,
+    indexDbPath,
+    timeoutMs: options.timeoutMs || CONTENT_WORKER_TIMEOUT_MS,
+    label: 'Content indexing',
+    env: {
+      CC_TOOL_SESSION_HISTORY_MODE: 'content',
+      CC_TOOL_SESSION_HISTORY_SESSION_ID: sessionId,
+      CC_TOOL_SESSION_HISTORY_FORCE: options.force === true ? '1' : '0',
+      CC_TOOL_SESSION_HISTORY_PROJECTS_DIR: options.projectsDir || ''
+    }
+  });
+}
+
+const MESSAGES_WORKER_TIMEOUT_MS = 5 * 60 * 1000;
+
+function runMessagesWorker(source, indexDbPath, sessionId, options = {}) {
+  return runWorkerProcess({
+    source,
+    indexDbPath,
+    timeoutMs: options.timeoutMs || MESSAGES_WORKER_TIMEOUT_MS,
+    label: 'Messages',
+    env: {
+      CC_TOOL_SESSION_HISTORY_MODE: 'messages',
+      CC_TOOL_SESSION_HISTORY_OPERATION: options.operation === 'outline' ? 'outline' : 'messages',
+      CC_TOOL_SESSION_HISTORY_SESSION_ID: sessionId,
+      CC_TOOL_SESSION_HISTORY_PAGE: String(options.page || 1),
+      CC_TOOL_SESSION_HISTORY_LIMIT: String(options.limit || 20),
+      CC_TOOL_SESSION_HISTORY_ORDER: options.order === 'asc' ? 'asc' : 'desc',
+      CC_TOOL_SESSION_HISTORY_PROJECTS_DIR: options.projectsDir || ''
+    }
+  });
+}
+
 function attachWorkerHandler() {
   const source = process.env.CC_TOOL_SESSION_HISTORY_SOURCE;
   const dbPath = process.env.CC_TOOL_SESSION_HISTORY_DB;
   const projectsDir = process.env.CC_TOOL_SESSION_HISTORY_PROJECTS_DIR || undefined;
   const projectName = process.env.CC_TOOL_SESSION_HISTORY_PROJECT_NAME || undefined;
+  const sessionId = process.env.CC_TOOL_SESSION_HISTORY_SESSION_ID || '';
+  const mode = process.env.CC_TOOL_SESSION_HISTORY_MODE || 'inventory';
   const force = process.env.CC_TOOL_SESSION_HISTORY_FORCE === '1';
-  if (!source || !dbPath) {
+  if (!source || !dbPath || (mode !== 'inventory' && !sessionId)) {
     process.exit(1);
     return;
   }
@@ -248,8 +298,24 @@ function attachWorkerHandler() {
     _sendWorkerMessage(message, exitCode);
   };
 
-  index.ensureSourceIndexed(source, { consistency: 'complete', force, projectName })
-    .then(() => finishWorker({ type: 'done' }, 0))
+  let task;
+  if (mode === 'messages') {
+    const operation = process.env.CC_TOOL_SESSION_HISTORY_OPERATION || 'messages';
+    const reading = operation === 'outline'
+      ? index.readSessionOutline(source, sessionId)
+      : index.readSessionMessagesPage(source, sessionId, {
+        page: Number(process.env.CC_TOOL_SESSION_HISTORY_PAGE) || 1,
+        limit: Number(process.env.CC_TOOL_SESSION_HISTORY_LIMIT) || 20,
+        order: process.env.CC_TOOL_SESSION_HISTORY_ORDER
+      });
+    task = reading.then(result => ({ result }));
+  } else if (mode === 'content') {
+    task = index.ensureSessionContentIndexed(source, sessionId, { consistency: 'complete', force });
+  } else {
+    task = index.ensureSourceIndexed(source, { consistency: 'complete', force, projectName });
+  }
+  task
+    .then(result => finishWorker({ type: 'done', result: result?.result }, 0))
     .catch((err) => finishWorker({ type: 'error', error: _serializeWorkerError(err) }, 1));
 }
 
@@ -286,6 +352,8 @@ if (process.env.CC_TOOL_SESSION_HISTORY_WORKER === '1' || require.main === modul
 
 module.exports = {
   runInventoryWorker,
+  runContentWorker,
+  runMessagesWorker,
   attachWorkerHandler,
   _test: {
     serializeWorkerError: _serializeWorkerError,

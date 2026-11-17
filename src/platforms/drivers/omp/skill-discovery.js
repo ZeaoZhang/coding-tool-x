@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
+const { promisify } = require('util');
 const {
   getOmpCommand,
   getOmpPaths,
@@ -8,6 +9,8 @@ const {
 } = require('./config');
 const { HOME_DIR, NATIVE_PATHS } = require('../../../config/paths');
 const { assertNoSymlinkComponents } = require('../../../shared/project-config');
+
+const execFileAsync = promisify(execFile);
 
 const DEFAULT_SKILL_SETTINGS = Object.freeze({
   enabled: true,
@@ -25,9 +28,16 @@ const DEFAULT_SKILL_SETTINGS = Object.freeze({
 });
 
 const DISCOVERY_CACHE_TTL_MS = 1000;
+// `omp config list` and `omp plugin list` each take ~2s on a loaded host.
+// Never run them on the request path: serve the previous value and refresh it
+// in the background, falling back to the persisted settings on a cold start.
+const SETTINGS_CACHE_TTL_MS = 60 * 1000;
+const PLUGIN_PATHS_CACHE_TTL_MS = 60 * 1000;
 const settingsCache = new Map();
 const pluginPathsCache = new Map();
 const discoveryCache = new Map();
+const settingsRefreshPending = new Map();
+const pluginPathsRefreshPending = new Map();
 
 function canonicalCwd(cwd) {
   if (!cwd) return '';
@@ -56,6 +66,33 @@ function expandHome(value) {
   return input;
 }
 
+function _readPersistedSettings() {
+  try {
+    const persisted = readOmpSettings();
+    return {
+      ...DEFAULT_SKILL_SETTINGS,
+      ...(persisted?.skills && typeof persisted.skills === 'object' ? persisted.skills : {}),
+      disabledExtensions: persisted?.disabledExtensions || [],
+      disabledProviders: persisted?.disabledProviders || []
+    };
+  } catch {
+    return { ...DEFAULT_SKILL_SETTINGS };
+  }
+}
+
+function _parseCliSettings(output) {
+  const parsed = JSON.parse(String(output || '').trim());
+  const flattened = {};
+  for (const [key, item] of Object.entries(parsed || {})) {
+    if (key.startsWith('skills.')) {
+      flattened[key.slice('skills.'.length)] = item?.value;
+    } else if (key === 'disabledExtensions' || key === 'disabledProviders') {
+      flattened[key] = item?.value;
+    }
+  }
+  return { ...DEFAULT_SKILL_SETTINGS, ...flattened };
+}
+
 function _readEffectiveSettings(cwd) {
   try {
     const output = execFileSync(getOmpCommand(), ['config', 'list', '--json'], {
@@ -65,36 +102,54 @@ function _readEffectiveSettings(cwd) {
       timeout: 5000,
       windowsHide: true
     });
-    const parsed = JSON.parse(String(output || '').trim());
-    const flattened = {};
-    for (const [key, item] of Object.entries(parsed || {})) {
-      if (key.startsWith('skills.')) {
-        flattened[key.slice('skills.'.length)] = item?.value;
-      } else if (key === 'disabledExtensions' || key === 'disabledProviders') {
-        flattened[key] = item?.value;
-      }
-    }
-    return { ...DEFAULT_SKILL_SETTINGS, ...flattened };
+    return _parseCliSettings(output);
   } catch {
-    const persisted = readOmpSettings();
-    return {
-      ...DEFAULT_SKILL_SETTINGS,
-      ...(persisted.skills && typeof persisted.skills === 'object' ? persisted.skills : {}),
-      disabledExtensions: persisted.disabledExtensions || [],
-      disabledProviders: persisted.disabledProviders || []
-    };
+    return _readPersistedSettings();
   }
+}
+
+function scheduleSettingsRefresh(key, cwd) {
+  const pending = settingsRefreshPending.get(key);
+  if (pending) return pending;
+  const task = execFileAsync(getOmpCommand(), ['config', 'list', '--json'], {
+    cwd: cwd || process.cwd(),
+    encoding: 'utf8',
+    timeout: 5000,
+    windowsHide: true,
+    maxBuffer: 8 * 1024 * 1024
+  }).then(({ stdout }) => {
+    settingsCache.set(key, { value: _parseCliSettings(stdout), checkedAt: Date.now() });
+  }).catch(() => {
+    const cached = settingsCache.get(key);
+    settingsCache.set(key, {
+      value: cached?.value || _readPersistedSettings(),
+      checkedAt: Date.now()
+    });
+  }).finally(() => {
+    if (settingsRefreshPending.get(key) === task) settingsRefreshPending.delete(key);
+  });
+  settingsRefreshPending.set(key, task);
+  return task;
 }
 
 function readEffectiveSettings(cwd, { force = false, scope = 'user' } = {}) {
   const key = cacheKey(cwd, scope);
   const now = Date.now();
+  if (force) {
+    const value = _readEffectiveSettings(cwd);
+    settingsCache.set(key, { value, checkedAt: now });
+    return { ...value };
+  }
   const cached = settingsCache.get(key);
-  if (!force && cached && now - cached.checkedAt < DISCOVERY_CACHE_TTL_MS) {
+  if (cached) {
+    if (now - cached.checkedAt >= SETTINGS_CACHE_TTL_MS) {
+      scheduleSettingsRefresh(key, cwd);
+    }
     return { ...cached.value };
   }
-  const value = _readEffectiveSettings(cwd);
-  settingsCache.set(key, { value, checkedAt: now });
+  const value = _readPersistedSettings();
+  settingsCache.set(key, { value, checkedAt: 0 });
+  scheduleSettingsRefresh(key, cwd);
   return { ...value };
 }
 
@@ -217,6 +272,30 @@ function scanOneLevel(service, root, descriptor, settings, projectRoot = null) {
   return result;
 }
 
+function _parsePluginInstallPaths(output) {
+  const parsed = JSON.parse(String(output || '').trim());
+  const paths = [];
+  const visit = (value, inheritedScope = 'user') => {
+    if (Array.isArray(value)) {
+      value.forEach(item => visit(item, inheritedScope));
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    const scope = value.scope || inheritedScope;
+    if (value.installPath || value.path) {
+      paths.push({
+        path: value.installPath || value.path,
+        scope
+      });
+    }
+    for (const nested of Object.values(value)) {
+      if (nested && typeof nested === 'object') visit(nested, scope);
+    }
+  };
+  visit(parsed);
+  return paths;
+}
+
 function _getPluginInstallPaths(cwd) {
   try {
     const output = execFileSync(getOmpCommand(), ['plugin', 'list', '--json'], {
@@ -226,42 +305,51 @@ function _getPluginInstallPaths(cwd) {
       timeout: 5000,
       windowsHide: true
     });
-    const parsed = JSON.parse(String(output || '').trim());
-    const paths = [];
-    const visit = (value, inheritedScope = 'user') => {
-      if (Array.isArray(value)) {
-        value.forEach(item => visit(item, inheritedScope));
-        return;
-      }
-      if (!value || typeof value !== 'object') return;
-      const scope = value.scope || inheritedScope;
-      if (value.installPath || value.path) {
-        paths.push({
-          path: value.installPath || value.path,
-          scope
-        });
-      }
-      for (const nested of Object.values(value)) {
-        if (nested && typeof nested === 'object') visit(nested, scope);
-      }
-    };
-    visit(parsed);
-    return paths;
+    return _parsePluginInstallPaths(output);
   } catch {
     return [];
   }
 }
 
+function schedulePluginPathsRefresh(key, cwd) {
+  const pending = pluginPathsRefreshPending.get(key);
+  if (pending) return pending;
+  const task = execFileAsync(getOmpCommand(), ['plugin', 'list', '--json'], {
+    cwd: cwd || process.cwd(),
+    encoding: 'utf8',
+    timeout: 5000,
+    windowsHide: true,
+    maxBuffer: 8 * 1024 * 1024
+  }).then(({ stdout }) => {
+    pluginPathsCache.set(key, { value: _parsePluginInstallPaths(stdout), checkedAt: Date.now() });
+  }).catch(() => {
+    const cached = pluginPathsCache.get(key);
+    pluginPathsCache.set(key, { value: cached?.value || [], checkedAt: Date.now() });
+  }).finally(() => {
+    if (pluginPathsRefreshPending.get(key) === task) pluginPathsRefreshPending.delete(key);
+  });
+  pluginPathsRefreshPending.set(key, task);
+  return task;
+}
+
 function getPluginInstallPaths(cwd, { force = false, scope = 'user' } = {}) {
   const key = cacheKey(cwd, scope);
   const now = Date.now();
+  if (force) {
+    const value = _getPluginInstallPaths(cwd);
+    pluginPathsCache.set(key, { value, checkedAt: now });
+    return value.map(item => ({ ...item }));
+  }
   const cached = pluginPathsCache.get(key);
-  if (!force && cached && now - cached.checkedAt < DISCOVERY_CACHE_TTL_MS) {
+  if (cached) {
+    if (now - cached.checkedAt >= PLUGIN_PATHS_CACHE_TTL_MS) {
+      schedulePluginPathsRefresh(key, cwd);
+    }
     return cached.value.map(item => ({ ...item }));
   }
-  const value = _getPluginInstallPaths(cwd);
-  pluginPathsCache.set(key, { value, checkedAt: now });
-  return value.map(item => ({ ...item }));
+  pluginPathsCache.set(key, { value: [], checkedAt: 0 });
+  schedulePluginPathsRefresh(key, cwd);
+  return [];
 }
 
 function getClaudePluginSkillRoots() {
@@ -477,9 +565,17 @@ function discoverOmpSkills(service, options = {}) {
   return cloneSkills(discovered);
 }
 
+function flushDiscoveryRefresh() {
+  return Promise.all([
+    ...settingsRefreshPending.values(),
+    ...pluginPathsRefreshPending.values()
+  ]);
+}
+
 module.exports = {
   DEFAULT_SKILL_SETTINGS,
   discoverOmpSkills,
   deduplicateDiscoveredSkills,
-  readEffectiveSettings
+  readEffectiveSettings,
+  flushDiscoveryRefresh
 };

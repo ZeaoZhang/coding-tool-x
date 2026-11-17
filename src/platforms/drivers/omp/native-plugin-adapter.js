@@ -1,7 +1,10 @@
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
+const { promisify } = require('util');
 const { getOmpCommand, getOmpPaths } = require('./config');
+
+const execFileAsync = promisify(execFile);
 
 const VALID_SCOPES = new Set(['user', 'project']);
 const GENERIC_SOURCE_KINDS = new Set(['npm', 'link', 'linked', 'marketplace']);
@@ -144,9 +147,16 @@ class OmpNativePluginAdapter {
   constructor(options = {}) {
     this.commandRunner = options.commandRunner || execFileSync;
     this.pathContext = options.pathContext || null;
-    this.cacheTtlMs = Math.max(0, Number(options.cacheTtlMs) || 1000);
+    this.cacheTtlMs = Math.max(0, Number(options.cacheTtlMs) || 30000);
     this._operationCache = new Map();
     this._operationInflight = new Map();
+    this._listRefreshInflight = new Map();
+    this._generation = 0;
+    // Tests and embedders inject a synchronous runner; the production path
+    // must not block the HTTP event loop while a plugin mutation downloads.
+    this.asyncMutations = options.asyncMutations !== undefined
+      ? options.asyncMutations === true
+      : (process.env.NODE_ENV !== 'test' && !options.commandRunner);
   }
 
   _operationKey(operation, options = {}) {
@@ -193,6 +203,7 @@ class OmpNativePluginAdapter {
   }
 
   invalidate(options = {}) {
+    this._generation += 1;
     const cwd = options.cwd ? path.resolve(options.cwd) : process.cwd();
     const scope = normalizeScope(options.scope, '');
     const suffix = `:${cwd}:${scope}`;
@@ -224,20 +235,41 @@ class OmpNativePluginAdapter {
     return parseJsonOutput(output, args.join(' '), emptyMessages);
   }
 
-  listPlugins(options = {}) {
-    return this._cachedOperation(
-      'plugin:list',
-      options,
-      () => this._listPluginsUncached(options)
-    );
+  _runAsync(args, options = {}) {
+    const command = getOmpCommand();
+    return execFileAsync(command, args, {
+      cwd: options.cwd || process.cwd(),
+      encoding: 'utf8',
+      timeout: options.timeout || 120000,
+      windowsHide: true,
+      maxBuffer: 16 * 1024 * 1024
+    }).catch((error) => {
+      const detail = String(error?.stderr || error?.message || error).trim();
+      throw new Error(
+        `OMP 17.1+ plugin CLI command failed (${command} ${args.join(' ')}): ${detail}`
+      );
+    });
   }
 
-  _listPluginsUncached(options = {}) {
-    const payload = this.runJson(['plugin', 'list', '--json'], options);
+  listPlugins(options = {}) {
+    const key = this._operationKey('plugin:list', options);
+    const now = Date.now();
+    const cached = this._operationCache.get(key);
+    if (!options.force && cached) {
+      if (now - cached.cachedAt >= this.cacheTtlMs) {
+        this._scheduleListRefresh(key, options);
+      }
+      return this._clone(cached.value);
+    }
+    const value = this._listPluginsUncached(options);
+    this._operationCache.set(key, { value: this._clone(value), cachedAt: now });
+    return this._clone(value);
+  }
+
+  _normalizePluginsPayload(payload, options = {}) {
     if (!payload || typeof payload !== 'object') {
       throw new Error('OMP plugin list returned an invalid JSON payload');
     }
-
     const plugins = [];
     for (const entry of collectEntries(payload.npm || [])) {
       plugins.push(normalizeInstalledPlugin(entry, 'npm'));
@@ -254,6 +286,36 @@ class OmpNativePluginAdapter {
         ? plugins
         : plugins.filter(plugin => plugin.scope !== 'project')
     };
+  }
+
+  _scheduleListRefresh(key, options = {}) {
+    if (this._listRefreshInflight.has(key)) return;
+    const generation = this._generation;
+    const task = execFileAsync(getOmpCommand(), ['plugin', 'list', '--json'], {
+      cwd: options.cwd || process.cwd(),
+      encoding: 'utf8',
+      timeout: options.timeout || 120000,
+      windowsHide: true,
+      maxBuffer: 16 * 1024 * 1024
+    }).then(({ stdout }) => {
+      if (generation !== this._generation) return;
+      const payload = parseJsonOutput(stdout, 'plugin list');
+      if (!payload) return;
+      const value = this._normalizePluginsPayload(payload, options);
+      this._operationCache.set(key, { value: this._clone(value), cachedAt: Date.now() });
+    }).catch(() => {
+      if (generation !== this._generation) return;
+      const cached = this._operationCache.get(key);
+      if (cached) cached.cachedAt = Date.now();
+    }).finally(() => {
+      if (this._listRefreshInflight.get(key) === task) this._listRefreshInflight.delete(key);
+    });
+    this._listRefreshInflight.set(key, task);
+  }
+
+  _listPluginsUncached(options = {}) {
+    const payload = this.runJson(['plugin', 'list', '--json'], options);
+    return this._normalizePluginsPayload(payload, options);
   }
 
   listLooseExtensions() {
@@ -316,14 +378,7 @@ class OmpNativePluginAdapter {
     return plugins;
   }
 
-  installPlugin(target, metadata = {}, options = {}) {
-    const pluginId = String(target || metadata.pluginId || metadata.installSource || '').trim();
-    if (!pluginId) throw new Error('Missing OMP plugin target');
-    const args = ['plugin', 'install', pluginId];
-    if (options.force) args.push('--force');
-    if (options.scope) args.push('--scope', normalizeScope(options.scope));
-    this.run(args, options);
-    this.invalidate(options);
+  _installedPluginResult(pluginId, metadata = {}, options = {}) {
     const parsed = splitMarketplaceId(pluginId);
     return {
       success: true,
@@ -338,39 +393,87 @@ class OmpNativePluginAdapter {
     };
   }
 
+  installPlugin(target, metadata = {}, options = {}) {
+    const pluginId = String(target || metadata.pluginId || metadata.installSource || '').trim();
+    if (!pluginId) throw new Error('Missing OMP plugin target');
+    const args = ['plugin', 'install', pluginId];
+    if (options.force) args.push('--force');
+    if (options.scope) args.push('--scope', normalizeScope(options.scope));
+    if (this.asyncMutations) {
+      return this._runAsync(args, options).then(() => {
+        this.invalidate(options);
+        return this._installedPluginResult(pluginId, metadata, options);
+      });
+    }
+    this.run(args, options);
+    this.invalidate(options);
+    return this._installedPluginResult(pluginId, metadata, options);
+  }
+
   uninstallPlugin(pluginId, options = {}) {
-    this.runMutation('uninstall', pluginId, options);
+    const args = this._mutationArgs('uninstall', pluginId, options);
+    if (this.asyncMutations) {
+      return this._runAsync(args, options).then(() => {
+        this.invalidate(options);
+        return { success: true, message: 'Plugin uninstalled successfully' };
+      });
+    }
+    this.run(args, options);
+    this.invalidate(options);
     return { success: true, message: 'Plugin uninstalled successfully' };
   }
 
   togglePlugin(pluginId, enabled, options = {}) {
-    this.runMutation(enabled ? 'enable' : 'disable', pluginId, options);
-    return {
+    const args = this._mutationArgs(enabled ? 'enable' : 'disable', pluginId, options);
+    const result = {
       pluginId,
       name: splitMarketplaceId(pluginId).name,
       scope: options.scope || 'user',
       enabled,
       success: true
     };
+    if (this.asyncMutations) {
+      return this._runAsync(args, options).then(() => {
+        this.invalidate(options);
+        return result;
+      });
+    }
+    this.run(args, options);
+    this.invalidate(options);
+    return result;
   }
 
   updatePluginConfig(pluginId, config, options = {}) {
     const target = String(pluginId || '').trim();
     if (!target) throw new Error('Missing OMP pluginId');
+    const commands = [];
     for (const [key, value] of Object.entries(config || {})) {
       const serialized = typeof value === 'string' ? value : JSON.stringify(value);
       const args = ['plugin', 'config', 'set', target, key, serialized];
       if (options.scope) args.push('--scope', normalizeScope(options.scope));
-      this.run(args, options);
+      commands.push(args);
     }
-    this.invalidate(options);
-    return {
+    const result = {
       success: true,
       message: `Configuration updated for plugin "${target}"`
     };
+    if (this.asyncMutations) {
+      return commands.reduce(
+        (previous, args) => previous.then(() => this._runAsync(args, options)),
+        Promise.resolve()
+      ).then(() => {
+        this.invalidate(options);
+        return result;
+      });
+    }
+    for (const args of commands) {
+      this.run(args, options);
+    }
+    this.invalidate(options);
+    return result;
   }
 
-  runMutation(action, pluginId, options = {}) {
+  _mutationArgs(action, pluginId, options = {}) {
     const target = String(pluginId || '').trim();
     if (!target) throw new Error('Missing OMP pluginId');
     if (target.startsWith('extension:')) {
@@ -378,6 +481,11 @@ class OmpNativePluginAdapter {
     }
     const args = ['plugin', action, target];
     if (options.scope) args.push('--scope', normalizeScope(options.scope));
+    return args;
+  }
+
+  runMutation(action, pluginId, options = {}) {
+    const args = this._mutationArgs(action, pluginId, options);
     this.run(args, options);
     this.invalidate(options);
   }

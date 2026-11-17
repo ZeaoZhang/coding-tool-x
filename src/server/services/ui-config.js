@@ -2,6 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const eventBus = require('../../plugins/event-bus');
 const { PATHS } = require('../../config/paths');
 const {
   DEFAULT_ENABLED_CLI_PLATFORMS,
@@ -175,6 +176,7 @@ function saveUIConfig(config) {
     uiConfigCache = clone(normalizedConfig);
     cacheInitialized = true;
     installConfigWatcher();
+    eventBus.emitSync('ui-config:saved', { config: clone(normalizedConfig) });
     return clone(normalizedConfig);
   } catch (error) {
     console.error('Error saving UI config:', error);

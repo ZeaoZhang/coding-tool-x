@@ -217,4 +217,74 @@ describe('EffectiveControlService', () => {
       env: { GITHUB_TOKEN: 'secret-value' }
     })).toThrow(/secret/i);
   });
+
+  test('bulk Skill registration writes once and matches per-entry identity dedupe', () => {
+    const codex = makeSkillEntry('user', 'codex-skill', { platform: 'codex' });
+    service.registerSkill(codex);
+    const writeSpy = vi.spyOn(service.store, 'write');
+    writeSpy.mockClear();
+
+    const alpha = makeSkillEntry('user', 'alpha');
+    const beta = makeSkillEntry('user', 'beta');
+    const registered = service.registerSkills([alpha, beta], { scope: 'user' });
+
+    expect(writeSpy).toHaveBeenCalledTimes(1);
+    expect(registered.get(alpha.controlKey)).toEqual(expect.objectContaining({
+      controlKey: alpha.controlKey,
+      platform: 'claude'
+    }));
+    const claudeEntries = service.getSkillEntries({ scope: 'user', platform: 'claude' }).entries;
+    expect(Object.keys(claudeEntries).sort()).toEqual([alpha.controlKey, beta.controlKey].sort());
+    expect(service.getSkillEntries({ scope: 'user', platform: 'codex' }).entries[codex.controlKey])
+      .toEqual(expect.objectContaining({ platform: 'codex' }));
+
+    // Same source identity under a new controlKey replaces the old row.
+    const renamed = makeSkillEntry('user', 'alpha', { controlKey: 'renamed-alpha' });
+    service.registerSkills([renamed], { scope: 'user' });
+    const after = service.getSkillEntries({ scope: 'user', platform: 'claude' }).entries;
+    expect(after['renamed-alpha']).toBeTruthy();
+    expect(after[alpha.controlKey]).toBeUndefined();
+  });
+
+  test('bulk MCP registration shares one write and preserves platform filtering', () => {
+    const writeSpy = vi.spyOn(service.store, 'write');
+    writeSpy.mockClear();
+    const entries = [
+      {
+        kind: 'mcp',
+        controlKey: 'mcp:claude:user:alpha',
+        platform: 'claude',
+        scope: 'user',
+        name: 'alpha',
+        transport: 'stdio',
+        enabled: true,
+        trust: 'approved',
+        secretRefs: ['env:ALPHA_TOKEN']
+      },
+      {
+        kind: 'mcp',
+        controlKey: 'mcp:codex:user:beta',
+        platform: 'codex',
+        scope: 'user',
+        name: 'beta',
+        transport: 'streamable_http',
+        enabled: false,
+        trust: 'approved',
+        secretRefs: []
+      }
+    ];
+
+    const registered = service.registerMcpEntries(entries, { scope: 'user' });
+    expect(writeSpy).toHaveBeenCalledTimes(1);
+    expect(registered.size).toBe(2);
+
+    const claude = service.getMcpEntries({ scope: 'user', platform: 'claude' }).entries;
+    expect(claude['mcp:claude:user:alpha']).toEqual(expect.objectContaining({
+      transport: 'stdio',
+      riskTier: 'local_exec',
+      egressProfile: 'local-process'
+    }));
+    expect(Object.keys(service.getMcpEntries({ scope: 'user', platform: 'codex' }).entries))
+      .toEqual(['mcp:codex:user:beta']);
+  });
 });

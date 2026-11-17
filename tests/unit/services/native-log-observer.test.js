@@ -6,6 +6,7 @@ const WEBSOCKET_PATH = require.resolve('../../../src/server/websocket-server');
 
 let observer;
 let broadcastLog;
+const allowAllPlatforms = platforms => platforms;
 
 function injectStub(modulePath, exports) {
   require.cache[modulePath] = {
@@ -142,7 +143,7 @@ test('discovers native log cursors from registry capabilities and polls them', (
   const runtime = makeRuntime(statistics, nativeDriver);
   const registry = { list: vi.fn(() => [{ key: 'claude' }]) };
 
-  observer.configureNativeCliLogObserver({ enabled: true, intervalSeconds: 60, runtime, registry });
+  observer.configureNativeCliLogObserver({ enabled: true, intervalSeconds: 60, runtime, registry, filterPlatforms: allowAllPlatforms });
   expect(nativeDriver.createNativeLogCursor).toHaveBeenCalledWith({ skipInitialParse: true });
   expect(cursor.initialize).toHaveBeenCalledTimes(1);
 
@@ -163,11 +164,11 @@ test('prepares cursors without polling and starts them only when requested', () 
   const runtime = makeRuntime(statistics, nativeDriver);
   const registry = { list: vi.fn(() => [{ key: 'claude' }]) };
 
-  const prepared = observer.prepareNativeCliLogObserver({ enabled: true, runtime, registry });
+  const prepared = observer.prepareNativeCliLogObserver({ enabled: true, runtime, registry, filterPlatforms: allowAllPlatforms });
   expect(prepared.state).toBe('prepared');
   expect(cursor.readNewEvents).not.toHaveBeenCalled();
 
-  const started = observer.startNativeCliLogObserver({ runtime, registry, pollImmediately: true });
+  const started = observer.startNativeCliLogObserver({ runtime, registry, filterPlatforms: allowAllPlatforms, pollImmediately: true });
   expect(started.state).toBe('running');
   expect(cursor.readNewEvents).toHaveBeenCalledTimes(1);
 });
@@ -202,7 +203,7 @@ test('memory tracing reports per-platform cursor phases and bounded reader count
   const runtime = makeRuntime(statistics, nativeDriver);
   const registry = { list: vi.fn(() => [{ key: 'codex' }]) };
 
-  observer.prepareNativeCliLogObserver({ enabled: true, runtime, registry });
+  observer.prepareNativeCliLogObserver({ enabled: true, runtime, registry, filterPlatforms: allowAllPlatforms });
   observer.pollNativeCliLogs({ runtime, registry });
 
   const records = log.mock.calls

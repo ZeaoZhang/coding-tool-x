@@ -49,7 +49,9 @@ const CODEX_PLUGINS_CACHE_DIR = path.join(CODEX_PLUGINS_DIR, 'cache');
 const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
 const REPO_SOURCE_META_FILE = '.cc-tool-plugin-source.json';
 const SUPPORTED_REPO_PROVIDERS = ['github', 'gitlab', 'local'];
-const PLUGIN_LIST_TTL_MS = 1000;
+// Plugin mutations invalidate this cache explicitly; a longer TTL keeps the
+// plugin panel from re-walking native directories on every open.
+const PLUGIN_LIST_TTL_MS = 30 * 1000;
 const MAX_PLUGIN_DETAIL_BYTES = 128 * 1024;
 const MAX_PLUGIN_MANIFEST_BYTES = 256 * 1024;
 const MAX_PLUGIN_STATE_BYTES = 4 * 1024 * 1024;
@@ -599,6 +601,17 @@ class PluginsService {
     }
     const key = this._pluginListKey(options);
     this._pluginListCache.delete(key);
+  }
+
+  _finalizePluginMutation(result, options) {
+    if (result && typeof result.then === 'function') {
+      return result.then(value => {
+        this._invalidatePluginList(options);
+        return value;
+      });
+    }
+    this._invalidatePluginList(options);
+    return result;
   }
 
 
@@ -1975,8 +1988,7 @@ class PluginsService {
         || ''
       ).trim();
       const result = this.ompNativeAdapter.installPlugin(target, metadata, options);
-      this._invalidatePluginList(options);
-      return result;
+      return this._finalizePluginMutation(result, options);
     }
 
     if (this._isOpenCode()) {
@@ -2386,8 +2398,7 @@ class PluginsService {
     }
     if (this._isOmp()) {
       const result = this.ompNativeAdapter.uninstallPlugin(name, options);
-      this._invalidatePluginList(options);
-      return result;
+      return this._finalizePluginMutation(result, options);
     }
 
     if (this._isOpenCode()) {
@@ -2530,8 +2541,7 @@ class PluginsService {
 
     if (this._isOmp()) {
       const result = this.ompNativeAdapter.togglePlugin(name, enabled, options);
-      this._invalidatePluginList(options);
-      return result;
+      return this._finalizePluginMutation(result, options);
     }
 
     if (this._isOpenCode()) {
@@ -2606,8 +2616,7 @@ class PluginsService {
 
     if (this._isOmp()) {
       const result = this.ompNativeAdapter.updatePluginConfig(name, config, options);
-      this._invalidatePluginList(options);
-      return result;
+      return this._finalizePluginMutation(result, options);
     }
 
     if (this._isOpenCode()) {

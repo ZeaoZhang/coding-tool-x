@@ -10,7 +10,7 @@ const path = require('path');
 const https = require('https');
 const http = require('http');
 const { execFileSync } = require('child_process');
-const { randomUUID } = require('crypto');
+const { randomUUID, createHash } = require('crypto');
 const {
   parseSkillContent,
 } = require('./format-converter');
@@ -53,6 +53,7 @@ const DEFAULT_GITLAB_HOST = 'https://gitlab.com';
 const CACHE_TTL = 5 * 60 * 1000;
 const MAX_SKILL_DETAIL_BYTES = 128 * 1024;
 const MAX_PREPARED_SKILL_CACHE_ENTRIES = 32;
+const MAX_LOCAL_ARTIFACT_CACHE_ENTRIES = 2048;
 
 function sanitizeRefreshError(value) {
   return String(value || '')
@@ -346,6 +347,7 @@ class SkillService {
     this.skillsCache = null;
     this.cacheTime = 0;
     this._preparedSkillsCache = new Map();
+    this._localArtifactCache = new Map();
     this._cacheGeneration = 0;
     this._remoteSkillsCache = null;
     this._remoteSkillsFetchedAt = 0;
@@ -507,6 +509,7 @@ class SkillService {
     this.skillsCache = null;
     this.cacheTime = 0;
     this._preparedSkillsCache.clear();
+    this._localArtifactCache.clear();
     this._remoteSkillsCache = null;
     this._remoteSkillsFetchedAt = 0;
     this.githubTokenCache.clear();
@@ -779,6 +782,57 @@ class SkillService {
     return skill.controlKey || `skill:${this.platform}:${scope}:${location}:${sourceKey}`;
   }
 
+  _scanLocalSkillFileEntries(skillDir) {
+    const entries = [];
+    const visit = currentDir => {
+      let currentStat;
+      try {
+        currentStat = fs.lstatSync(currentDir);
+      } catch (error) {
+        throw new Error(`Unable to read local Skill directory: ${currentDir}`, { cause: error });
+      }
+      if (currentStat.isSymbolicLink()) {
+        throw new Error(`Skill repository contains symlink: ${currentDir}`);
+      }
+      let dirents;
+      try {
+        dirents = fs.readdirSync(currentDir, { withFileTypes: true });
+      } catch (error) {
+        throw new Error(`Unable to read local Skill directory: ${currentDir}`, { cause: error });
+      }
+      for (const entry of dirents) {
+        const sourcePath = path.join(currentDir, entry.name);
+        if (entry.isSymbolicLink()) {
+          throw new Error(`Skill repository contains symlink: ${sourcePath}`);
+        }
+        if (entry.isDirectory()) {
+          if (entry.name === 'node_modules') continue;
+          if (currentDir !== skillDir && fs.existsSync(path.join(sourcePath, 'SKILL.md'))) {
+            continue;
+          }
+          visit(sourcePath);
+          continue;
+        }
+        if (!entry.isFile()) continue;
+        const relativePath = normalizeSkillRelativePath(
+          path.relative(skillDir, sourcePath),
+          'skill file path',
+          { allowHiddenSegments: true }
+        );
+        const fileStat = fs.statSync(sourcePath);
+        entries.push({
+          relativePath,
+          sourcePath,
+          size: fileStat.size,
+          mtimeMs: fileStat.mtimeMs
+        });
+      }
+    };
+    visit(skillDir);
+    entries.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+    return entries;
+  }
+
   _materializeLocalArtifact(skill, sourceKey, options = {}) {
     if (!this.artifactStore || !skill.sourcePath) return null;
     if (skill.source === 'remote' || skill.sourceProvider === 'remote' || skill.artifactRoot) return null;
@@ -786,8 +840,24 @@ class SkillService {
     const projectPath = skill.sourceScope === 'project' && options.scope === 'project'
       ? this._skillCwdKey(options)
       : null;
+    const cacheKeyValue = `${this.platform}\u0000${sourceKey}\u0000${root}`;
     try {
-      const files = this._collectLocalSkillFiles(root);
+      const fileEntries = this._scanLocalSkillFileEntries(root);
+      const stamp = createHash('sha1')
+        .update(fileEntries
+          .map(entry => `${entry.relativePath}\u0000${entry.size}\u0000${entry.mtimeMs}`)
+          .join('\n'))
+        .digest('hex');
+      const cached = this._localArtifactCache.get(cacheKeyValue);
+      if (cached && cached.stamp === stamp) {
+        this._localArtifactCache.delete(cacheKeyValue);
+        this._localArtifactCache.set(cacheKeyValue, cached);
+        return cached.artifact;
+      }
+      const files = fileEntries.map(entry => ({
+        relativePath: entry.relativePath,
+        content: fs.readFileSync(entry.sourcePath)
+      }));
       const normalized = this.formatAdapter.normalize({
         platform: this.platform,
         files,
@@ -803,23 +873,30 @@ class SkillService {
         format: normalized.format
       });
       const contentHash = this.artifactStore.hashFileTree?.(normalized.files);
-      if (existing && (!contentHash || existing.contentHash === contentHash)) return existing;
-      return this.artifactStore.publishSkill({
-        platform: this.platform,
-        sourceKey,
-        format: normalized.format,
-        files: normalized.files,
-        metadata: {
-          name: skill.name || skill.directory,
-          description: skill.description || '',
-          directory: skill.directory,
-          fullDirectory: skill.fullDirectory || skill.directory,
-          sourceProvider: skill.sourceProvider || skill.source || 'native',
-          sourceScope: skill.sourceScope || 'user',
-          ...(projectPath ? { projectPath } : {}),
-          revision: skill.revision || null
-        }
-      });
+      const artifact = existing && (!contentHash || existing.contentHash === contentHash)
+        ? existing
+        : this.artifactStore.publishSkill({
+          platform: this.platform,
+          sourceKey,
+          format: normalized.format,
+          files: normalized.files,
+          metadata: {
+            name: skill.name || skill.directory,
+            description: skill.description || '',
+            directory: skill.directory,
+            fullDirectory: skill.fullDirectory || skill.directory,
+            sourceProvider: skill.sourceProvider || skill.source || 'native',
+            sourceScope: skill.sourceScope || 'user',
+            ...(projectPath ? { projectPath } : {}),
+            revision: skill.revision || null
+          }
+        });
+      this._localArtifactCache.delete(cacheKeyValue);
+      this._localArtifactCache.set(cacheKeyValue, { stamp, artifact });
+      while (this._localArtifactCache.size > MAX_LOCAL_ARTIFACT_CACHE_ENTRIES) {
+        this._localArtifactCache.delete(this._localArtifactCache.keys().next().value);
+      }
+      return artifact;
     } catch (error) {
       console.warn(`[SkillService] Materialize local Skill ${skill.directory || ''} failed:`, error.message);
       return {
@@ -919,6 +996,11 @@ class SkillService {
       }));
     }
 
+    if (typeof this.controlService.getSkillEntries === 'function'
+      && typeof this.controlService.registerSkills === 'function') {
+      return this._applyControlStateBulk(skills, options);
+    }
+
     return skills.map(skill => {
       const candidate = this._buildSkillControlEntry(skill, options);
       const scopeOptions = { scope: candidate.scope, projectPath: candidate.projectPath };
@@ -984,23 +1066,187 @@ class SkillService {
           updatedAt: Date.now()
         });
       }
-      const loadable = entry.trust === 'approved' && entry.artifact?.state === 'ready';
+      return this._mapControlledSkill(skill, candidate, entry);
+    });
+  }
+
+  /**
+   * Resolve control state for every Skill with one manifest read and at most
+   * one write per scope. The manifest is several hundred kilobytes; a read per
+   * Skill made a single `/api/skills` request block the event loop for ~1s.
+   */
+  _applyControlStateBulk(skills, options = {}) {
+    const control = this.controlService;
+    const scoped = skills.map(skill => {
+      const candidate = this._buildSkillControlEntry(skill, options);
       return {
-        ...skill,
-        controlKey: entry.controlKey,
-        sourceKey: entry.sourceKey || candidate.sourceKey,
-        scope: entry.scope,
-        sourceScope: entry.scope,
-        projectPath: entry.projectPath,
-        managed: true,
-        cached: entry.cached,
-        enabled: loadable && entry.enabled === true,
-        trust: entry.trust,
-        artifact: entry.artifact,
-        installed: loadable && entry.enabled === true,
-        lastError: entry.lastError || null
+        skill,
+        candidate,
+        scopeKey: `${candidate.scope}\u0000${candidate.projectPath || ''}`
       };
     });
+
+    const loadedByScope = new Map();
+    for (const item of scoped) {
+      if (loadedByScope.has(item.scopeKey)) continue;
+      const { candidate } = item;
+      loadedByScope.set(item.scopeKey, control.getSkillEntries({
+        scope: candidate.scope,
+        projectPath: candidate.projectPath,
+        platform: this.platform
+      }));
+    }
+
+    const snapshotByScope = new Map();
+    const pendingVisibleByScope = new Map();
+    const pendingByScope = new Map();
+    const finalEntries = new Array(scoped.length).fill(null);
+    const pendingIndexes = new Map();
+
+    const isShadowCandidate = (candidate, alternate) => (
+      alternate
+      && alternate.scope === candidate.scope
+      && alternate.projectPath === candidate.projectPath
+      && alternate.targetDirectory === candidate.targetDirectory
+      && alternate.sourceKey !== candidate.sourceKey
+      && alternate.artifact?.root
+    );
+
+    const rememberPendingVisible = (item, entry) => {
+      if (!entry) return;
+      let visible = pendingVisibleByScope.get(item.scopeKey);
+      if (!visible) {
+        visible = [];
+        pendingVisibleByScope.set(item.scopeKey, visible);
+      }
+      visible.push(entry);
+    };
+
+    const queueRegistration = (item, index, entry) => {
+      let pending = pendingByScope.get(item.scopeKey);
+      if (!pending) {
+        pending = new Map();
+        pendingByScope.set(item.scopeKey, pending);
+        pendingIndexes.set(item.scopeKey, []);
+      }
+      pending.set(entry.controlKey, entry);
+      pendingIndexes.get(item.scopeKey).push({ index, controlKey: entry.controlKey, fallback: entry });
+      rememberPendingVisible(item, entry);
+    };
+
+    scoped.forEach((item, index) => {
+      const { candidate, skill } = item;
+      const loaded = loadedByScope.get(item.scopeKey);
+      const isNative = skill.sourceProvider === 'native' || skill.source === 'native-installed';
+      let entry = loaded.entries[candidate.controlKey] || null;
+      if (!entry && isNative) {
+        const pendingVisible = pendingVisibleByScope.get(item.scopeKey) || [];
+        entry = pendingVisible.find(alternate => isShadowCandidate(candidate, alternate)) || null;
+      }
+      if (!entry && isNative) {
+        let effective = snapshotByScope.get(item.scopeKey);
+        if (effective === undefined) {
+          effective = typeof control.getEffectiveSnapshot === 'function'
+            ? control.getEffectiveSnapshot({
+              platform: this.platform,
+              scope: candidate.scope,
+              projectPath: candidate.projectPath
+            })
+            : null;
+          snapshotByScope.set(item.scopeKey, effective);
+        }
+        entry = effective?.skills?.active?.find(alternate => isShadowCandidate(candidate, alternate)) || null;
+      }
+      if (!entry) {
+        queueRegistration(item, index, candidate);
+        return;
+      }
+      if (
+        candidate.artifact?.root
+        && candidate.artifact?.contentHash
+        && candidate.artifact.contentHash !== entry.artifact?.contentHash
+      ) {
+        if (entry.enabled || entry.projection?.state === 'enabled') {
+          try {
+            control.setSkillEnabled({
+              platform: this.platform,
+              controlKey: entry.controlKey,
+              scope: candidate.scope,
+              projectPath: candidate.projectPath,
+              enabled: false
+            });
+          } catch (error) {
+            candidate.lastError = error.message;
+          }
+        }
+        queueRegistration(item, index, {
+          ...entry,
+          artifact: { ...(entry.artifact || {}), ...candidate.artifact },
+          cached: candidate.cached,
+          enabled: false,
+          trust: 'needs_review',
+          projection: { ...(entry.projection || {}), state: 'disabled', updatedAt: Date.now() },
+          lastError: candidate.lastError || null,
+          updatedAt: Date.now()
+        });
+        return;
+      }
+      if (
+        isNative
+        && entry.sourceKey === candidate.sourceKey
+        && !entry.projection?.sourceKey
+        && candidate.projection?.sourceKey
+      ) {
+        queueRegistration(item, index, {
+          ...entry,
+          projection: {
+            ...(entry.projection || {}),
+            sourceKey: candidate.projection.sourceKey,
+            state: entry.enabled ? 'enabled' : (entry.projection?.state || 'disabled'),
+            updatedAt: Date.now()
+          },
+          updatedAt: Date.now()
+        });
+        return;
+      }
+      finalEntries[index] = entry;
+    });
+
+    for (const [scopeKey, pending] of pendingByScope) {
+      const { scopeOptions } = loadedByScope.get(scopeKey);
+      const registered = control.registerSkills([...pending.values()], {
+        scope: scopeOptions.scope,
+        projectPath: scopeOptions.projectPath
+      });
+      for (const { index, controlKey, fallback } of pendingIndexes.get(scopeKey)) {
+        finalEntries[index] = registered.get(controlKey) || fallback;
+      }
+    }
+
+    return scoped.map((item, index) => this._mapControlledSkill(
+      item.skill,
+      item.candidate,
+      finalEntries[index]
+    ));
+  }
+
+  _mapControlledSkill(skill, candidate, entry) {
+    const loadable = entry.trust === 'approved' && entry.artifact?.state === 'ready';
+    return {
+      ...skill,
+      controlKey: entry.controlKey,
+      sourceKey: entry.sourceKey || candidate.sourceKey,
+      scope: entry.scope,
+      sourceScope: entry.scope,
+      projectPath: entry.projectPath,
+      managed: true,
+      cached: entry.cached,
+      enabled: loadable && entry.enabled === true,
+      trust: entry.trust,
+      artifact: entry.artifact,
+      installed: loadable && entry.enabled === true,
+      lastError: entry.lastError || null
+    };
   }
 
   _latestRefreshTask(options = {}) {

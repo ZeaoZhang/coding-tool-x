@@ -9,8 +9,10 @@ const claudeDriver = require('../../../src/platforms/drivers/claude/native-logs'
 const codexDriver = require('../../../src/platforms/drivers/codex/native-logs');
 const geminiDriver = require('../../../src/platforms/drivers/gemini/native-logs');
 const opencodeDriver = require('../../../src/platforms/drivers/opencode/native-logs');
+const ompDriver = require('../../../src/platforms/drivers/omp/native-logs');
 const {
   createScannedFileCursor,
+  createIncrementalJsonlCursor,
   createSelectiveJsonLineParser,
   visitJsonLinesForward,
   visitJsonLinesReverse
@@ -549,6 +551,58 @@ describe('file-backed native log cursors', () => {
     expect(warn).toHaveBeenCalledTimes(1);
     warn.mockRestore();
   });
+
+  test('initializes the baseline in chunks without freezing the event loop', async () => {
+    const files = [];
+    for (let index = 0; index < 24; index += 1) {
+      const filePath = path.join(testDir, 'claude', `session-${index}.jsonl`);
+      writeJsonLines(filePath, [{ id: `old-${index}`, tokens: { input: 1 } }]);
+      files.push(filePath);
+    }
+    const cursor = createIncrementalJsonlCursor({
+      scanFiles: () => files,
+      parseLine: () => null,
+      skipInitialParse: true
+    });
+
+    let completed = false;
+    const pending = cursor.initializeAsync({ batchSize: 2 }).then(() => { completed = true; });
+    // A poll that races the baseline must not consume a half-built state.
+    expect(cursor.readNewEvents()).toEqual([]);
+    // The baseline yields to the loop before running to completion.
+    await new Promise(resolve => setImmediate(resolve));
+    expect(completed).toBe(false);
+    await pending;
+
+    expect(cursor.isInitialized()).toBe(true);
+    expect(cursor.readNewEvents()).toEqual([]);
+  });
+
+  test('initializes scanned file baselines in chunks without blocking the loop', async () => {
+    const files = [];
+    for (let index = 0; index < 24; index += 1) {
+      const filePath = path.join(testDir, 'scanned', `session-${index}.json`);
+      fs.mkdirSync(path.dirname(filePath), { recursive: true });
+      fs.writeFileSync(filePath, JSON.stringify({ id: index }));
+      files.push(filePath);
+    }
+    const cursor = createScannedFileCursor({
+      scanFiles: () => files,
+      parseFile: () => [],
+      normalizeEvent: event => event,
+      skipInitialParse: true
+    });
+
+    let completed = false;
+    const pending = cursor.initializeAsync({ batchSize: 2 }).then(() => { completed = true; });
+    expect(cursor.readNewEvents()).toEqual([]);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(completed).toBe(false);
+    await pending;
+
+    expect(cursor.isInitialized()).toBe(true);
+    expect(cursor.readNewEvents()).toEqual([]);
+  });
 });
 
 describe('OpenCode native log cursor', () => {
@@ -589,5 +643,64 @@ describe('OpenCode native log cursor', () => {
       provider: 'openai'
     })]);
     db.close();
+  });
+});
+
+describe('composite native log cursors', () => {
+  test('Gemini exposes a chunked async baseline', async () => {
+    const root = path.join(testDir, 'gemini-async');
+    for (let index = 0; index < 8; index += 1) {
+      writeJsonLines(path.join(root, `session-${index}.jsonl`), [
+        { id: `old-${index}`, tokens: { input: 1 } }
+      ]);
+    }
+    fs.writeFileSync(path.join(root, 'session-whole.json'), JSON.stringify({
+      sessionId: 'whole',
+      messages: [{ id: 'whole-1', usage: { input_tokens: 1 } }]
+    }));
+    const cursor = geminiDriver
+      .createDriver({ nativeRoot: root })
+      .createNativeLogCursor({ skipInitialParse: true });
+
+    expect(typeof cursor.initializeAsync).toBe('function');
+    let completed = false;
+    const pending = cursor.initializeAsync({ batchSize: 2 }).then(() => { completed = true; });
+    expect(cursor.readNewEvents()).toEqual([]);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(completed).toBe(false);
+    await pending;
+
+    expect(cursor.readNewEvents()).toEqual([]);
+  });
+
+  test('OMP exposes a chunked async baseline', async () => {
+    const previousAgentDir = process.env.OMP_CODING_AGENT_DIR;
+    process.env.OMP_CODING_AGENT_DIR = path.join(testDir, 'omp-agent');
+    try {
+      for (let index = 0; index < 4; index += 1) {
+        writeJsonLines(path.join(testDir, 'omp-agent', 'sessions', `session-async-${index}.jsonl`), [
+          { type: 'session', id: `omp-session-async-${index}` },
+          {
+            type: 'message',
+            id: 'old',
+            message: { role: 'assistant', usage: { input: 1, output: 1 } }
+          }
+        ]);
+      }
+      const cursor = ompDriver.createDriver().createNativeLogCursor({ skipInitialParse: true });
+
+      expect(typeof cursor.initializeAsync).toBe('function');
+      let completed = false;
+      const pending = cursor.initializeAsync({ batchSize: 2 }).then(() => { completed = true; });
+      expect(cursor.readNewEvents()).toEqual([]);
+      await new Promise(resolve => setImmediate(resolve));
+      expect(completed).toBe(false);
+      await pending;
+
+      expect(cursor.readNewEvents()).toEqual([]);
+    } finally {
+      if (previousAgentDir === undefined) delete process.env.OMP_CODING_AGENT_DIR;
+      else process.env.OMP_CODING_AGENT_DIR = previousAgentDir;
+    }
   });
 });

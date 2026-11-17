@@ -166,13 +166,23 @@ describe('session-history-index', () => {
     index = null;
   });
 
-  function setupIndex({ ftsEnabledOverride = false } = {}) {
+  function setupIndex({
+    ftsEnabledOverride = false,
+    storeAssistantContent = true,
+    messagesWorkerRunner,
+    messagesPageCacheMaxBytes,
+    ftsAcceleratorMinMessages
+  } = {}) {
     state = createFixtureState();
     index = createSessionHistoryIndex({
       dbPath: state.dbPath,
       adapterRegistry: { claude: state.adapter },
       workerRunner: vi.fn(async () => {}),
-      ftsEnabledOverride
+      ftsEnabledOverride,
+      storeAssistantContent,
+      ...(messagesWorkerRunner ? { messagesWorkerRunner } : {}),
+      ...(messagesPageCacheMaxBytes !== undefined ? { messagesPageCacheMaxBytes } : {}),
+      ...(ftsAcceleratorMinMessages !== undefined ? { ftsAcceleratorMinMessages } : {})
     });
     return state;
   }
@@ -302,6 +312,268 @@ describe('session-history-index', () => {
     await index.ensureSourceIndexed('claude', { force: true, consistency: 'complete' });
 
     expect(fixture.parseCounts.get(filePath)).toBe(firstCount);
+  });
+
+  it('stores only a bounded first-message preview', async () => {
+    const fixture = setupIndex();
+    const longPreview = 'preview-'.repeat(1000);
+    fixture.writeFixtureFile({
+      name: 'long-preview.jsonl',
+      content: '{"type":"metadata"}\n',
+      session: makeSessionFixture('long-preview', 'preview-project', {
+        firstMessage: longPreview
+      }),
+      messages: makeMessageFixtures(2)
+    });
+
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    const db = index._getDb();
+    const summary = db.prepare(
+      'SELECT first_message FROM session_summary WHERE source = ? AND session_id = ?'
+    ).get('claude', 'long-preview');
+    const file = db.prepare(
+      'SELECT first_message FROM session_file WHERE source = ? AND session_id = ?'
+    ).get('claude', 'long-preview');
+
+    expect(summary.first_message).toHaveLength(1024);
+    expect(file.first_message).toHaveLength(1024);
+  });
+
+  it('stores only user content and restricts search to user messages', async () => {
+    const fixture = setupIndex({ storeAssistantContent: false, ftsEnabledOverride: true });
+    fixture.writeFixtureFile({
+      name: 'roles.jsonl',
+      content: '{"type":"metadata"}\n',
+      session: makeSessionFixture('roles-session', 'roles-project'),
+      messages: [
+        {
+          messageId: 'user-1',
+          role: 'user',
+          type: 'user',
+          content: 'uniquepromptword',
+          timestamp: Date.now() - 1000,
+          userMessageNumber: 1
+        },
+        {
+          messageId: 'assistant-1',
+          role: 'assistant',
+          type: 'assistant',
+          content: 'uniqueanswerword',
+          timestamp: Date.now()
+        }
+      ]
+    });
+
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    const db = index._getDb();
+    const rows = db.prepare(
+      'SELECT role, content FROM session_message WHERE source = ? AND session_id = ? ORDER BY ordinal'
+    ).all('claude', 'roles-session');
+    expect(rows.map(row => row.role)).toEqual(['user', 'assistant']);
+    expect(rows[0].content).toBe('uniquepromptword');
+    expect(rows[1].content).toBeNull();
+
+    const userHits = await index.searchSessions('claude', 'uniquepromptword', { limit: 10 });
+    const assistantHits = await index.searchSessions('claude', 'uniqueanswerword', { limit: 10 });
+    expect(userHits).toHaveLength(1);
+    expect(assistantHits).toHaveLength(0);
+  });
+
+  it('uses the FTS accelerator for user-only matches when the threshold is met', async () => {
+    const fixture = setupIndex({
+      storeAssistantContent: false,
+      ftsEnabledOverride: true,
+      ftsAcceleratorMinMessages: 0
+    });
+    fixture.writeFixtureFile({
+      name: 'fts.jsonl',
+      content: '{"type":"metadata"}\n',
+      session: makeSessionFixture('fts-session', 'fts-project'),
+      messages: [
+        {
+          messageId: 'user-1',
+          role: 'user',
+          type: 'user',
+          content: 'acceleratorneedle',
+          timestamp: Date.now() - 1000,
+          userMessageNumber: 1
+        },
+        {
+          messageId: 'assistant-1',
+          role: 'assistant',
+          type: 'assistant',
+          content: 'assistantneedleonly',
+          timestamp: Date.now()
+        }
+      ]
+    });
+
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    expect(await index.searchSessions('claude', 'acceleratorneedle', { limit: 10 })).toHaveLength(1);
+    expect(await index.searchSessions('claude', 'assistantneedleonly', { limit: 10 })).toHaveLength(0);
+  });
+
+  it('hydrates message pages from the source file when assistant content is not stored', async () => {
+    const messagesWorkerRunner = vi.fn(async (_source, _dbPath, _sessionId, options) => ({
+      messages: [{ role: 'assistant', content: 'live-from-file' }],
+      metadata: {},
+      pagination: { page: options.page, limit: options.limit, total: 1, hasMore: false }
+    }));
+    const fixture = setupIndex({
+      storeAssistantContent: false,
+      messagesWorkerRunner
+    });
+    fixture.writeFixtureFile({
+      name: 'hydrate.jsonl',
+      content: '{"type":"metadata"}\n',
+      session: makeSessionFixture('hydrate-session', 'hydrate-project'),
+      messages: makeMessageFixtures(2)
+    });
+
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    const page = await index.getMessagePage('claude', 'hydrate-session', {
+      page: 2,
+      limit: 5,
+      order: 'asc'
+    });
+
+    expect(messagesWorkerRunner).toHaveBeenCalledWith(
+      'claude',
+      expect.any(String),
+      'hydrate-session',
+      expect.objectContaining({ page: 2, limit: 5, order: 'asc' })
+    );
+    expect(page.messages[0].content).toBe('live-from-file');
+
+    await index.getMessagePage('claude', 'hydrate-session', { page: 2, limit: 5, order: 'asc' });
+    expect(messagesWorkerRunner).toHaveBeenCalledTimes(1);
+
+    // Missing message rows are repaired from the fixture file by the per-session
+    // index path; the outline must not need another worker round trip.
+    index._getDb().prepare(
+      'DELETE FROM session_message WHERE source = ? AND session_id = ?'
+    ).run('claude', 'hydrate-session');
+    const outline = await index.getSessionOutline('claude', 'hydrate-session');
+    expect(outline.items).toHaveLength(1);
+    expect(outline.items[0].preview).toContain('User message');
+    expect(messagesWorkerRunner).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes only the read session from the native file and stores user content only', async () => {
+    const fixture = setupIndex({ storeAssistantContent: false });
+    const descriptor = fixture.writeFixtureFile({
+      name: 'live.jsonl',
+      content: 'live fixture\n',
+      session: makeSessionFixture('live-session', 'live-project'),
+      messages: makeMessageFixtures(1)
+    });
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    expect((await index.getSessionOutline('claude', 'live-session')).items).toHaveLength(1);
+
+    fixture.rewriteFixtureFile(descriptor.filePath, 'live fixture grew with more bytes\n', {
+      session: makeSessionFixture('live-session', 'live-project'),
+      messages: makeMessageFixtures(3)
+    });
+    const outline = await index.getSessionOutline('claude', 'live-session');
+    expect(outline.items).toHaveLength(2);
+    // Only the requested session is parsed again; the source is not rescanned.
+    expect(fixture.adapter.inventory).toHaveBeenCalledTimes(1);
+
+    const rows = index._getDb().prepare(
+      'SELECT role, content FROM session_message WHERE source = ? AND session_id = ? ORDER BY ordinal'
+    ).all('claude', 'live-session');
+    expect(rows.filter(row => row.role === 'user').every(row => Boolean(row.content))).toBe(true);
+    expect(rows.filter(row => row.role !== 'user').every(row => row.content === null)).toBe(true);
+  });
+
+  it('refreshes the session index from a message page read in one parse', async () => {
+    const fixture = setupIndex({ storeAssistantContent: false });
+    const descriptor = fixture.writeFixtureFile({
+      name: 'page-read.jsonl',
+      content: 'page read fixture\n',
+      session: makeSessionFixture('page-read', 'page-project'),
+      messages: makeMessageFixtures(2)
+    });
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    const before = fixture.parseCounts.get(descriptor.filePath) || 0;
+
+    fixture.rewriteFixtureFile(descriptor.filePath, 'page read fixture with more bytes\n', {
+      session: makeSessionFixture('page-read', 'page-project'),
+      messages: makeMessageFixtures(4)
+    });
+    const page = await index.readSessionMessagesPage('claude', 'page-read', { page: 1, limit: 500 });
+    expect(page.messages).toHaveLength(4);
+    expect(page.pagination.total).toBe(4);
+    // One parse served the page and wrote the session rows.
+    expect(fixture.parseCounts.get(descriptor.filePath)).toBe(before + 1);
+    const fileRow = index._getDb().prepare(
+      'SELECT message_count FROM session_file WHERE source = ? AND session_id = ?'
+    ).get('claude', 'page-read');
+    expect(Number(fileRow.message_count)).toBe(4);
+  });
+
+  it('serves concurrent pages from one parse and accepts multi-page limits', async () => {
+    const fixture = setupIndex({ storeAssistantContent: false });
+    fixture.writeFixtureFile({
+      name: 'multi-page.jsonl',
+      content: 'multi page fixture\n',
+      session: makeSessionFixture('multi-page', 'multi-project'),
+      messages: makeMessageFixtures(30)
+    });
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    const [page] = await Promise.all([
+      index.readSessionMessagesPage('claude', 'multi-page', { page: 1, limit: 500 }),
+      index.readSessionMessagesPage('claude', 'multi-page', { page: 2, limit: 500 })
+    ]);
+    expect(page.pagination.limit).toBe(500);
+    expect(page.messages).toHaveLength(30);
+    expect(page.pagination.total).toBe(30);
+  });
+
+  it('does not cache message page misses and honors the byte budget', async () => {
+    const messagesWorkerRunner = vi.fn(async (_source, _dbPath, sessionId, options) => (
+      sessionId === 'missing-session'
+        ? null
+        : {
+          messages: [{ role: 'user', content: 'cached page' }],
+          metadata: {},
+          pagination: { page: options.page, limit: options.limit, total: 1, hasMore: false }
+        }
+    ));
+    const fixture = setupIndex({
+      storeAssistantContent: false,
+      messagesWorkerRunner,
+      messagesPageCacheMaxBytes: 300
+    });
+    fixture.writeFixtureFile({
+      name: 'cache.jsonl',
+      content: 'cache fixture\n',
+      session: makeSessionFixture('cache-session', 'cache-project'),
+      messages: makeMessageFixtures(2)
+    });
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+
+    // Misses are not cached: an unindexed session is retried on every read.
+    expect(await index.getMessagePage('claude', 'missing-session')).toBeNull();
+    expect(await index.getMessagePage('claude', 'missing-session')).toBeNull();
+    const missingCalls = messagesWorkerRunner.mock.calls.filter(call => call[2] === 'missing-session');
+    expect(missingCalls).toHaveLength(2);
+
+    // Two pages exceed a 300-byte budget, so the first page is evicted.
+    await index.getMessagePage('claude', 'cache-session', { page: 1 });
+    await index.getMessagePage('claude', 'cache-session', { page: 2 });
+    const beforeRepeat = messagesWorkerRunner.mock.calls.length;
+    await index.getMessagePage('claude', 'cache-session', { page: 1 });
+    expect(messagesWorkerRunner.mock.calls.length).toBe(beforeRepeat + 1);
+
+    // A source invalidation clears the page cache for the next read.
+    await index.getMessagePage('claude', 'cache-session', { page: 1 });
+    const beforeInvalidate = messagesWorkerRunner.mock.calls.length;
+    await index.getMessagePage('claude', 'cache-session', { page: 1 });
+    expect(messagesWorkerRunner.mock.calls.length).toBe(beforeInvalidate);
+    index.invalidateSource('claude');
+    await index.getMessagePage('claude', 'cache-session', { page: 1 });
+    expect(messagesWorkerRunner.mock.calls.length).toBe(beforeInvalidate + 1);
   });
 
   it('changing one file reparses exactly one', async () => {
@@ -1265,25 +1537,28 @@ describe('session-history-index', () => {
     } finally { statSpy.mockRestore(); }
   });
 
-  it('refreshes one source when a changed detail file is observed', async () => {
+  it('refreshes only the changed session when a detail file is observed', async () => {
     const fixture = setupIndex({ ftsEnabledOverride: false });
     const descriptor = fixture.writeFixtureFile({ name: 'changed.jsonl', content: 'before change\n', session: makeSessionFixture('changed', 'detail-project'), messages: makeMessageFixtures(2) });
     await index.ensureSourceIndexed('claude', { consistency: 'complete' });
     fixture.rewriteFixtureFile(descriptor.filePath, 'after change with more bytes\n', { session: makeSessionFixture('changed', 'detail-project'), messages: makeMessageFixtures(4) });
     index.invalidateSource('claude');
     await Promise.all([index.getSessionOutline('claude', 'changed'), index.getMessagePage('claude', 'changed', { page: 1, limit: 2 })]);
-    expect(fixture.adapter.inventory).toHaveBeenCalledTimes(2);
+    // Detail reads refresh one session; they must not rescan the whole source.
+    expect(fixture.adapter.inventory).toHaveBeenCalledTimes(1);
     expect((await index.getMessagePage('claude', 'changed')).pagination.total).toBe(4);
   });
-  it('detects a changed sibling file during one source freshness check', async () => {
+  it('refreshes the requested session without a source-wide freshness check', async () => {
     const fixture = setupIndex({ ftsEnabledOverride: false });
     const first = fixture.writeFixtureFile({ name: 'sibling-a.jsonl', content: 'sibling a\n', session: makeSessionFixture('sibling-a', 'sibling-project'), messages: makeMessageFixtures(2) });
     const second = fixture.writeFixtureFile({ name: 'sibling-b.jsonl', content: 'sibling b\n', session: makeSessionFixture('sibling-b', 'sibling-project'), messages: makeMessageFixtures(2) });
     await index.ensureSourceIndexed('claude', { consistency: 'complete' });
-    await index.getSessionOutline('claude', first.sessionId);
+    const firstOutline = await index.getSessionOutline('claude', first.sessionId);
     fixture.rewriteFixtureFile(second.filePath, 'sibling b changed with more bytes\n', { session: makeSessionFixture('sibling-b', 'sibling-project'), messages: makeMessageFixtures(4) });
-    await index.getSessionOutline('claude', second.sessionId);
-    expect(fixture.adapter.inventory).toHaveBeenCalledTimes(2);
+    const secondOutline = await index.getSessionOutline('claude', second.sessionId);
+    expect(firstOutline.items).toHaveLength(1);
+    expect(secondOutline.items).toHaveLength(2);
+    expect(fixture.adapter.inventory).toHaveBeenCalledTimes(1);
     expect((await index.getMessagePage('claude', second.sessionId)).pagination.total).toBe(4);
   });
 
@@ -1510,6 +1785,36 @@ describe('session-history-index', () => {
       await firstRefresh;
     } finally {
       secondIndex.closeSessionHistoryIndex();
+    }
+  });
+
+  it('yields to the event loop while refreshing summaries', async () => {
+    const fixture = setupIndex();
+    for (let i = 0; i < 12; i += 1) {
+      fixture.writeFixtureFile({
+        name: `summary-${i}.jsonl`,
+        content: `summary fixture ${i}\n`,
+        session: makeSessionFixture(`summary-${i}`, 'summary-project'),
+        messages: makeMessageFixtures(2)
+      });
+    }
+    fixture.adapter.summarize = vi.fn(async descriptor => ({
+      sessionId: descriptor.sessionId,
+      projectName: descriptor.projectHint,
+      firstMessage: `summary ${descriptor.sessionId}`,
+      updatedAt: descriptor.mtimeMs
+    }));
+
+    let timerTicks = 0;
+    const timer = setInterval(() => { timerTicks += 1; }, 0);
+    try {
+      const result = await index.listProjectsPage('claude', { limit: 10 });
+      expect(result.projects).toHaveLength(1);
+      // Every summary parse hands the loop a macrotask turn, so a timer that
+      // was armed before the refresh must get a chance to run.
+      expect(timerTicks).toBeGreaterThan(0);
+    } finally {
+      clearInterval(timer);
     }
   });
  });
@@ -2253,9 +2558,10 @@ describe('session-history-index runtime selection', () => {
       await index.ensureSourceIndexed('claude', { consistency: 'complete' });
       expect(runtime.getDriver).not.toHaveBeenCalled();
 
+      // The full-content inventory TTL is 10 minutes; 11 minutes is stale.
       index._getDb().prepare(
         'INSERT INTO source_state(source, last_inventory_ms, last_error) VALUES (?, ?, ?) ON CONFLICT(source) DO UPDATE SET last_inventory_ms = excluded.last_inventory_ms, last_error = excluded.last_error'
-      ).run('claude', Date.now() - 60000, null);
+      ).run('claude', Date.now() - 11 * 60 * 1000, null);
 
       await expect(index.ensureSourceIndexed('claude', { consistency: 'complete' }))
         .rejects.toThrow('runtime driver should not be resolved for a fresh source_state');

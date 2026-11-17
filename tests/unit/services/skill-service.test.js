@@ -1064,9 +1064,9 @@ describe('SkillService cache scheduling', () => {
 });
 
 describe('OMP discovery cache', () => {
-  it('reuses settings and plugin path CLI results for the same scope and cwd', () => {
+  it('does not run OMP CLI lookups on the request path', async () => {
     const { SkillService } = require('../../../src/server/services/skill-service');
-    const { discoverOmpSkills } = require('../../../src/platforms/drivers/omp/skill-discovery');
+    const { discoverOmpSkills, flushDiscoveryRefresh } = require('../../../src/platforms/drivers/omp/skill-discovery');
     const svc = new SkillService('omp');
     const ompConfig = require('../../../src/platforms/drivers/omp/config');
     const cwd = path.join(testDir, 'project');
@@ -1076,6 +1076,15 @@ describe('OMP discovery cache', () => {
     discoverOmpSkills(svc, { cwd, scope: 'user' });
     discoverOmpSkills(svc, { cwd, scope: 'project' });
 
+    // Cold discovery schedules async CLI refreshes instead of blocking the
+    // request path on `execFileSync`.
+    await flushDiscoveryRefresh();
+    expect(ompConfig.getOmpCommand).toHaveBeenCalledTimes(4);
+
+    // Refreshed caches are reused; further scans spawn nothing.
+    discoverOmpSkills(svc, { cwd, scope: 'user' });
+    discoverOmpSkills(svc, { cwd, scope: 'project' });
+    await flushDiscoveryRefresh();
     expect(ompConfig.getOmpCommand).toHaveBeenCalledTimes(4);
   });
 

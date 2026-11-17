@@ -16,7 +16,6 @@ function createDriver(context = {}) {
       listSessions: 'getSessionsByProject',
       listSessionsPage: 'getSessionsPage',
       recent: 'getRecentSessions',
-      search: 'searchSessions',
       getSessionById: 'getSessionById',
       delete: 'deleteSession',
       fork: 'forkSession',
@@ -27,6 +26,28 @@ function createDriver(context = {}) {
       messages: 'getSessionMessages'
     },
     customMethods: {
+      search: (service, requestOrProjectName, keyword, contextLength, options = {}) => {
+        if (requestOrProjectName && typeof requestOrProjectName === 'object' && !Array.isArray(requestOrProjectName)) {
+          const request = requestOrProjectName;
+          const query = request.query || {};
+          return service.searchSessions(query.keyword || query.q || query.query || '', {
+            ...request,
+            ...options,
+            projectName: request.params?.projectName || null,
+            limit: Number.parseInt(query.limit, 10) || 100,
+            contextLength: Number(query.context) || 15
+          });
+        }
+        if (keyword && typeof keyword === 'object' && !Array.isArray(keyword)) {
+          return service.searchSessions(requestOrProjectName, keyword);
+        }
+        return service.searchSessions(keyword, {
+          ...options,
+          projectName: requestOrProjectName || null,
+          limit: Number.parseInt(options.limit, 10) || 100,
+          contextLength: Number(contextLength) || 15
+        });
+      },
       searchAcrossProjects: (service, requestOrKeyword, limit, options = {}) => {
         if (requestOrKeyword && typeof requestOrKeyword === 'object' && !Array.isArray(requestOrKeyword)) {
           const request = requestOrKeyword;

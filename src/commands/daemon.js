@@ -13,6 +13,7 @@ const {
 } = require('../utils/port-helper');
 const { hasHostFlag } = require('../utils/cli-flags');
 const { getPlatformRegistry } = require('../platforms/runtime');
+const { filterEnabledPlatforms } = require('../server/services/active-platforms');
 const { createProxyControl } = require('./proxy-control');
 const PM2_APP_NAME = 'cc-tool';
 const STARTUP_LOG_FILE = 'cc-tool-out.log';
@@ -291,7 +292,7 @@ async function getProxyStatusEntries({ registry = getPlatformRegistry(), config 
   // Servers live in the UI daemon. Loading a driver here creates a separate
   // singleton in the CLI process whose status will always be stopped.
   const control = createProxyControl({ registry, loadConfig: () => config, httpRequest, connection });
-  return Promise.all(listProxyPlatforms(registry).map(async (platform) => {
+  return Promise.all(filterEnabledPlatforms(listProxyPlatforms(registry)).map(async (platform) => {
     const context = {
       platform: platform.key,
       capability: 'proxy',

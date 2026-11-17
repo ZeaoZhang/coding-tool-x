@@ -155,6 +155,20 @@ function createDriver({ nativeRoot, pathContext, fsImpl = fs } = {}) {
       });
       return {
         initialize() { jsonlCursor.initialize(); jsonCursor.initialize(); },
+        initializeAsync(options = {}) {
+          const tasks = [];
+          if (typeof jsonlCursor.initializeAsync === 'function') {
+            tasks.push(jsonlCursor.initializeAsync(options));
+          } else {
+            jsonlCursor.initialize();
+          }
+          if (typeof jsonCursor.initializeAsync === 'function') {
+            tasks.push(jsonCursor.initializeAsync(options));
+          } else {
+            jsonCursor.initialize();
+          }
+          return Promise.all(tasks);
+        },
         readNewEvents() { return [...jsonlCursor.readNewEvents(), ...jsonCursor.readNewEvents()]; },
         read() { return this.readNewEvents(); },
         reset() {

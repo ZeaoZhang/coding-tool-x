@@ -180,6 +180,41 @@ describe('session-history-worker error IPC helpers', () => {
     expect(error.cause.message).toBe('adapter exploded');
     expect(error.cause.code).toBe('E_ADAPTER');
   });
+  it('returns the page payload from a messages worker', async () => {
+    const handlers = {};
+    const child = {
+      killed: false,
+      kill: vi.fn(function () { child.killed = true; }),
+      on: vi.fn((event, handler) => {
+        handlers[event] = handler;
+        return child;
+      }),
+      removeAllListeners: vi.fn()
+    };
+    const forkSpy = vi.spyOn(childProcess, 'fork').mockReturnValue(child);
+
+    const promise = worker.runMessagesWorker('claude', '/tmp/history.sqlite', 'session-1', {
+      page: 2,
+      limit: 5,
+      order: 'asc'
+    });
+    const payload = {
+      messages: [{ role: 'assistant', content: 'live' }],
+      metadata: { sessionId: 'session-1' },
+      pagination: { page: 2, limit: 5, total: 1, hasMore: false }
+    };
+    handlers.message({ type: 'done', result: payload });
+
+    await expect(promise).resolves.toEqual(payload);
+    expect(forkSpy.mock.calls[0][2].env).toMatchObject({
+      CC_TOOL_SESSION_HISTORY_MODE: 'messages',
+      CC_TOOL_SESSION_HISTORY_SESSION_ID: 'session-1',
+      CC_TOOL_SESSION_HISTORY_PAGE: '2',
+      CC_TOOL_SESSION_HISTORY_LIMIT: '5',
+      CC_TOOL_SESSION_HISTORY_ORDER: 'asc'
+    });
+  });
+
   it('rejects unknown child messages as protocol errors and cleans up', async () => {
     const handlers = {};
     const child = {

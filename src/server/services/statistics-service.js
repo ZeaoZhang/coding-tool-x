@@ -1027,6 +1027,11 @@ function mergeAllToolsDailyStats(dateStr, groupBy) {
   return merged;
 }
 
+// ─── Available filters cache ────────────────────────────────────────────────
+const filtersCache = new Map();
+const FILTERS_CACHE_TTL_MS = 15 * 1000;
+const MAX_FILTERS_CACHE_ENTRIES = 16;
+
 /**
  * 扫描日期范围内的 JSONL 文件，返回可用的过滤器选项
  * @param {string} startDate - YYYY-MM-DD
@@ -1034,6 +1039,11 @@ function mergeAllToolsDailyStats(dateStr, groupBy) {
  * @returns {{ toolTypes: string[], channels: string[], models: string[] }}
  */
 function getAvailableFilters(startDate, endDate) {
+  const filtersCacheKey = `${startDate}|${endDate}`;
+  const cachedFilters = filtersCache.get(filtersCacheKey);
+  if (cachedFilters && Date.now() < cachedFilters.expiresAt) {
+    return cachedFilters.result;
+  }
   const toolTypes = new Set();
   const channels = new Set();
   const models = new Set();
@@ -1087,11 +1097,19 @@ for (const { logEntry, date } of pendingEntries) {
     }
   }
 
-  return {
+  const result = {
     toolTypes: Array.from(toolTypes).sort(),
     channels: Array.from(channels).sort(),
     models: Array.from(models).sort()
   };
+  filtersCache.set(filtersCacheKey, {
+    result,
+    expiresAt: Date.now() + FILTERS_CACHE_TTL_MS
+  });
+  while (filtersCache.size > MAX_FILTERS_CACHE_ENTRIES) {
+    filtersCache.delete(filtersCache.keys().next().value);
+  }
+  return result;
 }
 
 // ─── Trend statistics in-memory cache ───────────────────────────────────────
@@ -1105,6 +1123,7 @@ function getTrendCacheKey(params) {
 
 function invalidateTrendCache() {
   trendCache.clear();
+  filtersCache.clear();
 }
 
 // Called by recordRequest so fresh data is visible immediately after a new request
@@ -1116,6 +1135,10 @@ function invalidateTrendCacheForDate(dateStr) {
         trendCache.delete(key);
       }
     } catch { trendCache.delete(key); }
+  }
+  for (const key of filtersCache.keys()) {
+    const [startDate, endDate] = key.split('|');
+    if (startDate <= dateStr && dateStr <= endDate) filtersCache.delete(key);
   }
 }
 // ─────────────────────────────────────────────────────────────────────────────
