@@ -192,7 +192,12 @@ async function startGeminiProxyServer(options = {}) {
 
     proxyApp.use((req, res, next) => {
       if (shouldParseJson(req)) {
-        return jsonBodyParser(req, res, next);
+        return jsonBodyParser(req, res, () => {
+          // The parsed body is authoritative from here on; release the raw
+          // buffer so large requests are not held twice for their lifetime.
+          req.rawBody = null;
+          next();
+        });
       }
       return next();
     });
@@ -240,11 +245,20 @@ async function startGeminiProxyServer(options = {}) {
 
     proxyApp.use(async (req, res) => {
       try {
-        const channel = await allocateChannel({
-          source: 'gemini',
-          enableSessionBinding: false,
-          excludeChannelIds: getGeminiProxyExcludedChannelIds()
-        });
+        const abortController = new AbortController();
+        const abortOnClose = () => abortController.abort();
+        res.once('close', abortOnClose);
+        let channel;
+        try {
+          channel = await allocateChannel({
+            source: 'gemini',
+            signal: abortController.signal,
+            enableSessionBinding: false,
+            excludeChannelIds: getGeminiProxyExcludedChannelIds()
+          });
+        } finally {
+          res.removeListener('close', abortOnClose);
+        }
         req.selectedChannel = channel;
 
         const release = (() => {

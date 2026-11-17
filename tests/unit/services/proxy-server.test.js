@@ -112,9 +112,13 @@ function createStubs() {
       getAllChannels: vi.fn(() => [])
     }],
     ['../../../src/server/services/request-logger', {
+      isProxyRequestLoggingEnabled: vi.fn(() => true),
       persistProxyRequestSnapshot,
       persistClaudeRequestTemplate,
       loadClaudeRequestTemplate
+    }],
+    ['../../../src/server/services/memory-pressure', {
+      memoryPressureMiddleware: (_req, _res, next) => next()
     }],
     ['../../../src/shared/proxy-utils', {
       redirectModel,

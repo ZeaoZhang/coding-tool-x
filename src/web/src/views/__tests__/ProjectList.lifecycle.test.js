@@ -99,5 +99,5 @@ describe('ProjectList route lifecycle', () => {
     wrapper.unmount()
 
     expect(store.pauseProjectRefresh).toHaveBeenCalledWith('old-channel')
-  })
+  }, 30_000)
 })

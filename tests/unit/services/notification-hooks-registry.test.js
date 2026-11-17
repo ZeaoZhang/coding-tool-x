@@ -55,12 +55,25 @@ const { catalog, drivers, loadUIConfig, saveUIConfig } = vi.hoisted(() => {
   };
 });
 
-vi.mock('../../../src/server/services/platform-catalog', () => ({
-  getPlatformCatalog: vi.fn(() => catalog)
-}));
-vi.mock('../../../src/server/services/ui-config', () => ({ loadUIConfig, saveUIConfig }));
-vi.mock('../../../src/config/paths', () => ({
-  PATHS: { notifyHook: '/tmp/notification-hooks-registry-test/notify-hook.js' },
+function stubModule(modulePath, exports) {
+  const resolved = require.resolve(modulePath);
+  require.cache[resolved] = {
+    id: resolved,
+    filename: resolved,
+    loaded: true,
+    exports
+  };
+}
+
+stubModule('../../../src/server/services/platform-catalog', {
+  getPlatformCatalog: () => catalog
+});
+stubModule('../../../src/server/services/ui-config', { loadUIConfig, saveUIConfig });
+stubModule('../../../src/config/paths', {
+  PATHS: {
+    notifyHook: '/tmp/notification-hooks-registry-test/notify-hook.js',
+    configFile: '/tmp/notification-hooks-registry-test/config.json'
+  },
   NATIVE_PATHS: {
     claude: { settings: '/tmp/notification-hooks-registry-test/claude.json' },
     codex: { config: '/tmp/notification-hooks-registry-test/codex.toml' },
@@ -68,7 +81,7 @@ vi.mock('../../../src/config/paths', () => ({
     opencode: { config: '/tmp/notification-hooks-registry-test/opencode' },
     omp: { extensions: '/tmp/notification-hooks-registry-test/extensions' }
   }
-}));
+});
 
 const notificationHooks = require('../../../src/platforms/notification-hooks');
 const providerRegistryModule = require('../../../src/platforms/remote-notification-providers');

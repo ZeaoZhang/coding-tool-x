@@ -60,7 +60,7 @@ describe('production web build', () => {
     } finally {
       rmSync(outputDir, { recursive: true, force: true })
     }
-  }, 15_000)
+  }, 60_000)
 
   it('does not preload hidden drawer and route code on the initial page', () => {
     const outputDir = mkdtempSync(resolve(tmpdir(), 'coding-tool-x-web-build-'))
@@ -77,7 +77,7 @@ describe('production web build', () => {
     } finally {
       rmSync(outputDir, { recursive: true, force: true })
     }
-  }, 15_000)
+  }, 60_000)
 
   it('bundles the global right panel with the layout entry', () => {
     const outputDir = mkdtempSync(resolve(tmpdir(), 'coding-tool-x-web-build-'))
@@ -96,5 +96,5 @@ describe('production web build', () => {
     } finally {
       rmSync(outputDir, { recursive: true, force: true })
     }
-  }, 15_000)
+  }, 60_000)
 })

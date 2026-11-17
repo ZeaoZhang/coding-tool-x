@@ -84,7 +84,8 @@ describe('gemini-settings-manager env/settings IO', () => {
       }
     });
 
-    expect(fs.readFileSync(envPath, 'utf8')).toBe('GEMINI_API_KEY=next-key\nGEMINI_MODEL=gemini-2.5-pro\n');
+    // Unmanaged keys (GOOGLE_GEMINI_BASE_URL) are removed; comments are kept.
+    expect(fs.readFileSync(envPath, 'utf8')).toBe('# comment\nGEMINI_API_KEY=next-key\nGEMINI_MODEL=gemini-2.5-pro\n');
     expect(manager.readSettings()).toEqual({
       security: {
         auth: { selectedType: 'gemini-api-key' }

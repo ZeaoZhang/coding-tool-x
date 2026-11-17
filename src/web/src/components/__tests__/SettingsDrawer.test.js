@@ -410,6 +410,7 @@ describe('SettingsDrawer platform catalog', () => {
       },
       overrides: {},
       builtinModelIds: [],
+      modelPlatforms: [{ key: 'omp', label: 'OMP', models: ['omp-only', 'shared-compatible'] }],
       defaultSpeedTestModels: { omp: 'shared-compatible' }
     }
     client.get.mockResolvedValue({ data: modelData })

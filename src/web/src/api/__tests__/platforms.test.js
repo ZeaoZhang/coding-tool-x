@@ -33,21 +33,38 @@ beforeEach(() => {
 })
 
 it('uses the generic prefix for registered non-legacy platforms', async () => {
+  mocks.get.mockImplementation(async (url) => {
+    if (url === '/platforms') {
+      return {
+        data: {
+          platforms: [{
+            key: 'demo-cli',
+            apiRoutes: [
+              { path: '/projects', method: 'GET', capability: 'projects', operation: 'listProjects' },
+              { path: '/sessions/:projectName', method: 'GET', capability: 'sessions', operation: 'listSessions' }
+            ]
+          }]
+        }
+      }
+    }
+    return { data: { success: true } }
+  })
+
   await getPlatformProjects('demo-cli')
   await getPlatformSessions('demo-cli', 'project/name')
   await getProjects('demo-cli')
   await getSessions('project/name', 'demo-cli')
 
-  expect(mocks.get).toHaveBeenNthCalledWith(1, '/platforms/demo-cli/projects', { params: undefined })
-  expect(mocks.get).toHaveBeenNthCalledWith(2, '/platforms/demo-cli/sessions/project%2Fname', { params: undefined })
-  expect(mocks.get).toHaveBeenNthCalledWith(3, '/platforms/demo-cli/projects', { params: undefined })
-  expect(mocks.get).toHaveBeenNthCalledWith(4, '/platforms/demo-cli/sessions/project%2Fname', { params: undefined })
+  expect(mocks.get).toHaveBeenNthCalledWith(2, '/platforms/demo-cli/projects', undefined)
+  expect(mocks.get).toHaveBeenNthCalledWith(3, '/platforms/demo-cli/sessions/project%2Fname', undefined)
+  expect(mocks.get).toHaveBeenNthCalledWith(4, '/platforms/demo-cli/projects', undefined)
+  expect(mocks.get).toHaveBeenNthCalledWith(5, '/platforms/demo-cli/sessions/project%2Fname', undefined)
 })
 
 it('keeps legacy project and session prefixes unchanged', async () => {
   await getProjects('codex')
   await getSessions('project/name', 'codex')
 
-  expect(mocks.get).toHaveBeenNthCalledWith(1, '/codex/projects', { params: undefined })
+  expect(mocks.get).toHaveBeenNthCalledWith(1, '/codex/projects', { params: {} })
   expect(mocks.get).toHaveBeenNthCalledWith(2, '/codex/sessions/project/name', { params: {} })
 })

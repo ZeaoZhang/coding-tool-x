@@ -38,6 +38,8 @@ function createTempSkillService(platform = 'claude') {
   service.reposConfigPath = path.join(service.configDir, 'repos.json');
   if (platform === 'omp') service.refreshOmpPaths = () => {};
   service.cachePath = path.join(service.configDir, 'skills-cache.json');
+  // Isolated temp stores must not import the developer's real config registry.
+  service._legacyMigrationChecked = true;
   service.ensureDirs();
   service.saveRepos([]);
   return { service, tempRoot };

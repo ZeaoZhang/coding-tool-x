@@ -98,8 +98,8 @@ describe('readSettings', () => {
     expect(result.env.KEY).toBe('val');
   });
 
-  test('throws when settings file does not exist', () => {
-    expect(() => readSettings()).toThrow();
+  test('returns an empty object when settings file does not exist', () => {
+    expect(readSettings()).toEqual({});
   });
 
   test('throws when settings file contains invalid JSON', () => {

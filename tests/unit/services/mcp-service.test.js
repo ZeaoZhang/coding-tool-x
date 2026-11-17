@@ -4,6 +4,34 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
+const PLATFORM_PATH_ENV_KEYS = [
+  'PI_CODING_AGENT_DIR',
+  'OMP_CODING_AGENT_DIR',
+  'OMP_CONFIG_DIR',
+  'OMP_PROFILE',
+  'CLAUDE_CONFIG_DIR',
+  'CODEX_HOME',
+  'DSH_HOME'
+];
+let savedPlatformPathEnv = null;
+
+function isolatePlatformPathEnv() {
+  savedPlatformPathEnv = {};
+  for (const key of PLATFORM_PATH_ENV_KEYS) {
+    savedPlatformPathEnv[key] = process.env[key];
+    delete process.env[key];
+  }
+}
+
+function restorePlatformPathEnv() {
+  if (!savedPlatformPathEnv) return;
+  for (const [key, value] of Object.entries(savedPlatformPathEnv)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  savedPlatformPathEnv = null;
+}
+
 const { describe, it, expect, beforeEach, afterEach, vi } = globalThis;
 
 // ============================================================================
@@ -109,6 +137,7 @@ describe('mcp-service', () => {
   let service;
 
   beforeEach(() => {
+    isolatePlatformPathEnv();
     testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-service-test-'));
     fs.mkdirSync(path.join(testDir, 'gemini'), { recursive: true });
     setupStubs();
@@ -116,6 +145,7 @@ describe('mcp-service', () => {
   });
 
   afterEach(() => {
+    restorePlatformPathEnv();
     clearStubs();
     try { fs.rmSync(testDir, { recursive: true, force: true }); } catch (_) {}
   });

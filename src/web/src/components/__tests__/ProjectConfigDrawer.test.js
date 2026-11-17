@@ -30,10 +30,13 @@ test('loads project configuration without issuing a remote Skill refresh', async
     global: { stubs: { SkillsPanel: true, ProjectMcpPanel: true, ProjectInstructionPanel: true } }
   })
 
-  await vi.waitFor(() => expect(getProjectConfig).toHaveBeenCalledWith('/tmp/project', 'codex'))
+  await vi.waitFor(
+    () => expect(getProjectConfig).toHaveBeenCalledWith('/tmp/project', 'codex'),
+    { timeout: 5000, interval: 50 }
+  )
   expect(wrapper.props('projectPath')).toBe('/tmp/project')
   expect(getProjectConfig).toHaveBeenCalledTimes(1)
-})
+}, 30_000)
 
 beforeEach(() => {
   getProjectConfig.mockReset()

@@ -2,6 +2,34 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+const PLATFORM_PATH_ENV_KEYS = [
+  'PI_CODING_AGENT_DIR',
+  'OMP_CODING_AGENT_DIR',
+  'OMP_CONFIG_DIR',
+  'OMP_PROFILE',
+  'CLAUDE_CONFIG_DIR',
+  'CODEX_HOME',
+  'DSH_HOME'
+];
+let savedPlatformPathEnv = null;
+
+function isolatePlatformPathEnv() {
+  savedPlatformPathEnv = {};
+  for (const key of PLATFORM_PATH_ENV_KEYS) {
+    savedPlatformPathEnv[key] = process.env[key];
+    delete process.env[key];
+  }
+}
+
+function restorePlatformPathEnv() {
+  if (!savedPlatformPathEnv) return;
+  for (const [key, value] of Object.entries(savedPlatformPathEnv)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  savedPlatformPathEnv = null;
+}
+
 let testDir;
 let globalClaudeDir;
 
@@ -65,6 +93,7 @@ function stubDynamicPromptRuntime(driver) {
 }
 
 beforeEach(() => {
+  isolatePlatformPathEnv();
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'prompts-service-'));
   globalClaudeDir = path.join(testDir, 'custom-claude');
   stubModules();
@@ -72,6 +101,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  restorePlatformPathEnv();
   fs.rmSync(testDir, { recursive: true, force: true });
   [
     '../../../src/server/services/prompts-service',

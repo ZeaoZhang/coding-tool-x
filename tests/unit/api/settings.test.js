@@ -75,6 +75,7 @@ describe('settings API router', () => {
           pricing: { input: 3, output: 15 },
         },
       },
+      MODEL_ALIASES: {},
       METADATA_LAST_UPDATED: '2025-01-01',
       METADATA_SOURCE: {
         name: 'models.dev',

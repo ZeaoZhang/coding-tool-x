@@ -16,7 +16,12 @@ const {
   getEffectiveApiKey,
   getClaudeProxyExcludedChannelIds = () => []
 } = require('./channels-implementation');
-const { persistProxyRequestSnapshot, persistClaudeRequestTemplate } = require('../../../server/services/request-logger');
+const {
+  isProxyRequestLoggingEnabled,
+  persistProxyRequestSnapshot,
+  persistClaudeRequestTemplate
+} = require('../../../server/services/request-logger');
+const { memoryPressureMiddleware } = require('../../../server/services/memory-pressure');
 const { redirectModel, normalizeGatewaySourceType } = require('../../../shared/proxy-utils');
 const { handleClaudeOpenAiGatewayRequest } = require('./openai-gateway');
 const { bindProxyRequest, prepareProxyResponse } = require('../../../shared/proxy-transport');
@@ -100,11 +105,8 @@ function extractClaudeRequestBody(req) {
 }
 
 function serializeFullClaudeRequest(req) {
-  const rawBodyBuffer = req?.rawBody
-    ? (Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(req.rawBody))
-    : null;
-
-  return {
+  const body = extractClaudeRequestBody(req);
+  const snapshot = {
     method: req?.method || null,
     url: req?.url || null,
     originalUrl: req?.originalUrl || null,
@@ -114,9 +116,15 @@ function serializeFullClaudeRequest(req) {
     rawHeaders: Array.isArray(req?.rawHeaders) ? [...req.rawHeaders] : null,
     query: toSerializable(req?.query),
     params: toSerializable(req?.params),
-    body: toSerializable(extractClaudeRequestBody(req)),
-    rawBody: rawBodyBuffer ? rawBodyBuffer.toString('utf8') : null
+    body: toSerializable(body)
   };
+  // Only keep the raw body when it could not be parsed; otherwise it would
+  // duplicate the request body in every snapshot.
+  if (body === null && req?.rawBody) {
+    const rawBodyBuffer = Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(req.rawBody);
+    snapshot.rawBody = rawBodyBuffer.toString('utf8');
+  }
+  return snapshot;
 }
 
 function persistClaudeRequestSnapshot(payload) {
@@ -167,8 +175,18 @@ async function startProxyServer(options = {}) {
     proxyApp = express();
 
     proxyApp.use((req, res, next) => {
+      req.proxyPlatform = 'claude';
+      memoryPressureMiddleware(req, res, next);
+    });
+
+    proxyApp.use((req, res, next) => {
       if (shouldParseJson(req)) {
-        return jsonBodyParser(req, res, next);
+        return jsonBodyParser(req, res, () => {
+          // The parsed body is authoritative from here on; release the raw
+          // buffer so large requests are not held twice for their lifetime.
+          req.rawBody = null;
+          next();
+        });
       }
       return next();
     });
@@ -217,12 +235,21 @@ async function startProxyServer(options = {}) {
         const sessionId = extractSessionId(req);
         const config = loadConfig();
         const enableSessionBinding = config.enableSessionBinding !== false; // 默认开启
-        const channel = await allocateChannel({
-          source: 'claude',
-          sessionId,
-          enableSessionBinding,
-          excludeChannelIds: getClaudeProxyExcludedChannelIds()
-        });
+        const abortController = new AbortController();
+        const abortOnClose = () => abortController.abort();
+        res.once('close', abortOnClose);
+        let channel;
+        try {
+          channel = await allocateChannel({
+            source: 'claude',
+            sessionId,
+            signal: abortController.signal,
+            enableSessionBinding,
+            excludeChannelIds: getClaudeProxyExcludedChannelIds()
+          });
+        } finally {
+          res.removeListener('close', abortOnClose);
+        }
 
         // 广播调度状态（请求开始）
         broadcastSchedulerState('claude', getSchedulerState('claude'));
@@ -254,14 +281,16 @@ async function startProxyServer(options = {}) {
           });
         }
         req.effectiveApiKey = effectiveKey;
-        const requestSnapshot = serializeFullClaudeRequest(req);
-        persistClaudeRequestSnapshot({
-          timestamp: Date.now(),
-          source: 'claude',
-          channel: channel.name,
-          sessionId: sessionId || null,
-          request: requestSnapshot
-        });
+        if (isProxyRequestLoggingEnabled()) {
+          const requestSnapshot = serializeFullClaudeRequest(req);
+          persistClaudeRequestSnapshot({
+            timestamp: Date.now(),
+            source: 'claude',
+            channel: channel.name,
+            sessionId: sessionId || null,
+            request: requestSnapshot
+          });
+        }
         persistClaudeRequestTemplate(req.body);
 
         // 应用模型重定向（当 proxy 开启时）

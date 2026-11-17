@@ -98,6 +98,9 @@ beforeEach(() => {
         },
         opencode: {
           config: path.join(testDir, '.config', 'opencode')
+        },
+        omp: {
+          dir: path.join(testDir, '.omp', 'agent')
         }
       }
     }
