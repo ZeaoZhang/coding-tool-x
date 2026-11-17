@@ -23,6 +23,7 @@
 - **依赖安全升级** - adm-zip 升至 0.6.0（GHSA-xcpc-8h2w-3j85）、js-yaml 升至 4.3.1（GHSA-h67p-54hq-rp68 / GHSA-52cp-r559-cp3m / GHSA-5p4m-2wfm-xmqj）、pm2 升至 7.0.3（GHSA-x5gf-qvw8-r2rm），overrides 同步更新 basic-ftp / qs / systeminformation / js-yaml；`npm audit` 报告归零
 
 ### Fixed
+- **DSH 资源管理** - 修复 DSH 插件安装/卸载后 30 秒内插件列表仍返回旧数据（平台 Driver 变更现在会使列表缓存失效），并支持按 `requestedVersion` 重装外置插件；插件安装/卸载直接使用 mutation 返回的 Profile inventory 更新列表并显示即时“安装中”占位卡片，不再等待二次全量刷新；Skills 页面新增 Profile 选择并按 Profile 扫描（profile 级 `customSkillDirs` 等配置生效）；MCP 表单按 Manifest `mcpTransports` 过滤选项（DSH 禁用 `sse`）；DSH 只读 Skills 不再显示无效启停开关。
 - **启动与页面切换卡顿** - 原生日志基线改为分片异步初始化，服务启动不再阻塞在数千个历史日志文件上（42s → 0.5s 内返回，基线在后台完成），Claude/Codex/Gemini/OMP/DSH 的游标均走异步基线；会话摘要扫描在文件之间让出事件循环；Skills 扫描一次读取控制清单并异步刷新 OMP CLI 配置，`/api/skills` 从约 4.7s 降至约 0.1s。
 - **仅加载已启用平台** - 代理恢复、启动健康检查、原生日志轮询与 `ctx status` 现在遵循 Web UI 的 `enabledCliPlatforms`；已移除的 CLI 不再被恢复、索引或扫描。
 - **会话搜索与打开** - 修复 Codex 项目内搜索把项目名当关键词、把参数当选项的问题；搜索改为返回现有索引并后台刷新（10-53s → 0.1-0.8s），FTS 索引漂移时回退关系扫描避免空结果；打开会话只重建当前会话的索引（不重扫整源），消息页读取一次解析同时写入该会话索引，直播同步一次请求取回已加载的多页消息（单页上限提升到 1000 条），实测事件循环停顿从 4.1s 降至 21ms。

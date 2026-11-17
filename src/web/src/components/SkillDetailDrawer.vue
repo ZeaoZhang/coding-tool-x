@@ -165,6 +165,10 @@ const props = defineProps({
   projectPath: {
     type: String,
     default: ''
+  },
+  profile: {
+    type: String,
+    default: ''
   }
 })
 
@@ -255,6 +259,7 @@ const skillPath = computed(() => detail.value?.installPath || detail.value?.path
 
 const scopeOptions = computed(() => ({
   ...(props.projectPath ? { cwd: props.projectPath } : {}),
+  ...(props.profile ? { profile: props.profile } : {}),
   ...(props.scope && props.scope !== 'user' ? { scope: props.scope } : {})
 }))
 

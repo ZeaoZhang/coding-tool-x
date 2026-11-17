@@ -145,6 +145,7 @@ import { NButton, NIcon, NInput, NSelect, NSpin, NEmpty, useMessage } from 'naiv
 import { ArrowBackOutline, GitBranchOutline, RefreshOutline, SearchOutline, ExtensionPuzzleOutline, InformationCircleOutline, CloudDownloadOutline } from '@vicons/ionicons5'
 import { getPlugins, getMarketPlugins, getPluginCapabilities, installPlugin, uninstallPlugin, installDshPlugin, uninstallDshPlugin, refreshPlugins, getPluginRefreshTask, invalidatePluginSessionCache } from '../api/plugins'
 import { getDshProfiles } from '../api/dsh-agent-presets'
+import { dshPendingPluginRow, mergeDshProfilePlugins } from '../utils/dsh-plugin-inventory'
 import { importFromClaude } from '../api/config-registry'
 import PluginCard from './PluginCard.vue'
 import PluginRepoManager from './PluginRepoManager.vue'
@@ -234,7 +235,7 @@ const filterOptions = [
 const visiblePlugins = computed(() => currentPlatform.value === 'dsh'
   ? plugins.value.filter(plugin => plugin.profile === dshProfile.value)
   : plugins.value)
-const installedCount = computed(() => visiblePlugins.value.filter(plugin => plugin.installed).length)
+const installedCount = computed(() => visiblePlugins.value.filter(plugin => plugin.installed && !plugin.installing).length)
 
 function requestContext(plugin = null) {
   return {
@@ -401,15 +402,25 @@ async function loadData() {
 
 async function installDshPackage() {
   const spec = dshPackageSpec.value.trim()
-  if (!dshProfile.value || !spec || installingDshPackage.value) return
+  const profile = dshProfile.value
+  if (!profile || !spec || installingDshPackage.value) return
+  const pending = dshPendingPluginRow(profile, spec)
+  plugins.value = [pending, ...plugins.value]
   installingDshPackage.value = true
   try {
-    await installDshPlugin(dshProfile.value, spec)
+    const res = await installDshPlugin(profile, spec)
     message.success(`已安装 ${spec}`)
     dshPackageSpec.value = ''
     invalidatePluginSessionCache('dsh')
-    await loadData()
+    const merged = mergeDshProfilePlugins(plugins.value, res.plugins, profile)
+    if (merged) {
+      plugins.value = merged
+    } else {
+      plugins.value = plugins.value.filter(plugin => plugin.key !== pending.key)
+      await loadData()
+    }
   } catch (err) {
+    plugins.value = plugins.value.filter(plugin => plugin.key !== pending.key)
     message.error(err.message || '安装外置插件失败')
   } finally {
     installingDshPackage.value = false
@@ -474,6 +485,13 @@ function handleRepositoriesUpdated() {
   loadData()
 }
 
+function dshInstallSpec(plugin) {
+  const requested = String(plugin?.requestedVersion || '').trim()
+  if (!requested) return plugin.name
+  if (/^(?:file:|link:|git\+|github:|https?:)/i.test(requested)) return requested
+  return `${plugin.name}@${requested}`
+}
+
 async function handleInstall(plugin) {
   if (!supportsCurrentPlatform.value || !capabilities.value.install || plugin.readonly) return
   if (currentPlatform.value !== 'dsh' && !plugin.installSource && !plugin.repoOwner && !plugin.repoProjectPath && !plugin.repoLocalPath) {
@@ -482,7 +500,7 @@ async function handleInstall(plugin) {
   installingKeys.value[plugin.key] = true
   try {
     const res = currentPlatform.value === 'dsh'
-      ? await installDshPlugin(plugin.profile, plugin.name)
+      ? await installDshPlugin(plugin.profile, dshInstallSpec(plugin))
       : plugin.installSource
         ? await installPlugin(
           '',
@@ -514,12 +532,22 @@ async function handleInstall(plugin) {
     if (res.success) {
       message.success(`插件 "${plugin.name}" 安装成功`)
       invalidatePluginSessionCache(currentPlatform.value)
-      const idx = plugins.value.findIndex(p => p.key === plugin.key)
-      if (idx !== -1) {
-        plugins.value[idx] = {
-          ...plugins.value[idx],
-          installed: true,
-          key: `installed-${plugin.pluginId || plugin.id || plugin.name}-${plugin.scope || requestContext(plugin).scope}`
+      if (currentPlatform.value === 'dsh') {
+        const merged = mergeDshProfilePlugins(plugins.value, res.plugins, plugin.profile)
+        if (merged) {
+          plugins.value = merged
+        } else {
+          const idx = plugins.value.findIndex(p => p.key === plugin.key)
+          if (idx !== -1) plugins.value[idx] = { ...plugins.value[idx], installed: true }
+        }
+      } else {
+        const idx = plugins.value.findIndex(p => p.key === plugin.key)
+        if (idx !== -1) {
+          plugins.value[idx] = {
+            ...plugins.value[idx],
+            installed: true,
+            key: `installed-${plugin.pluginId || plugin.id || plugin.name}-${plugin.scope || requestContext(plugin).scope}`
+          }
         }
       }
     } else { message.error(res.message || '安装失败') }
@@ -541,12 +569,22 @@ async function handleUninstall(plugin) {
     if (res.success) {
       message.success(`插件 "${plugin.name}" 已卸载`)
       invalidatePluginSessionCache(currentPlatform.value)
-      const idx = plugins.value.findIndex(p => p.key === plugin.key)
-      if (idx !== -1) {
-        plugins.value[idx] = {
-          ...plugins.value[idx],
-          installed: false,
-          key: `market-${plugin.pluginId || plugin.id || plugin.name}`
+      if (currentPlatform.value === 'dsh') {
+        const merged = mergeDshProfilePlugins(plugins.value, res.plugins, plugin.profile)
+        if (merged) {
+          plugins.value = merged
+        } else {
+          const idx = plugins.value.findIndex(p => p.key === plugin.key)
+          if (idx !== -1) plugins.value[idx] = { ...plugins.value[idx], installed: false }
+        }
+      } else {
+        const idx = plugins.value.findIndex(p => p.key === plugin.key)
+        if (idx !== -1) {
+          plugins.value[idx] = {
+            ...plugins.value[idx],
+            installed: false,
+            key: `market-${plugin.pluginId || plugin.id || plugin.name}`
+          }
         }
       }
     } else { message.error(res.message || res.error || '卸载失败') }

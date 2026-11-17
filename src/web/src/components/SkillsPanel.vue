@@ -85,6 +85,15 @@
       <n-input v-model:value="searchQuery" placeholder="搜索技能名称或描述" clearable size="small" class="asset-search">
         <template #prefix><n-icon><SearchOutline /></n-icon></template>
       </n-input>
+      <n-select
+        v-if="showDshProfile"
+        :value="dshProfile"
+        :options="dshProfileOptions"
+        size="small"
+        placeholder="选择 DSH Profile"
+        class="asset-profile"
+        @update:value="handleDshProfileChange"
+      />
       <n-select v-model:value="filterStatus" :options="filterOptions" size="small" class="asset-filter" />
     </div>
 
@@ -106,6 +115,7 @@
             :skill="skill"
             :toggling="!!togglingKeys[skill.controlKey || skill.key]"
             :panel-scope="props.scope"
+            :can-toggle="canToggle"
             @click="handleCardClick"
             @toggle="handleToggle"
             @approve="handleApprove"
@@ -117,7 +127,8 @@
     <!-- 底部提示 -->
     <div v-if="canRefresh" class="asset-footer">
       <n-icon size="14" class="asset-info-icon"><InformationCircleOutline /></n-icon>
-      <span>开关变更后需重启 {{ currentPlatformLabel }} 生效；远端刷新只在手动点击后执行</span>
+      <span v-if="canToggle">开关变更后需重启 {{ currentPlatformLabel }} 生效；远端刷新只在手动点击后执行</span>
+      <span v-else>技能由 {{ currentPlatformLabel }} 原生配置发现；远端刷新只在手动点击后执行</span>
     </div>
     <div v-if="refreshStatusText" class="asset-refresh-status">
       刷新任务：{{ refreshStatusText }}
@@ -140,6 +151,7 @@
       :platform="currentPlatform"
       :scope="props.scope"
       :project-path="props.projectPath"
+      :profile="showDshProfile ? dshProfile : ''"
       @updated="scanLocalSkills"
     />
     <OmpSkillSettingsModal v-model:visible="showOmpSettingsModal" :operation-token="ompSettingsEpoch" @saved="handleOmpSettingsSaved" />
@@ -164,6 +176,7 @@ import { usePlatformStore } from '../stores/platforms'
 import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
 import { completeOmpSkillSettingsSave, supportsOmpSkillSettings, validateOmpSkillListResponse } from '../utils/omp-skill-settings'
 import { getRoutePlatform } from '../config/platformCatalog'
+import { getDshProfiles } from '../api/dsh-agent-presets'
 
 const props = defineProps({
   inDrawer: { type: Boolean, default: false },
@@ -195,6 +208,8 @@ const refreshTask = ref(null)
 const importing = ref(false)
 const loadRequestId = ref(0)
 const refreshContextEpoch = ref(0)
+const dshProfiles = ref([])
+const dshProfile = ref('')
 const { byCapability } = useEnabledCliPlatforms()
 const managedSkillPlatforms = computed(() => byCapability('skills').map(platform => platform.key))
 const supportsCurrentPlatform = computed(() => managedSkillPlatforms.value.includes(currentPlatform.value))
@@ -206,16 +221,23 @@ const canCreate = computed(() => skillActions.value.create !== false)
 const canRepositories = computed(() => skillActions.value.repositories !== false)
 const canImport = computed(() => skillActions.value.import !== false)
 const canRefresh = computed(() => skillActions.value.refresh !== false)
+const canToggle = computed(() => skillActions.value.toggle !== false)
 
 const currentPlatform = computed(() => {
   return String(props.platform || getRoutePlatform(route) || 'claude').trim().toLowerCase()
 })
 
+const showOmpSettings = computed(() => supportsOmpSkillSettings(currentPlatform.value))
+const showDshProfile = computed(() => currentPlatform.value === 'dsh' && props.scope !== 'project')
+const dshProfileOptions = computed(() => dshProfiles.value.map(profile => ({
+  label: profile.name,
+  value: profile.name
+})))
 const scopeOptions = computed(() => ({
   ...(props.projectPath ? { cwd: props.projectPath } : {}),
+  ...(showDshProfile.value && dshProfile.value ? { profile: dshProfile.value } : {}),
   ...(props.scope && props.scope !== 'user' ? { scope: props.scope } : {})
 }))
-const showOmpSettings = computed(() => supportsOmpSkillSettings(currentPlatform.value))
 
 const currentPlatformLabel = computed(() => {
   const platform = platformStore.get(currentPlatform.value) || getPlatformConfig(currentPlatform.value)
@@ -259,6 +281,7 @@ const filteredSkills = computed(() => {
 
 const emptyText = computed(() => {
   if (searchQuery.value) return '没有匹配的技能'
+  if (showDshProfile.value && dshProfiles.value.length === 0) return '该 DSH 实例没有可用 Profile'
   if (filterStatus.value === 'enabled') return '暂无已启用的技能'
   if (filterStatus.value === 'disabled') return '暂无已关闭的技能'
   if (filterStatus.value === 'pending') return '暂无待审批的技能'
@@ -266,6 +289,45 @@ const emptyText = computed(() => {
   if (!canCreate.value && !canRepositories.value && !canRefresh.value) return `${currentPlatformLabel.value} 当前没有可管理的技能`
   return '暂无可用技能，请配置仓库源'
 })
+
+async function loadDshProfiles() {
+  if (!showDshProfile.value) {
+    dshProfiles.value = []
+    dshProfile.value = ''
+    return
+  }
+  try {
+    const profiles = await getDshProfiles()
+    if (!showDshProfile.value) return
+    dshProfiles.value = Array.isArray(profiles) ? profiles : []
+    if (!dshProfiles.value.some(profile => profile.name === dshProfile.value)) {
+      dshProfile.value = dshProfiles.value[0]?.name || ''
+    }
+  } catch (err) {
+    dshProfiles.value = []
+    dshProfile.value = ''
+    if (message) message.error('加载 DSH Profile 失败: ' + (err?.message || String(err)))
+  }
+}
+
+async function handleDshProfileChange(profile) {
+  dshProfile.value = profile || ''
+  await scanLocalSkills()
+}
+
+function refreshForPlatform() {
+  if (showDshProfile.value) {
+    const platform = currentPlatform.value
+    loadDshProfiles().then(() => {
+      if (currentPlatform.value !== platform) return
+      scanLocalSkills()
+    })
+    return
+  }
+  dshProfiles.value = []
+  dshProfile.value = ''
+  scanLocalSkills()
+}
 
 async function scanLocalSkills({ notifyError = true } = {}) {
   const requestId = ++loadRequestId.value
@@ -323,7 +385,7 @@ async function handleImport() {
 }
 
 async function handleToggle(skill, enabled) {
-  if (!supportsCurrentPlatform.value) return
+  if (!supportsCurrentPlatform.value || !canToggle.value) return
   if (
     !skill.controlKey
     || skill.protected
@@ -485,12 +547,12 @@ function handleCardClick(skill) {
 onMounted(() => {
   // 抽屉模式下仅在打开时加载，避免应用启动时触发网络依赖
   if (!props.inDrawer || props.drawerVisible) {
-    scanLocalSkills()
+    refreshForPlatform()
   }
 })
 
 watch(() => props.drawerVisible, (val) => {
-  if (val) scanLocalSkills()
+  if (val) refreshForPlatform()
 })
 
 watch([() => currentPlatform.value, () => props.scope, () => props.projectPath], ([platform]) => {
@@ -499,7 +561,7 @@ watch([() => currentPlatform.value, () => props.scope, () => props.projectPath],
   refreshTask.value = null
   ompSettingsEpoch.value += 1
   if (!supportsOmpSkillSettings(platform)) showOmpSettingsModal.value = false
-  scanLocalSkills()
+  refreshForPlatform()
 })
 </script>
 

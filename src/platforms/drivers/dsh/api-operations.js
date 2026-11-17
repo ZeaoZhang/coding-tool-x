@@ -10,6 +10,7 @@ const { createDriver: createChannelsDriver } = require('./channels');
 const { createDriver: createProxyDriver } = require('./proxy');
 const { createDriver: createStatisticsDriver } = require('./statistics');
 const { importMcpServer } = require('../../../shared/mcp-import');
+const { bumpPluginListGeneration } = require('../../../server/services/plugin-list-generation');
 
 function requiredId(value, label) {
   const id = String(value || '').trim();
@@ -305,16 +306,28 @@ function createDriver(context = {}) {
     });
   };
   driver.installPlugin = async (request = {}) => {
-    const result = await installPlugin(context, request);
-    return resultFor(request, 'ok', result);
+    try {
+      const result = await installPlugin(context, request);
+      return resultFor(request, 'ok', result);
+    } finally {
+      bumpPluginListGeneration('dsh');
+    }
   };
   driver.uninstallPlugin = async (request = {}) => {
-    const result = await uninstallPlugin(context, request);
-    return resultFor(request, 'ok', result);
+    try {
+      const result = await uninstallPlugin(context, request);
+      return resultFor(request, 'ok', result);
+    } finally {
+      bumpPluginListGeneration('dsh');
+    }
   };
   driver.updatePlugin = async (request = {}) => {
-    const result = await updatePlugin(context, request);
-    return resultFor(request, 'ok', result);
+    try {
+      const result = await updatePlugin(context, request);
+      return resultFor(request, 'ok', result);
+    } finally {
+      bumpPluginListGeneration('dsh');
+    }
   };
   driver.upsertMcp = async (request = {}) => {
     const profileName = request.params?.profileName;

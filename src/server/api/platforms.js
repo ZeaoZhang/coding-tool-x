@@ -22,7 +22,8 @@ const PUBLIC_FIELDS = Object.freeze([
   'logLayout',
   'promptLabel',
   'resourceTypes',
-  'resourceActions'
+  'resourceActions',
+  'mcpTransports'
 ]);
 
 const DEFAULT_API_ROUTES = Object.freeze([

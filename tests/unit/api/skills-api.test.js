@@ -21,7 +21,8 @@ beforeEach(() => {
     codex: createMockService(),
     gemini: createMockService(),
     opencode: createMockService(),
-    omp: createMockService()
+    omp: createMockService(),
+    dsh: createMockService()
   };
 
   // Stub skill-service module before requiring the router
@@ -257,6 +258,15 @@ describe('GET /', () => {
 
     expect(res.status).toBe(200);
     expect(services.omp.scanSkills).toHaveBeenCalledWith({ cwd, scope: 'user' });
+  });
+
+  test('passes the DSH profile to the platform scan', async () => {
+    const app = buildApp();
+    const res = await request(app).get('/?platform=dsh&profile=%20web-test%20');
+
+    expect(res.status).toBe(200);
+    expect(services.dsh.scanSkills).toHaveBeenCalledWith({ profile: 'web-test', scope: 'user' });
+    expect(services.claude.scanSkills).not.toHaveBeenCalled();
   });
 
   test('rejects an existing cwd that is not a known project or workspace', async () => {

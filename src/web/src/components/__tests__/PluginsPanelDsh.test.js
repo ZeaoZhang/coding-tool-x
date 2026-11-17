@@ -118,4 +118,102 @@ describe('DSH PluginsPanel', () => {
     expect(api.installDshPlugin).toHaveBeenCalledWith('default', 'missing-package')
     wrapper.unmount()
   })
+
+  it('merges the install response inventory without reloading the list', async () => {
+    api.getPlugins.mockResolvedValue({ success: true, plugins: [
+      {
+        key: 'dsh:default:missing-package',
+        name: 'missing-package',
+        profile: 'default',
+        installed: false,
+        readonly: false,
+        pluginType: 'dsh-profile'
+      },
+      {
+        key: 'dsh:default:stale-package',
+        name: 'stale-package',
+        profile: 'default',
+        installed: false,
+        readonly: false,
+        pluginType: 'dsh-profile'
+      }
+    ] })
+    api.installDshPlugin.mockResolvedValue({
+      success: true,
+      plugins: {
+        profile: 'default',
+        plugins: [{ name: 'missing-package', installed: true, builtIn: false, description: 'Installed now' }]
+      }
+    })
+    const wrapper = mount(PluginsPanel, {
+      global: {
+        stubs: {
+          PluginCard: {
+            props: ['plugin'],
+            emits: ['install'],
+            template: '<button class="plugin-card" @click="$emit(\'install\', plugin)">{{ plugin.name }}:{{ plugin.installed ? "installed" : "missing" }}:{{ plugin.key }}:{{ plugin.description }}</button>'
+          },
+          PluginRepoManager: true,
+          PluginDetailDrawer: true
+        }
+      }
+    })
+    await flushPromises()
+    expect(api.getPlugins).toHaveBeenCalledTimes(1)
+
+    await wrapper.find('.plugin-card').trigger('click')
+    await flushPromises()
+
+    expect(api.getPlugins).toHaveBeenCalledTimes(1)
+    expect(wrapper.text()).toContain('missing-package:installed:dsh:default:missing-package:Installed now')
+    expect(wrapper.text()).not.toContain('stale-package')
+    wrapper.unmount()
+  })
+
+  it('reinstalls DSH plugins from their requested version spec', async () => {
+    api.getPlugins.mockResolvedValue({ success: true, plugins: [
+      {
+        key: 'dsh:default:local-package',
+        name: 'local-package',
+        profile: 'default',
+        installed: false,
+        readonly: false,
+        pluginType: 'dsh-profile',
+        requestedVersion: 'file:/tmp/local-package'
+      },
+      {
+        key: 'dsh:default:semver-package',
+        name: 'semver-package',
+        profile: 'default',
+        installed: false,
+        readonly: false,
+        pluginType: 'dsh-profile',
+        requestedVersion: '^1.2.3'
+      }
+    ] })
+    const wrapper = mount(PluginsPanel, {
+      global: {
+        stubs: {
+          PluginCard: {
+            props: ['plugin'],
+            emits: ['install'],
+            template: '<button class="plugin-card" @click="$emit(\'install\', plugin)">{{ plugin.name }}</button>'
+          },
+          PluginRepoManager: true,
+          PluginDetailDrawer: true
+        }
+      }
+    })
+    await flushPromises()
+
+    const cards = wrapper.findAll('.plugin-card')
+    await cards[0].trigger('click')
+    await flushPromises()
+    await cards[1].trigger('click')
+    await flushPromises()
+
+    expect(api.installDshPlugin).toHaveBeenNthCalledWith(1, 'default', 'file:/tmp/local-package')
+    expect(api.installDshPlugin).toHaveBeenNthCalledWith(2, 'default', 'semver-package@^1.2.3')
+    wrapper.unmount()
+  })
 })

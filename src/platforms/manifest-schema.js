@@ -240,6 +240,11 @@ const schema = {
     promptFile: { type: ['string', 'null'] },
     promptLabel: { type: 'string', minLength: 1 },
     mcpFormat: { enum: ['json'] },
+    mcpTransports: {
+      type: 'array',
+      uniqueItems: true,
+      items: { enum: ['stdio', 'streamable_http', 'sse'] }
+    },
     statisticsPath: { type: 'string', minLength: 1 },
     paths: { type: 'object', additionalProperties: { type: 'string' } },
     pathResolverId: { enum: [...PATH_RESOLVER_IDS] },

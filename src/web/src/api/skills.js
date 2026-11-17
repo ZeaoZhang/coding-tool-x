@@ -8,7 +8,7 @@ import { requestKey, requestSingleflight } from './request-singleflight'
 const sessionCache = new Map()
 
 function skillSessionKey(platform, options = {}) {
-  return requestKey('skills', platform, options.scope || 'user', options.cwd || '')
+  return requestKey('skills', platform, options.scope || 'user', `${options.cwd || ''}:${options.profile || ''}`)
 }
 
 export function invalidateSkillSessionCache(platform = '') {
@@ -21,6 +21,7 @@ function scopeParams(options = {}) {
   return {
     ...(options.platform ? { platform: options.platform } : {}),
     ...(options.cwd ? { cwd: options.cwd } : {}),
+    ...(options.profile ? { profile: options.profile } : {}),
     ...(options.scope ? { scope: options.scope } : {})
   };
 }
@@ -137,7 +138,7 @@ export async function getSkillDetail(directory, platform = 'claude', repo = null
     `skill-detail:${directory}:${fullDirectory || ''}`,
     platform,
     options.scope || '',
-    `${options.cwd || ''}:${repo?.localPath || repo?.projectPath || ''}`
+    `${options.cwd || ''}:${repo?.localPath || repo?.projectPath || ''}:${options.profile || ''}`
   )
   return requestSingleflight(key, signal => client.get(`/skills/detail/${directory}`, { params, signal })
     .then(response => response.data), 'skill-detail', `skill-detail:${platform}`)

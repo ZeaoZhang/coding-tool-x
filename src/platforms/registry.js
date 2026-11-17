@@ -195,6 +195,9 @@ function createPlatformRegistry({
     if (resourceTypes) result.resourceTypes = resourceTypes;
     const resourceActions = publicResourceActions(platform.resourceActions);
     if (resourceActions) result.resourceActions = resourceActions;
+    if (Array.isArray(platform.mcpTransports) && platform.mcpTransports.length > 0) {
+      result.mcpTransports = [...platform.mcpTransports];
+    }
     if (typeof platform.promptLabel === 'string' && platform.promptLabel.trim()) {
       result.promptLabel = platform.promptLabel;
     }

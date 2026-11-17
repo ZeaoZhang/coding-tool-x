@@ -1,5 +1,5 @@
 <template>
-  <div class="plugin-card asset-card" :class="{ 'is-installed': plugin.installed, 'is-disabled': readonly }" @click="$emit('click', plugin)">
+  <div class="plugin-card asset-card" :class="{ 'is-installed': plugin.installed, 'is-disabled': readonly }" @click="!plugin.installing && $emit('click', plugin)">
     <div class="asset-card-main">
       <div class="asset-card-top">
         <div class="asset-card-title-stack">
@@ -8,9 +8,10 @@
             <span class="asset-name">{{ plugin.name }}</span>
           </div>
           <div class="asset-tags">
-            <n-tag v-if="plugin.installed" type="success" size="tiny" :bordered="false">已安装</n-tag>
+            <n-tag v-if="plugin.installing" type="info" size="tiny" :bordered="false">安装中</n-tag>
+            <n-tag v-else-if="plugin.installed" type="success" size="tiny" :bordered="false">已安装</n-tag>
             <n-tag v-if="plugin.builtIn" type="info" size="tiny" :bordered="false">内置</n-tag>
-            <n-tag v-if="readonly" type="default" size="tiny" :bordered="false">只读</n-tag>
+            <n-tag v-if="readonly && !plugin.installing" type="default" size="tiny" :bordered="false">只读</n-tag>
             <n-tag v-if="plugin.scope" type="info" size="tiny" :bordered="false">
               {{ plugin.scope === 'project' ? '项目' : '全局' }}
             </n-tag>
@@ -28,7 +29,7 @@
         <a v-if="plugin.readmeUrl" class="asset-link" :href="plugin.readmeUrl" target="_blank" @click.stop>{{ getRepoLinkLabel(plugin) }}</a>
       </div>
     </div>
-    <div v-if="!readonly" class="asset-card-actions" @click.stop>
+    <div v-if="!readonly && !plugin.installing" class="asset-card-actions" @click.stop>
       <n-button
         v-if="plugin.installed && canUninstall"
         size="small"
@@ -70,7 +71,10 @@ function truncate(text, len) {
 }
 
 function hasInstallSource(plugin) {
-  return !!(plugin?.installSource || plugin?.repoOwner || plugin?.repoProjectPath || plugin?.repoLocalPath)
+  if (plugin?.pluginType === 'dsh-profile' || plugin?.source === 'dsh-profile') {
+    return Boolean(plugin?.requestedVersion || plugin?.name);
+  }
+  return !!(plugin?.installSource || plugin?.repoOwner || plugin?.repoProjectPath || plugin?.repoLocalPath);
 }
 
 function getRepoLinkLabel(plugin) {

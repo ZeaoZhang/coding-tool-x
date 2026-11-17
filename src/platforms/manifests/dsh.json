@@ -36,12 +36,14 @@
     "mcp": true,
     "prompts": true
   },
+  "mcpTransports": ["stdio", "streamable_http"],
   "resourceActions": {
     "skills": {
       "create": false,
       "repositories": true,
       "import": false,
-      "refresh": true
+      "refresh": true,
+      "toggle": false
     },
     "plugins": {
       "repositories": false,

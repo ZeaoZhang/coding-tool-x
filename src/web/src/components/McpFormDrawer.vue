@@ -127,13 +127,14 @@
                   <span class="radio-label">stdio</span>
                   <span class="radio-desc">本地命令</span>
                 </n-radio>
-                <n-radio value="streamable_http">
+                <n-radio value="streamable_http" :disabled="!isTransportSupported('streamable_http')">
                   <span class="radio-label">streamable_http</span>
                 </n-radio>
-                <n-radio value="sse">
+                <n-radio value="sse" :disabled="!isTransportSupported('sse')">
                   <span class="radio-label">sse</span>
                 </n-radio>
               </n-radio-group>
+              <p v-if="transportWarning" class="field-hint">{{ transportWarning }}</p>
             </div>
 
             <!-- stdio 配置 -->
@@ -342,7 +343,7 @@ const formData = reactive({
   description: '',
   homepage: '',
   docs: '',
-  apps: {},
+  apps: buildDefaultApps(),
   server: {
     type: 'stdio',
     command: '',
@@ -357,6 +358,40 @@ const serverType = ref('stdio')
 const envList = ref([])
 const headersList = ref([])
 const tagsInput = ref('')
+
+const ALL_MCP_TRANSPORTS = ['stdio', 'streamable_http', 'sse']
+
+const selectedMcpPlatforms = computed(() => {
+  if (props.scope === 'project') {
+    const projectPlatform = mcpPlatforms.value.find(platform => platform.key === props.platform)
+    return projectPlatform ? [projectPlatform] : []
+  }
+  return mcpPlatforms.value.filter(platform => formData.apps[platform.key] === true)
+})
+
+function platformSupportsTransport(platform, transport) {
+  const supported = Array.isArray(platform?.mcpTransports) && platform.mcpTransports.length > 0
+    ? platform.mcpTransports
+    : ALL_MCP_TRANSPORTS
+  return supported.includes(transport)
+}
+
+function unsupportedPlatformLabels(transport) {
+  return selectedMcpPlatforms.value
+    .filter(platform => !platformSupportsTransport(platform, transport))
+    .map(platform => platform.label || platform.title || platform.key)
+}
+
+function isTransportSupported(transport) {
+  return unsupportedPlatformLabels(transport).length === 0
+}
+
+const transportWarning = computed(() => {
+  const labels = unsupportedPlatformLabels(serverType.value)
+  return labels.length > 0
+    ? `当前选中的平台不支持 ${serverType.value}：${labels.join('、')}`
+    : ''
+})
 
 // ID 验证
 const idError = computed(() => {
@@ -502,6 +537,11 @@ async function handleSave() {
 
   if (serverType.value === 'stdio' && !formData.server.command?.trim()) {
     message.error('请输入命令')
+    return
+  }
+
+  if (transportWarning.value) {
+    message.error(transportWarning.value)
     return
   }
 
@@ -732,6 +772,12 @@ watch(serverType, (newType) => {
 .field-error {
   font-size: 12px;
   color: #f56c6c;
+}
+
+.field-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #d97706;
 }
 
 .field-row {

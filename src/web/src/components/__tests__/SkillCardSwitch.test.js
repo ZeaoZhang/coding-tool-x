@@ -42,3 +42,23 @@ test('shows cached and enabled state without install or uninstall actions', asyn
 })
 
 vi.clearAllMocks()
+
+test('hides the switch when the platform does not support skill toggling', async () => {
+  const { default: SkillCard } = await import('../SkillCard.vue')
+  const wrapper = mount(SkillCard, {
+    props: {
+      canToggle: false,
+      skill: {
+        name: 'Readonly',
+        directory: 'readonly',
+        enabled: true,
+        cached: true,
+        trust: 'approved',
+        projection: { state: 'unsupported' }
+      }
+    }
+  })
+
+  expect(wrapper.find('.skill-switch').exists()).toBe(false)
+  expect(wrapper.text()).toContain('不支持投影')
+})

@@ -7,7 +7,7 @@ export const MINIMAL_PLATFORM_FALLBACK = [
   { key: 'gemini', label: 'Gemini', capabilities: { channels: true, projects: true, sessions: true, proxy: true, statistics: true, resourceSync: true, skills: true, commands: true, agents: true, nativeConfig: true } },
   { key: 'opencode', label: 'OpenCode', capabilities: { channels: true, projects: true, sessions: true, proxy: true, statistics: true, resourceSync: true, skills: true, commands: true, agents: true, nativeConfig: true } },
   { key: 'omp', label: 'OMP', capabilities: { channels: true, projects: true, sessions: true, proxy: true, statistics: true, resourceSync: true, skills: true, commands: true, plugins: true, agents: false, nativeConfig: true } },
-  { key: 'dsh', label: 'DSH', title: 'DeepSeek Harness', command: 'dsh', iconToken: 'terminal', color: '#2563eb', defaultVisible: true, logLayout: 'basic', capabilities: { channels: true, projects: true, sessions: true, proxy: true, statistics: true, nativeLogs: true, nativeConfig: true, api: true, mcp: true, prompts: true }, resourceTypes: { skills: true, commands: false, agents: true, plugins: true, mcp: true, prompts: true }, resourceActions: { skills: { create: false, repositories: true, import: false, refresh: true }, plugins: { repositories: false, market: false, install: true, uninstall: true, import: false, syncRepos: false } } }
+  { key: 'dsh', label: 'DSH', title: 'DeepSeek Harness', command: 'dsh', iconToken: 'terminal', color: '#2563eb', defaultVisible: true, logLayout: 'basic', capabilities: { channels: true, projects: true, sessions: true, proxy: true, statistics: true, nativeLogs: true, nativeConfig: true, api: true, mcp: true, prompts: true }, resourceTypes: { skills: true, commands: false, agents: true, plugins: true, mcp: true, prompts: true }, resourceActions: { skills: { create: false, repositories: true, import: false, refresh: true, toggle: false }, plugins: { repositories: false, market: false, install: true, uninstall: true, import: false, syncRepos: false } }, mcpTransports: ['stdio', 'streamable_http'] }
 ]
 
 function normalizeCapabilities(platform = {}) {
@@ -45,6 +45,14 @@ function normalizeResourceActions(resourceActions) {
   ]))
 }
 
+const MCP_TRANSPORTS = ['stdio', 'streamable_http', 'sse']
+
+function normalizeMcpTransports(value) {
+  if (!Array.isArray(value) || value.length === 0) return [...MCP_TRANSPORTS]
+  const transports = value.filter(transport => MCP_TRANSPORTS.includes(transport))
+  return transports.length > 0 ? transports : [...MCP_TRANSPORTS]
+}
+
 export function normalizePublicPlatform(platform = {}) {
   if (!platform || typeof platform !== 'object' || Array.isArray(platform)) return null
   const key = String(platform?.key || '').trim().toLowerCase()
@@ -74,6 +82,7 @@ export function normalizePublicPlatform(platform = {}) {
     capabilities,
     resourceTypes: normalizeResourceTypes(platform.resourceTypes),
     resourceActions: normalizeResourceActions(platform.resourceActions),
+    mcpTransports: normalizeMcpTransports(platform.mcpTransports),
     promptLabel: typeof platform?.promptLabel === 'string' ? platform.promptLabel.trim() : '',
     supportsProxy: capabilities.proxy === true,
     supportsProjects: capabilities.projects === true,

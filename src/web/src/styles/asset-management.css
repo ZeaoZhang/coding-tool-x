@@ -143,6 +143,11 @@
   flex-shrink: 0;
 }
 
+.asset-profile {
+  width: 150px;
+  flex-shrink: 0;
+}
+
 .asset-panel-content {
   flex: 1;
   min-height: 0;
@@ -819,6 +824,10 @@
   }
 
   .asset-filter {
+    width: 100%;
+  }
+
+  .asset-profile {
     width: 100%;
   }
 

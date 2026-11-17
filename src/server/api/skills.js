@@ -94,8 +94,10 @@ async function getScopeOptions(source = {}) {
     throw new Error('Project scope requires a valid cwd');
   }
 
+  const profile = typeof source.profile === 'string' ? source.profile.trim() : '';
   return {
     ...(cwd ? { cwd } : {}),
+    ...(profile ? { profile } : {}),
     ...(scope ? { scope } : {})
   };
 }

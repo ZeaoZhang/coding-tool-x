@@ -24,6 +24,7 @@ const getPlatformStatePath = typeof pathsModule.getPlatformStatePath === 'functi
   ? pathsModule.getPlatformStatePath
   : (category, platform) => PATHS[category]?.[platform];
 const { OmpNativePluginAdapter } = require('../../platforms/drivers/omp/native-plugin-adapter');
+const { getPluginListGeneration } = require('./plugin-list-generation');
 const {
   importLegacyPluginRepos,
   migratePiStorage
@@ -557,7 +558,8 @@ class PluginsService {
     this._pluginListCache.set(key, {
       value: this._clone(value),
       cachedAt,
-      generation: this._pluginListGeneration
+      generation: this._pluginListGeneration,
+      platformGeneration: getPluginListGeneration(this.platform)
     });
     while (this._pluginListCache.size > MAX_PLUGIN_LIST_CACHE_ENTRIES) {
       this._pluginListCache.delete(this._pluginListCache.keys().next().value);
@@ -1642,15 +1644,21 @@ class PluginsService {
   listPlugins(options = {}) {
     const key = this._pluginListKey(options);
     const now = Date.now();
+    const generation = this._pluginListGeneration;
+    const platformGeneration = getPluginListGeneration(this.platform);
     const cached = this._pluginListCache.get(key);
     if (!options.force && cached
       && now - cached.cachedAt < PLUGIN_LIST_TTL_MS
-      && cached.generation === this._pluginListGeneration) {
+      && cached.generation === generation
+      && cached.platformGeneration === platformGeneration) {
       return this._clone(cached.value);
     }
 
     const value = this._listPluginsUncached(options);
-    this._rememberPluginList(key, value, now);
+    if (generation === this._pluginListGeneration
+      && platformGeneration === getPluginListGeneration(this.platform)) {
+      this._rememberPluginList(key, value, now);
+    }
     return this._clone(value);
   }
 

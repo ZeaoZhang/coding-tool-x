@@ -46,6 +46,7 @@
         @click="$emit('approve', skill)"
       >审批</n-button>
       <n-switch
+        v-if="canToggle"
         :value="skill.enabled"
         :loading="toggling"
         :disabled="skill.protected || skill.readonly || skill.managed === false || !skill.cached || skill.trust !== 'approved' || skill.projection?.state === 'unsupported' || (panelScope === 'project' && skill.sourceScope !== 'project')"
@@ -68,7 +69,8 @@ import {
 defineProps({
   skill: { type: Object, required: true },
   toggling: { type: Boolean, default: false },
-  panelScope: { type: String, default: 'user' }
+  panelScope: { type: String, default: 'user' },
+  canToggle: { type: Boolean, default: true }
 })
 
 defineEmits(['click', 'toggle', 'approve'])

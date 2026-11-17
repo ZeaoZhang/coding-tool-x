@@ -65,6 +65,9 @@ describe('DSH platform integration', () => {
       cliSelectable: false,
       resourceTypes: expect.objectContaining({ skills: true, commands: false, agents: true, plugins: true })
     }));
+    expect(manifest.resourceActions.skills.toggle).toBe(false);
+    expect(manifest.mcpTransports).toEqual(['stdio', 'streamable_http']);
+    expect(registry.getPublicDefinition('dsh').mcpTransports).toEqual(['stdio', 'streamable_http']);
     expect(registry.getCapability('dsh', 'projects')).toBe('dsh-projects');
     expect(registry.getCapability('dsh', 'sessions')).toBe('dsh-sessions');
     expect(registry.getCapability('dsh', 'api')).toBe('dsh-api');
@@ -358,6 +361,58 @@ describe('DSH platform integration', () => {
     expect(removedMcp.data.mcp.servers).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'mcp-demo' })
     ]));
+  });
+
+  test('invalidates cached plugin lists after DSH plugin mutations', async () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const profileDir = path.join(paths.profiles, 'cache');
+    writeJson(path.join(profileDir, 'package.json'), {
+      name: 'dsh-profile-cache',
+      dependencies: {},
+      dsh: { profile: { bundles: [] } }
+    });
+    const fakeDsh = path.join(tempHome, 'fake-dsh-cache.js');
+    fs.writeFileSync(fakeDsh, `#!/usr/bin/env node
+const fs = require('fs');
+const path = require('path');
+const args = process.argv.slice(2);
+const profile = args[args.indexOf('--profile') + 1];
+const verb = args[args.indexOf('--profile') + 2];
+const specs = args.slice(args.indexOf('--profile') + 3);
+const dir = path.join(process.env.DSH_HOME, 'profiles', profile);
+const manifestPath = path.join(dir, 'package.json');
+const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+manifest.dependencies = manifest.dependencies || {};
+for (const spec of specs) {
+  const packageDir = path.join(dir, 'node_modules', spec);
+  if (verb === 'add') {
+    manifest.dependencies[spec] = '1.0.0';
+    fs.mkdirSync(packageDir, { recursive: true });
+    fs.writeFileSync(path.join(packageDir, 'package.json'), JSON.stringify({ name: spec, version: '1.0.0' }));
+  } else if (verb === 'remove') {
+    delete manifest.dependencies[spec];
+    fs.rmSync(packageDir, { recursive: true, force: true });
+  }
+}
+fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+`, 'utf8');
+    fs.chmodSync(fakeDsh, 0o700);
+
+    const api = createApiDriver({ paths, dshCommand: fakeDsh, platform: 'dsh', route: { capability: 'api', operation: 'installPlugin' } });
+    const registry = { resolvePathContext: () => ({ customized: true, native: paths }) };
+    const runtime = { getDriver: () => api };
+    const service = new PluginsService('dsh', { registry, runtime });
+
+    expect(service.listPlugins().plugins).toEqual([]);
+
+    await api.installPlugin({ params: { profileName: 'cache' }, body: { spec: 'cached-plugin' } });
+    expect(service.listPlugins().plugins).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'cached-plugin', profile: 'cache', installed: true })
+    ]));
+
+    await api.uninstallPlugin({ params: { profileName: 'cache', pluginName: 'cached-plugin' }, body: {} });
+    expect(service.listPlugins().plugins).toEqual([]);
   });
 
   test('delegates DSH plugin install and uninstall to the configured dsh command', async () => {
