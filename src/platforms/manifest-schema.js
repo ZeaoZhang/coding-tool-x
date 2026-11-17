@@ -245,6 +245,14 @@ const schema = {
     pathResolverId: { enum: [...PATH_RESOLVER_IDS] },
     sessionMapping: { type: 'object', additionalProperties: { type: 'string' } },
     sessionGlob: { type: 'string', minLength: 1 },
+    sessionIndex: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        parserVersion: { type: 'integer', minimum: 1 },
+        projectsDirConfigKey: { type: 'string', pattern: '^[a-zA-Z][a-zA-Z0-9_]*$' }
+      }
+    },
     resourceMappings: { type: 'object', additionalProperties: { type: 'string' } },
     nativeConfigSnapshot: {
       type: 'object',

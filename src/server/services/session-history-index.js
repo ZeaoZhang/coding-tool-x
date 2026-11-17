@@ -49,9 +49,6 @@ const MAX_MESSAGE_PAGE_LIMIT = 1000;
 // Bounded memory for recently served message pages keyed by file version.
 const MESSAGES_PAGE_CACHE_MAX_BYTES = 32 * 1024 * 1024;
 const MESSAGES_PAGE_CACHE_ITEM_OVERHEAD = 256;
-const BUILTIN_SESSION_SOURCES = new Set(['claude', 'codex', 'gemini', 'omp']);
-// Keep synchronized with the parserVersion exposed by the built-in session drivers.
-const BUILTIN_SESSION_PARSER_VERSIONS = Object.freeze({ claude: 2, codex: 2, gemini: 2, omp: 2 });
 function _parserVersionForDriver(driver) {
   const version = Number(driver?.parserVersion);
   return Number.isInteger(version) && version >= 1 ? version : 1;
@@ -727,6 +724,38 @@ function createSessionHistoryIndex(opts = {}) {
     return _parserVersionForDriver(runtimeDriver);
   }
 
+  /**
+   * Session-index metadata is declared by the platform manifest so this
+   * platform-agnostic service never hardcodes CLI names.
+   */
+  const sessionIndexMetaCache = new Map();
+  function _sessionIndexMeta(source) {
+    if (sessionIndexMetaCache.has(source)) return sessionIndexMetaCache.get(source);
+    let meta = null;
+    try {
+      const registry = platformRuntime.getPlatformRegistry();
+      const manifest = registry && typeof registry.resolve === 'function'
+        ? registry.resolve(source)
+        : null;
+      meta = manifest?.sessionIndex && typeof manifest.sessionIndex === 'object'
+        ? manifest.sessionIndex
+        : null;
+    } catch (_) {
+      meta = null;
+    }
+    sessionIndexMetaCache.set(source, meta);
+    return meta;
+  }
+
+  function _sessionProjectsDir(source, options = {}) {
+    const configKey = _sessionIndexMeta(source)?.projectsDirConfigKey;
+    if (configKey && options.config && typeof options.config === 'object') {
+      const configured = options.config[configKey];
+      if (typeof configured === 'string' && configured.trim()) return configured;
+    }
+    return options.projectsDir || explicitProjectsDir;
+  }
+
   function _resolveSessionsAdapter(source, config = indexConfig) {
     let adapter = null;
     if (explicitAdapters) {
@@ -738,8 +767,6 @@ function createSessionHistoryIndex(opts = {}) {
       }
       if (runtimeDriver) {
         adapter = _adaptRuntimeSessionsDriver(runtimeDriver);
-      } else if (BUILTIN_SESSION_SOURCES.has(source) && adapters[source]) {
-        adapter = adapters[source];
       } else {
         throw _typedFailureToError(_typedSessionsUnsupported(
           source,
@@ -792,8 +819,8 @@ function createSessionHistoryIndex(opts = {}) {
 
   function _hasKnownParserMigrationPending(source) {
     if (explicitAdapters || runtimeProvided) return false;
-    const parserVersion = BUILTIN_SESSION_PARSER_VERSIONS[source];
-    if (!parserVersion) return false;
+    const parserVersion = Number(_sessionIndexMeta(source)?.parserVersion);
+    if (!Number.isInteger(parserVersion) || parserVersion < 1) return false;
     const row = _getDb().prepare(
       'SELECT 1 AS pending FROM session_file WHERE source = ? AND parser_version <> ? LIMIT 1'
     ).get(source, parserVersion);
@@ -959,7 +986,7 @@ function createSessionHistoryIndex(opts = {}) {
     );
   }
 
-  async function _runSummaryInventory(source, { force = false, config = indexConfig } = {}) {
+  async function _runSummaryInventory(source, { force = false, config = indexConfig, projectsDir = null } = {}) {
     // A list request must never wait behind the expensive full-content
     // inventory lock. It can serve the previous summaries and expose the
     // refreshing/stale state instead.
@@ -972,8 +999,9 @@ function createSessionHistoryIndex(opts = {}) {
       db = _getDb();
       if (!force && _isSummaryFresh(source)) return;
       const adapter = _resolveSessionsAdapter(source, config);
+      const resolvedProjectsDir = _sessionProjectsDir(source, { config, projectsDir });
       const inventoryResult = await adapter.inventory({
-        projectsDir: source === 'claude' ? config.projectsDir : explicitProjectsDir
+        projectsDir: resolvedProjectsDir
       });
       if (_isTypedFailureResult(inventoryResult)) throw _typedFailureToError(inventoryResult);
 
@@ -1076,7 +1104,8 @@ function createSessionHistoryIndex(opts = {}) {
     }
     const promise = _runSummaryInventory(source, {
       force,
-      config: options.config || indexConfig
+      config: options.config || indexConfig,
+      projectsDir: options.projectsDir
     });
     _summaryInflight.set(key, promise);
     promise.finally(() => {
@@ -1124,9 +1153,7 @@ function createSessionHistoryIndex(opts = {}) {
     const useWorker = shouldUseWorker && !runtimeProvided && !explicitAdapters;
     const workerOptions = { force };
     if (projectName) workerOptions.projectName = projectName;
-    const workerProjectsDir = source === 'claude'
-      ? (options.config?.projectsDir || explicitProjectsDir)
-      : explicitProjectsDir;
+    const workerProjectsDir = _sessionProjectsDir(source, options);
     if (workerProjectsDir) workerOptions.projectsDir = workerProjectsDir;
     const promise = useWorker
       ? workerRunner(source, dbPath, workerOptions).then(() => {
@@ -1138,7 +1165,8 @@ function createSessionHistoryIndex(opts = {}) {
       : _runInventory(source, {
         force,
         projectName,
-        config: options.config || indexConfig
+        config: options.config || indexConfig,
+        projectsDir: options.projectsDir
       });
     _inflight.set(key, promise);
     promise.finally(() => {
@@ -1186,7 +1214,7 @@ function createSessionHistoryIndex(opts = {}) {
     ).run(source, lastInventoryMs, lastError);
   }
 
-  async function _runInventory(source, { force = false, projectName = null, config = indexConfig } = {}) {
+  async function _runInventory(source, { force = false, projectName = null, config = indexConfig, projectsDir = null } = {}) {
     // SQLite's writer lock is database-wide, so source-specific lock files do
     // not prevent two different sources from entering BEGIN IMMEDIATE at the
     // same time. Acquire one lock for the whole index before opening/schema
@@ -1219,15 +1247,14 @@ function createSessionHistoryIndex(opts = {}) {
 
         if (runtimeDriver) {
           adapter = _adaptRuntimeSessionsDriver(runtimeDriver);
-        } else if (BUILTIN_SESSION_SOURCES.has(source) && adapters[source]) {
-          adapter = adapters[source];
         } else {
           throw _typedFailureToError(_typedSessionsUnsupported(source, new Error(`unsupported sessions source: ${source}`)));
         }
       }
       const parserVersion = _parserVersionForSource(source, adapter);
+      const resolvedProjectsDir = _sessionProjectsDir(source, { config, projectsDir });
       const inventoryResult = await adapter.inventory({
-        projectsDir: source === 'claude' ? config.projectsDir : explicitProjectsDir
+        projectsDir: resolvedProjectsDir
       });
       if (_isTypedFailureResult(inventoryResult)) {
         throw _typedFailureToError(inventoryResult);
@@ -1278,7 +1305,7 @@ function createSessionHistoryIndex(opts = {}) {
       }
       const parseDescriptor = async (d) => {
         const preFingerprint = { size: d.size, mtimeMs: d.mtimeMs };
-        const parseResult = await adapter.parse({ ...d, projectsDir: config.projectsDir });
+        const parseResult = await adapter.parse({ ...d, projectsDir: resolvedProjectsDir });
         if (_isTypedFailureResult(parseResult)) throw _typedFailureToError(parseResult);
         if (!parseResult || typeof parseResult !== 'object' || !parseResult.session || typeof parseResult.session !== 'object' || typeof parseResult.session.sessionId !== 'string' || !parseResult.session.sessionId.trim() || !Array.isArray(parseResult.messages)) {
           throw new Error('invalid parsed session result');
@@ -1293,7 +1320,7 @@ function createSessionHistoryIndex(opts = {}) {
         if (postStat.size === preFingerprint.size && postStat.mtimeMs === preFingerprint.mtimeMs) {
           return { descriptor: d, parseResult };
         }
-        const retryDescriptor = { ...d, size: postStat.size, mtimeMs: postStat.mtimeMs };
+        const retryDescriptor = { ...d, size: postStat.size, mtimeMs: postStat.mtimeMs, projectsDir: resolvedProjectsDir };
         const retryResult = await adapter.parse(retryDescriptor);
         if (_isTypedFailureResult(retryResult)) {
           throw _typedFailureToError(retryResult);
@@ -1663,7 +1690,7 @@ function createSessionHistoryIndex(opts = {}) {
     return rows.map(_sessionRowToSummary);
   }
 
-  async function _parseSingleSessionContent(source, summaryRow, config = indexConfig) {
+  async function _parseSingleSessionContent(source, summaryRow, config = indexConfig, projectsDir = null) {
     const adapter = _resolveSessionsAdapter(source, config);
     const descriptor = {
       filePath: summaryRow.file_path,
@@ -1671,7 +1698,7 @@ function createSessionHistoryIndex(opts = {}) {
       mtimeMs: Number(summaryRow.mtime_ms) || 0,
       sessionId: summaryRow.session_id,
       projectHint: summaryRow.project_name,
-      projectsDir: source === 'claude' ? config.projectsDir : explicitProjectsDir
+      projectsDir: projectsDir || explicitProjectsDir
     };
     const parseResult = await adapter.parse(descriptor);
     if (_isTypedFailureResult(parseResult)) throw _typedFailureToError(parseResult);
@@ -1803,7 +1830,12 @@ function createSessionHistoryIndex(opts = {}) {
       }
 
       const parseRow = { ...summaryRow, size: stat.size, mtime_ms: stat.mtimeMs };
-      const parsed = await _parseSingleSessionContent(source, parseRow, config);
+      const parsed = await _parseSingleSessionContent(
+        source,
+        parseRow,
+        config,
+        _sessionProjectsDir(source, options)
+      );
       let afterStat;
       try {
         afterStat = await fs.promises.stat(summaryRow.file_path);
@@ -1939,7 +1971,7 @@ function createSessionHistoryIndex(opts = {}) {
       mtimeMs: stat.mtimeMs,
       sessionId,
       projectHint: summary.project_name,
-      projectsDir: explicitProjectsDir
+      projectsDir: _sessionProjectsDir(source, options)
     };
     const parsed = await adapter.parse(descriptor);
     if (_isTypedFailureResult(parsed)) throw _typedFailureToError(parsed);
@@ -2270,7 +2302,7 @@ function createSessionHistoryIndex(opts = {}) {
         matchMap.set(c.session_id, entry);
       }
 
-      entry.matchCount += source === 'claude' ? count : 1;
+      entry.matchCount += count;
       entry.messages.push({
         ordinal: c.ordinal,
         content,

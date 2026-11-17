@@ -296,6 +296,24 @@ describe('session-history-index', () => {
     expect(state.adapter.inventory).toHaveBeenCalledWith({ projectsDir: undefined });
   });
 
+  it('resolves the projects directory from manifest sessionIndex metadata', async () => {
+    const fixture = setupIndex();
+    fixture.writeFixtureFile({
+      name: 'manifest-projects.jsonl',
+      content: '{"type":"metadata"}\n',
+      session: makeSessionFixture('manifest-projects', 'test-proj'),
+      messages: makeMessageFixtures(2)
+    });
+
+    await index.listProjects('claude', {
+      force: true,
+      consistency: 'complete',
+      config: { projectsDir: '/claude/projects' }
+    });
+
+    expect(fixture.adapter.inventory).toHaveBeenCalledWith({ projectsDir: '/claude/projects' });
+  });
+
   it('second inventory with unchanged files parses zero', async () => {
     const fixture = setupIndex();
     const filePath = path.join(fixture.rootDir, 's1.jsonl');

@@ -346,3 +346,21 @@ test('keeps every built-in route operation within the declared contract', () => 
     expect(validateManifest(manifest)).toMatchObject({ valid: true, errors: [] });
   }
 });
+
+test('built-in session index metadata matches the sessions driver parser version', () => {
+  const manifests = new Map(BUILT_IN_MANIFESTS.map(manifest => [manifest.key, manifest]));
+  for (const [key, driverPath] of [
+    ['claude', '../../../src/platforms/drivers/claude/sessions'],
+    ['codex', '../../../src/platforms/drivers/codex/sessions'],
+    ['gemini', '../../../src/platforms/drivers/gemini/sessions'],
+    ['omp', '../../../src/platforms/drivers/omp/sessions']
+  ]) {
+    const manifest = manifests.get(key);
+    expect(manifest.sessionIndex).toEqual(expect.objectContaining({
+      parserVersion: expect.any(Number)
+    }));
+    const { createDriver } = require(driverPath);
+    expect(createDriver({}).parserVersion).toBe(manifest.sessionIndex.parserVersion);
+  }
+  expect(manifests.get('claude').sessionIndex.projectsDirConfigKey).toBe('projectsDir');
+});

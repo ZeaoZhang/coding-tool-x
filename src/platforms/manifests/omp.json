@@ -10,6 +10,7 @@
   "sortOrder": 40,
   "modelConfig": { "catalogKey": "codex" },
   "channelModelType": "openai_compatible",
+  "sessionIndex": { "parserVersion": 2 },
   "auth": {
     "modes": ["api_key", "oauth", "none"],
     "oauth": { "adapter": "omp", "policy": "mixed" }
