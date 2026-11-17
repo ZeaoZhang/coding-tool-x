@@ -22,6 +22,12 @@ function createDriver(context = {}) {
       messages: 'getSessionMessages'
     },
     customMethods: {
+      // HTTP launch returns a copyable command; CLI resume keeps spawning.
+      launchCommand: (service, sessionId, options = {}) => service.getSessionLaunchCommand(sessionId, {
+        fork: options.fork === true,
+        config: options.config || {},
+        cwd: options.cwd
+      }),
       delete: (service, projectName, sessionId, options = {}) => {
         const result = service.deleteSession(options.config || {}, projectName, sessionId);
         context.sessionHistoryIndex?.invalidateSource('claude');

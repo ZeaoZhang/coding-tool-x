@@ -565,7 +565,13 @@ async function handleSearch() {
   try {
     // 增加上下文长度到 35 (15 + 20)
     const data = await searchSessionsApi(effectiveProjectName.value, searchQuery.value, 35, currentChannel.value)
-    searchResults.value = data
+    const sessions = Array.isArray(data?.sessions) ? data.sessions : []
+    searchResults.value = {
+      ...(data && typeof data === 'object' && !Array.isArray(data) ? data : {}),
+      keyword: searchQuery.value,
+      sessions,
+      totalMatches: sessions.reduce((sum, session) => sum + (Number(session.matchCount) || 0), 0)
+    }
     showSearchResults.value = true
   } catch (err) {
     message.error('搜索失败: ' + err.message)

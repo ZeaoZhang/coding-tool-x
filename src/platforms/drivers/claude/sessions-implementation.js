@@ -95,6 +95,30 @@ function resolveLaunchCwd(config, sessionId, cwd) {
   return process.cwd();
 }
 
+function quoteShellArgument(value) {
+  const text = String(value);
+  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(text)
+    ? text
+    : `"${text.replace(/(["\\$`])/g, '\\$1')}"`;
+}
+
+function getSessionLaunchCommand(sessionId, {
+  fork = false,
+  config = {},
+  cwd
+} = {}) {
+  const normalizedSessionId = String(sessionId || '').trim();
+  if (!normalizedSessionId) throw new Error('Session id is required');
+  const launchCwd = resolveLaunchCwd(config, normalizedSessionId, cwd);
+  const args = ['claude', '-r', normalizedSessionId];
+  if (fork) args.push('--fork-session');
+  return {
+    command: args.map(quoteShellArgument).join(' '),
+    args,
+    cwd: launchCwd
+  };
+}
+
 function launch(sessionId, {
   fork = false,
   config = {},
@@ -559,6 +583,7 @@ module.exports = {
   deleteSession,
   forkSession,
   launch,
+  getSessionLaunchCommand,
   getRecentSessions,
   getProjectOrder,
   saveProjectOrder,

@@ -77,6 +77,54 @@ describe('API operation Driver contract', () => {
     });
   });
 
+  test('session launch requests use the non-blocking command builder', async () => {
+    const launch = vi.fn();
+    const launchCommand = vi.fn((sessionId, options) => ({
+      status: 'ok',
+      platform: 'claude',
+      capability: 'sessions',
+      operation: 'launchCommand',
+      data: {
+        command: `claude -r ${sessionId}`,
+        cwd: options.cwd || null
+      }
+    }));
+    const route = { operation: 'launch', capability: 'sessions' };
+    const runtime = {
+      getDriver: (platform, capability) => capability === 'sessions'
+        ? { launch, launchCommand }
+        : {}
+    };
+    const driver = createApiOperationsDriver({
+      platform: 'claude',
+      runtime,
+      manifest: { api: { routes: [route] } }
+    });
+
+    const result = await driver.launch({
+      platform: 'claude',
+      params: { projectName: 'demo', sessionId: 'session-1' },
+      query: {},
+      body: { fork: true, cwd: '/tmp/workspace' },
+      config: {},
+      route
+    });
+
+    expect(launchCommand).toHaveBeenCalledWith('session-1', expect.objectContaining({
+      fork: true,
+      cwd: '/tmp/workspace',
+      force: false
+    }));
+    expect(launch).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      status: 'ok',
+      platform: 'claude',
+      capability: 'sessions',
+      operation: 'launch',
+      data: { command: 'claude -r session-1', cwd: '/tmp/workspace' }
+    });
+  });
+
   test.each(['claude', 'codex', 'gemini', 'opencode', 'omp'])('%s passes channel updates and redirect rules through the API boundary', async platform => {
       const updateChannel = vi.fn((id, patch) => ({ id, ...patch }));
       const route = { operation: 'update', capability: 'channels' };

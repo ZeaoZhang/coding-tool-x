@@ -91,6 +91,31 @@ describe('platform session launch', () => {
     }
   });
 
+  test('builds a copyable launch command without spawning the CLI', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cc-tool-launch-command-'));
+    const projectDir = path.join(root, 'demo');
+    const sessionCwd = path.join(root, 'workspace');
+    fs.mkdirSync(projectDir);
+    fs.mkdirSync(sessionCwd);
+    fs.writeFileSync(path.join(projectDir, 'session-123.jsonl'), '{"cwd":"' + sessionCwd + '"}\n');
+    const implementation = require('../../../src/platforms/drivers/claude/sessions-implementation');
+
+    try {
+      const result = implementation.getSessionLaunchCommand('session-123', {
+        fork: true,
+        config: { projectsDir: root, currentProject: 'demo' }
+      });
+
+      expect(result).toEqual({
+        command: 'claude -r session-123 --fork-session',
+        args: ['claude', '-r', 'session-123', '--fork-session'],
+        cwd: sessionCwd
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test.each(['demo-cli', 'codex', 'gemini', 'opencode', 'omp'])('%s without launch stays unsupported', async platform => {
     const registry = createRegistry(platform);
     const runtime = { getDriver: vi.fn(() => ({})) };

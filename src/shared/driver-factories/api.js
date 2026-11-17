@@ -166,6 +166,17 @@ function createApiOperationsDriver({ platform, runtime, manifest, config, sessio
             ? 'listSessionsPage'
             : null;
         const invocationArgs = argsFor(capability, operation, requestContext);
+        // HTTP session launch returns a copyable command; CLI resume keeps the
+        // blocking interactive launch in the platform driver.
+        if (capability === 'sessions' && operation === 'launch'
+          && target && typeof target.launchCommand === 'function') {
+          const value = await target.launchCommand(...invocationArgs);
+          if (value && typeof value === 'object' && typeof value.status === 'string') {
+            if (value.status !== 'ok') return resultFor(requestContext, value.status, undefined, value.error, value.cause);
+            return resultFor(requestContext, 'ok', value.data);
+          }
+          return resultFor(requestContext, 'ok', value);
+        }
         // Prefer the platform driver's page method so aliases, fork metadata,
         // and platform-specific project normalization remain intact. The
         // shared index is only the compatibility fallback for older drivers.

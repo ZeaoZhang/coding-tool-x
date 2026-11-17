@@ -469,7 +469,7 @@ function getAvailableConfigs(options = {}) {
   }
 
   // 获取已安装的插件和市场插件
-  const configuredPluginsService = new PluginsService({ registry });
+  const configuredPluginsService = new PluginsService('claude', { registry });
   const { plugins: installedPlugins } = configuredPluginsService.listPlugins();
 
   // 获取 MCP 服务器

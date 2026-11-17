@@ -10,6 +10,7 @@ let commandList;
 let commandListByPlatform;
 let skillsByPlatform;
 let pluginList;
+let pluginsServiceArgs;
 let mcpServers;
 let mcpPresets;
 let promptPresets;
@@ -35,6 +36,7 @@ function readYaml(filePath) {
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'config-templates-service-'));
   templateSkillRegistrations = [];
+  pluginsServiceArgs = [];
   configDir = path.join(testDir, '.cc-tool');
   agentList = [
     {
@@ -224,6 +226,9 @@ beforeEach(() => {
     loaded: true,
     exports: {
       PluginsService: class {
+        constructor(...args) {
+          pluginsServiceArgs.push(args);
+        }
         listPlugins() {
           return { plugins: pluginList };
         }
@@ -392,6 +397,10 @@ describe('config-templates-service persistence and discovery', () => {
 
   test('aggregates available configs from agents, commands, skills, plugins, MCP, and prompts', () => {
     const result = templatesService.getAvailableConfigs();
+
+    expect(pluginsServiceArgs).toHaveLength(1);
+    expect(pluginsServiceArgs[0][0]).toBe('claude');
+    expect(pluginsServiceArgs[0][1]).toEqual(expect.objectContaining({ registry: expect.any(Object) }));
 
     expect(result.skillsByPlatform).toEqual({
       claude: [{ directory: 'skill-claude', name: 'Skill Claude', description: 'Claude skill', repoOwner: null, repoName: null, repoBranch: null }],
