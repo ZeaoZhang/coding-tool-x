@@ -33,6 +33,9 @@
   },
   "overrides": {
     "lodash": "4.18.1",
-    "lodash-es": "4.18.1"
+    "lodash-es": "4.18.1",
+    "editorconfig": "^4.0.1",
+    "glob": "^14.0.2",
+    "minimatch": "^11.0.9"
   }
 }

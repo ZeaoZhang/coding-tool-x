@@ -21,6 +21,7 @@
 ### Security
 - **控制面安全** - MCP/Skill 控制清单不保存完整 secret；项目 MCP 静态 secret 默认拒绝；LAN 远程写默认关闭，并要求 same-origin/loopback 控制
 - **依赖安全升级** - adm-zip 升至 0.6.0（GHSA-xcpc-8h2w-3j85）、js-yaml 升至 4.3.1（GHSA-h67p-54hq-rp68 / GHSA-52cp-r559-cp3m / GHSA-5p4m-2wfm-xmqj）、pm2 升至 7.0.3（GHSA-x5gf-qvw8-r2rm），overrides 同步更新 basic-ftp / qs / systeminformation / js-yaml；`npm audit` 报告归零
+- **Dependabot 依赖清账** - adm-zip 升至 0.6.1、toml 升至 5.0.1；根目录与 Web 统一 override minimatch 11.0.9、glob 14.0.6、editorconfig 4.0.1，清理 `@vue/test-utils` 开发链上的传递漏洞；根目录与 `src/web` 的 `npm audit` 均为 0
 
 ### Fixed
 - **DSH 资源管理** - 修复 DSH 插件安装/卸载后 30 秒内插件列表仍返回旧数据（平台 Driver 变更现在会使列表缓存失效），并支持按 `requestedVersion` 重装外置插件；插件安装/卸载直接使用 mutation 返回的 Profile inventory 更新列表并显示即时“安装中”占位卡片，不再等待二次全量刷新；Skills 页面新增 Profile 选择并按 Profile 扫描（profile 级 `customSkillDirs` 等配置生效）；MCP 表单按 Manifest `mcpTransports` 过滤选项（DSH 禁用 `sse`）；DSH 只读 Skills 不再显示无效启停开关。
