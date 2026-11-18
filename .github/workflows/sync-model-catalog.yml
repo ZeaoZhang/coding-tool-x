@@ -60,15 +60,22 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Choose date-stamped package version
+      - name: Choose package version
         id: version
         if: steps.catalog.outputs.changed == 'true'
+        env:
+          FORCE_PUBLISH: ${{ inputs.publish }}
         run: |
-          next_version=$(node scripts/next-model-catalog-version.js)
-          npm version "$next_version" --no-git-tag-version
-          echo "version=$next_version" >> "$GITHUB_OUTPUT"
+          current_version=$(node -p "require('./package.json').version")
+          if [ "$FORCE_PUBLISH" = "true" ] && node -e "const v=require('semver').parse(require('./package.json').version); process.exit(v && v.prerelease.length === 0 ? 0 : 1)"; then
+            version="$current_version"
+          else
+            version=$(node scripts/next-model-catalog-version.js)
+          fi
+          npm version "$version" --no-git-tag-version
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Check whether this date's package version already exists
+      - name: Check whether this package version already exists
         id: version-availability
         if: steps.catalog.outputs.changed == 'true'
         env:
@@ -76,7 +83,7 @@ jobs:
         run: |
           if npm view "coding-tool-x@$VERSION" version >/dev/null 2>&1; then
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "Version $VERSION was already published today; leaving this catalog change for the next daily run."
+            echo "Version $VERSION is already published; skipping npm publish."
           else
             echo "available=true" >> "$GITHUB_OUTPUT"
           fi
@@ -91,5 +98,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/config/model-metadata.json package.json package-lock.json
+          if git diff --cached --quiet; then
+            echo "No tracked changes to commit."
+            exit 0
+          fi
           git commit -m "chore: sync model catalog and release ${{ steps.version.outputs.version }}"
           git push origin "HEAD:${GITHUB_REF_NAME}"
