@@ -23,7 +23,7 @@ const {
   getAutoStartStatus: vi.fn(),
   enableAutoStart: vi.fn(),
   disableAutoStart: vi.fn(),
-  client: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
+  client: { get: vi.fn(), post: vi.fn(), delete: vi.fn(), getPlatformApiPrefix: () => '/platforms/dsh' },
   uiConfig: { value: { enabledCliPlatforms: ['demo-cli'] } },
   platformStore: {
     all: [{ key: 'demo-cli', label: 'Demo CLI', title: 'Demo CLI', capabilities: {} }]
@@ -33,7 +33,7 @@ const {
 vi.mock('../../api/ui-config', () => ({ getUIConfig, saveUIConfig, updateNestedUIConfig }))
 vi.mock('../../api/security', () => ({ getSecurityStatus, setSecurityPassword }))
 vi.mock('../../api/pm2', () => ({ getAutoStartStatus, enableAutoStart, disableAutoStart }))
-vi.mock('../../api/client', () => ({ client }))
+vi.mock('../../api/client', () => ({ client, getPlatformApiPrefix: () => '/platforms/dsh' }))
 vi.mock('../../stores/platforms', () => ({ usePlatformStore: () => platformStore }))
 vi.mock('../../composables/useUIConfig', () => ({ useUIConfig: () => ({ uiConfig }) }))
 vi.mock('../../composables/useTheme', () => ({
@@ -104,6 +104,46 @@ describe('SettingsDrawer platform catalog', () => {
       'claude',
       'codex'
     ])
+  })
+
+  it('exposes the DSH channel profile setting in advanced config', async () => {
+    fetchMock.mockImplementation(async url => {
+      if (String(url).startsWith('/api/config/advanced')) {
+        return {
+          ok: true,
+          json: async () => ({
+            dshChannelProfile: 'web',
+            dshProfiles: ['desktop', 'dsh-tui']
+          })
+        }
+      }
+      return { ok: true, json: async () => ({}) }
+    })
+
+    const wrapper = shallowMount(SettingsDrawer, {
+      props: { visible: true },
+      global: {
+        stubs: {
+          drawer: { template: '<div><slot /></div>' },
+          'drawer-content': { template: '<div><slot name="header" /><slot /><slot name="footer" /></div>' },
+          checkbox: { template: '<label><slot /></label>' },
+          text: { template: '<span><slot /></span>' }
+        }
+      }
+    })
+
+    await flushPromises()
+    await wrapper.setProps({ visible: false })
+    await wrapper.setProps({ visible: true })
+    await flushPromises()
+
+    expect(wrapper.vm.advancedSettings.dshChannelProfile).toBe('web')
+    expect(wrapper.vm.dshProfileOptions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ value: 'auto', label: expect.stringContaining('desktop') }),
+      expect.objectContaining({ value: 'desktop', label: expect.stringContaining('Desktop') }),
+      expect.objectContaining({ value: 'web', label: expect.stringContaining('Web') }),
+      expect.objectContaining({ value: 'tui', label: expect.stringContaining('TUI') })
+    ]))
   })
 
   it('keeps notification settings aligned with visible CLI platforms', async () => {
@@ -485,7 +525,7 @@ describe('SettingsDrawer platform catalog', () => {
       nativeCliLogs: { enabled: false, intervalSeconds: 12 }
     }
     fetchMock.mockImplementation(async (url) => {
-      if (url === '/api/config/advanced') {
+      if (String(url).startsWith('/api/config/advanced')) {
         return { ok: true, json: async () => advancedConfig }
       }
       return { ok: true, json: async () => ({}) }

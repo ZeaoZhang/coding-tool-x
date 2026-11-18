@@ -30,6 +30,33 @@ function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+const DSH_CHANNEL_PROFILES = Object.freeze(['auto', 'desktop', 'web', 'tui']);
+
+function normalizeDshChannelProfile(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'dsh-tui') return 'tui';
+  return DSH_CHANNEL_PROFILES.includes(normalized) ? normalized : 'auto';
+}
+
+function getDshProfileSummary(config = {}) {
+  try {
+    const {
+      resolvePaths,
+      listDshProfileNames,
+      resolveDshProfileName
+    } = require('../../platforms/drivers/dsh/common');
+    const dshProfiles = listDshProfileNames({ paths: resolvePaths({}) });
+    const dshResolvedProfile = resolveDshProfileName({
+      choice: normalizeDshChannelProfile(config.dshChannelProfile),
+      profiles: dshProfiles,
+      envProfile: process.env.DSH_PROFILE
+    });
+    return { dshProfiles, dshResolvedProfile };
+  } catch (error) {
+    return { dshProfiles: [], dshResolvedProfile: '' };
+  }
+}
+
 function validateNativeCliLogs(value) {
   if (!isPlainObject(value)) {
     return 'nativeCliLogs must be an object';
@@ -400,6 +427,7 @@ router.get('/advanced', (req, res) => {
   try {
     const config = loadConfig();
     const modelDiscovery = normalizeModelDiscovery(config.modelDiscovery);
+    const dshProfileSummary = getDshProfileSummary(config);
     const ports = Object.fromEntries(getPlatformCatalog().ports().map(({ key, defaultPort }) => [
       key,
       config.ports?.[key] ?? defaultPort
@@ -409,6 +437,8 @@ router.get('/advanced', (req, res) => {
       maxLogs: config.maxLogs || 100,
       statsInterval: config.statsInterval || 30,
       enableSessionBinding: config.enableSessionBinding !== false, // 默认开启
+      dshChannelProfile: normalizeDshChannelProfile(config.dshChannelProfile),
+      ...dshProfileSummary,
       modelDiscovery,
       nativeCliLogs: normalizeNativeCliLogs(config.nativeCliLogs)
     });
@@ -430,6 +460,7 @@ router.post('/advanced', (req, res) => {
       maxLogs,
       statsInterval,
       enableSessionBinding,
+      dshChannelProfile,
       modelDiscovery,
       nativeCliLogs
     } = body;
@@ -474,6 +505,10 @@ router.post('/advanced', (req, res) => {
       }
     }
 
+    if (dshChannelProfile !== undefined && !DSH_CHANNEL_PROFILES.includes(String(dshChannelProfile).trim().toLowerCase())) {
+      return res.status(400).json({ error: 'dshChannelProfile must be one of auto, desktop, web, tui' });
+    }
+
     const config = loadConfig();
     const currentNativeCliLogs = normalizeNativeCliLogs(config.nativeCliLogs);
     const normalizedNativeCliLogs = hasNativeCliLogs
@@ -501,6 +536,9 @@ router.post('/advanced', (req, res) => {
       maxLogs: maxLogs !== undefined ? parseInt(maxLogs) : config.maxLogs,
       statsInterval: statsInterval !== undefined ? parseInt(statsInterval) : config.statsInterval,
       enableSessionBinding: enableSessionBinding !== undefined ? enableSessionBinding : (config.enableSessionBinding !== false),
+      dshChannelProfile: dshChannelProfile !== undefined
+        ? normalizeDshChannelProfile(dshChannelProfile)
+        : normalizeDshChannelProfile(config.dshChannelProfile),
       modelDiscovery: normalizedModelDiscovery,
       nativeCliLogs: normalizedNativeCliLogs
     };
@@ -515,6 +553,7 @@ router.post('/advanced', (req, res) => {
         maxLogs: newConfig.maxLogs,
         statsInterval: newConfig.statsInterval,
         enableSessionBinding: newConfig.enableSessionBinding,
+        dshChannelProfile: newConfig.dshChannelProfile,
         modelDiscovery: newConfig.modelDiscovery,
         nativeCliLogs: newConfig.nativeCliLogs
       }

@@ -14,6 +14,7 @@ const GEMINI_CH_PATH      = require.resolve('../../../src/platforms/drivers/gemi
 const MODEL_DET_PATH      = require.resolve('../../../src/server/services/model-detector');
 const API_PATH            = require.resolve('../../../src/server/api/config');
 const PLATFORM_CATALOG_PATH = require.resolve('../../../src/server/services/platform-catalog');
+const DSH_COMMON_PATH      = require.resolve('../../../src/platforms/drivers/dsh/common');
 
 // Stub references recreated in beforeEach
 let loadConfig;
@@ -83,6 +84,19 @@ function injectStubs() {
     exports: { getChannels: vi.fn(() => ({ channels: [] })) },
   };
 
+  require.cache[DSH_COMMON_PATH] = {
+    id: DSH_COMMON_PATH, filename: DSH_COMMON_PATH, loaded: true,
+    exports: {
+      resolvePaths: vi.fn(() => ({ profiles: '/tmp/dsh/profiles' })),
+      listDshProfileNames: vi.fn(() => ['desktop', 'web', 'dsh-tui']),
+      resolveDshProfileName: vi.fn(({ choice = 'auto', profiles = [], envProfile = '' } = {}) => {
+        if (envProfile && envProfile !== 'auto') return envProfile === 'tui' ? 'dsh-tui' : envProfile;
+        if (choice === 'auto') return profiles.includes('desktop') ? 'desktop' : (profiles[0] || '');
+        return { desktop: 'desktop', web: 'web', tui: 'dsh-tui' }[choice] || 'desktop';
+      })
+    },
+  };
+
   require.cache[MODEL_DET_PATH] = {
     id: MODEL_DET_PATH, filename: MODEL_DET_PATH, loaded: true,
     exports: { probeModelAvailability: vi.fn(), fetchModelsFromProvider: vi.fn() },
@@ -137,6 +151,9 @@ describe('GET /advanced', () => {
     const data = res._data;
     expect(data).toHaveProperty('ports');
     expect(data).toHaveProperty('modelDiscovery');
+    expect(data.dshChannelProfile).toBe('auto');
+    expect(data.dshProfiles).toEqual(['desktop', 'web', 'dsh-tui']);
+    expect(data.dshResolvedProfile).toBe('desktop');
     expect(data.nativeCliLogs).toEqual({
       enabled: true,
       intervalSeconds: 5
@@ -211,6 +228,21 @@ describe('POST /advanced', () => {
 
     expect(saveConfig).toHaveBeenCalled();
     expect(res._data.success).toBe(true);
+  });
+
+  test('saves and validates the DSH channel profile', () => {
+    const handler = findHandler(router, 'post', '/advanced');
+    const res = mockRes();
+    handler(mockReq({ body: { dshChannelProfile: 'tui' } }), res);
+
+    expect(res._data.success).toBe(true);
+    expect(res._data.config.dshChannelProfile).toBe('tui');
+    expect(saveConfig.mock.calls[0][0].dshChannelProfile).toBe('tui');
+
+    const invalidRes = mockRes();
+    handler(mockReq({ body: { dshChannelProfile: 'missing' } }), invalidRes);
+    expect(invalidRes.statusCode).toBe(400);
+    expect(invalidRes._data.error).toContain('dshChannelProfile');
   });
 
   test('saves and returns normalized native CLI log settings', () => {

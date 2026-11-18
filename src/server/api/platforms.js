@@ -147,7 +147,7 @@ function createPlatformRouter(options = {}) {
     }
   });
 
-  createPlatformRouteFactory({ registry, runtime }).mount(router);
+  createPlatformRouteFactory({ registry, runtime, config: options.config }).mount(router);
   return router;
 }
 

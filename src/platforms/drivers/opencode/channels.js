@@ -1,6 +1,8 @@
 'use strict';
 
 const { createChannelDriver } = require('../../../shared/channel-driver');
+const { ok, failed } = require('../../../shared/driver-result');
+const { resolveChannelCatalogMetadata } = require('../../../shared/channel-model-metadata');
 
 function createChannelArgs(input, rest) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return [input, ...rest];
@@ -64,6 +66,20 @@ function createDriver(context = {}) {
     if (!channelId) throw new Error('Channel id is required');
     resetChannelHealth(channelId, 'opencode');
     return { channelId, reset: true };
+  };
+  driver.catalogMetadata = (input = {}) => {
+    const operation = 'catalogMetadata';
+    const body = input && typeof input === 'object' && Object.prototype.hasOwnProperty.call(input, 'body')
+      ? input.body || {}
+      : input || {};
+    try {
+      return ok('opencode', 'channels', operation, resolveChannelCatalogMetadata({
+        ...body,
+        toolType: 'opencode'
+      }));
+    } catch (error) {
+      return failed('opencode', 'channels', operation, error);
+    }
   };
   const auth = require('../../channel-auth-service');
   driver.getAuth = context => auth.getChannelAuth('opencode', { channelId: context?.params?.channelId || context?.query?.channelId || '' });

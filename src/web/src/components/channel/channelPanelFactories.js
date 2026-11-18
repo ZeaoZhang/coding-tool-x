@@ -9,7 +9,8 @@ import {
   testClaudeChannelSpeed,
   testCodexChannelSpeed,
   testGeminiChannelSpeed,
-  fetchChannelModels
+  fetchChannelModels,
+  fetchChannelCatalogMetadata
 } from '../../api/channels'
 import { claudePresets, presetCategories, getPresetById } from '../../config/claudePresets'
 import { codexPresets, codexPresetCategories, getCodexPresetById } from '../../config/codexPresets'
@@ -305,6 +306,51 @@ function buildModelMetadataSection({ description, placeholder, validate = valida
       }
     ]
   }
+}
+
+function buildCatalogMetadataRequest(form, { models = [] } = {}) {
+  const selectedModels = (Array.isArray(models) ? models : [])
+    .map(item => (item && typeof item === 'object' ? item.id || item.name || item.value : item))
+    .map(item => String(item || '').trim())
+    .filter(Boolean)
+  return {
+    providerKey: form.providerKey || '',
+    model: form.model || '',
+    speedTestModel: form.speedTestModel || '',
+    models: parseModelDefinitions(form.modelDefinitionsJson),
+    allowedModels: selectedModels,
+    availableModels: selectedModels.length > 0
+      ? []
+      : (Array.isArray(form.availableModels) ? form.availableModels : [])
+        .map(item => (item && typeof item === 'object' ? item.value || item.id || item.name : item))
+        .filter(Boolean)
+  }
+}
+
+async function fetchCatalogMetadataForChannel(platform, form, { models = [] } = {}) {
+  const result = await fetchChannelCatalogMetadata(
+    platform,
+    buildCatalogMetadataRequest(form, { models })
+  )
+  const byId = new Map()
+  for (const model of result?.models || []) {
+    const id = String(model?.id || model?.name || '').trim()
+    if (!id) continue
+    byId.set(id.toLowerCase(), { ...model, id })
+  }
+  for (const value of parseModelDefinitions(form.modelDefinitionsJson)) {
+    const id = String(typeof value === 'string' ? value : (value?.id || value?.name || '')).trim()
+    if (!id) continue
+    const definition = typeof value === 'string' ? { id } : { ...value, id }
+    const key = id.toLowerCase()
+    byId.set(key, { ...(byId.get(key) || {}), ...definition })
+  }
+  form.modelDefinitionsJson = formatJson([...byId.values()], [])
+  const warningCount = Array.isArray(result?.warnings) ? result.warnings.length : 0
+  const sourceName = result?.source?.name === 'models.dev'
+    ? 'Models.dev'
+    : (result?.source?.name || 'Models.dev')
+  form.modelMetadataStatus = `已读取 ${result?.models?.length || 0} 个模型（${sourceName} 离线快照）${warningCount ? `，${warningCount} 条兼容提示` : ''}`
 }
 
 function parseProviderConfig(value) {
@@ -687,7 +733,9 @@ const channelPanelFactories = {
       availableModels: [],
       modelsFetching: false,
       modelsFetchError: null,
-      modelsFetchErrorHint: null
+      modelsFetchErrorHint: null,
+      modelMetadataFetching: false,
+      modelMetadataStatus: ''
     }),
     mapChannelToForm: channel => ({
       name: channel.name || '',
@@ -708,7 +756,9 @@ const channelPanelFactories = {
       availableModels: [],
       modelsFetching: false,
       modelsFetchError: null,
-      modelsFetchErrorHint: null
+      modelsFetchErrorHint: null,
+      modelMetadataFetching: false,
+      modelMetadataStatus: ''
     }),
     fetchModelsForChannel: async (channelId, form, { forceRefresh = false } = {}) => {
       await loadDefaultModels()
@@ -727,6 +777,9 @@ const channelPanelFactories = {
         form.modelsFetchErrorHint = result.errorHint || '已使用本地默认模型列表，也可以手动填写模型名称'
       }
     },
+    fetchModelMetadataForChannel: form => fetchCatalogMetadataForChannel('dsh', form, {
+      models: form.models
+    }),
     testFn: testDshChannelSpeed,
     api: {
       fetch: async () => normalizeChannelList(await getDshChannels()),
@@ -1806,7 +1859,9 @@ const channelPanelFactories = {
       availableModels: [],
       modelsFetching: false,
       modelsFetchError: null,
-      modelsFetchErrorHint: null
+      modelsFetchErrorHint: null,
+      modelMetadataFetching: false,
+      modelMetadataStatus: ''
     }),
     mapChannelToForm: (channel) => ({
       presetId: channel.presetId || 'custom',
@@ -1837,7 +1892,9 @@ const channelPanelFactories = {
       availableModels: [],
       modelsFetching: false,
       modelsFetchError: null,
-      modelsFetchErrorHint: null
+      modelsFetchErrorHint: null,
+      modelMetadataFetching: false,
+      modelMetadataStatus: ''
     }),
     onPresetChange: (presetId, form) => {
       const preset = getOpenCodePresetById(presetId)
@@ -1921,6 +1978,9 @@ const channelPanelFactories = {
         form.modelsFetching = false
       }
     },
+    fetchModelMetadataForChannel: form => fetchCatalogMetadataForChannel('opencode', form, {
+      models: form.allowedModels
+    }),
     testFn: testOpenCodeChannelSpeed,
     api: {
       fetch: async () => {

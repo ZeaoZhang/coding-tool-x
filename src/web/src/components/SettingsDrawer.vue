@@ -514,6 +514,36 @@
 
                 <n-divider />
 
+                <!-- DSH 渠道配置来源 -->
+                <div class="setting-item">
+                  <div class="setting-label">
+                    <n-text strong>DSH 渠道配置</n-text>
+                    <n-text depth="3" style="font-size: 13px; margin-top: 4px;">
+                      选择由 coding-tool-x 管理的 DSH profile；自动模式按 desktop → web → tui 顺序选择已安装的 profile（TUI 对应 dsh-tui），保存后立即生效；环境变量 DSH_PROFILE 优先于该设置。
+                    </n-text>
+                  </div>
+
+                  <div class="advanced-options">
+                    <div class="option-field">
+                      <div class="option-label">
+                        <n-text depth="2" style="font-size: 13px;">渠道配置来源</n-text>
+                        <n-text depth="3" style="font-size: 12px;">
+                          当前解析：{{ dshResolvedProfile || '未检测到可用 profile' }}
+                        </n-text>
+                      </div>
+                      <n-select
+                        v-model:value="advancedSettings.dshChannelProfile"
+                        :options="dshProfileOptions"
+                        size="medium"
+                        style="width: 240px;"
+                        data-test="dsh-channel-profile"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <n-divider />
+
                 <!-- 负载均衡设置 -->
                 <div class="setting-item">
                   <div class="setting-label">
@@ -1243,12 +1273,43 @@ function cloneAdvancedSettings(settings = {}) {
     maxLogs: settings.maxLogs ?? 100,
     statsInterval: settings.statsInterval ?? 30,
     enableSessionBinding: settings.enableSessionBinding !== false,
+    dshChannelProfile: ['auto', 'desktop', 'web', 'tui'].includes(settings.dshChannelProfile)
+      ? settings.dshChannelProfile
+      : 'auto',
     nativeCliLogs: normalizeNativeCliLogs(settings.nativeCliLogs)
   }
 }
 
 const advancedSettings = ref(cloneAdvancedSettings())
 const originalAdvancedSettings = ref(cloneAdvancedSettings())
+const dshProfiles = ref([])
+const dshProfilesLoaded = ref(false)
+
+const DSH_PROFILE_OPTIONS = [
+  { value: 'auto', label: '自动（desktop → web → tui）', directory: '' },
+  { value: 'desktop', label: 'Desktop', directory: 'desktop' },
+  { value: 'web', label: 'Web', directory: 'web' },
+  { value: 'tui', label: 'TUI', directory: 'dsh-tui' }
+]
+
+const dshProfileOptions = computed(() => {
+  const installed = new Set(dshProfiles.value.map(profile => String(typeof profile === 'string' ? profile : profile?.name || '')))
+  return DSH_PROFILE_OPTIONS.map(option => ({
+    value: option.value,
+    label: option.directory && dshProfilesLoaded.value && !installed.has(option.directory)
+      ? `${option.label}（未检测到）`
+      : option.label
+  }))
+})
+
+const dshResolvedProfile = computed(() => {
+  if (advancedSettings.value.dshChannelProfile !== 'auto') {
+    const option = DSH_PROFILE_OPTIONS.find(item => item.value === advancedSettings.value.dshChannelProfile)
+    return option?.directory || ''
+  }
+  const installed = new Set(dshProfiles.value.map(profile => String(typeof profile === 'string' ? profile : profile?.name || '')))
+  return ['desktop', 'web', 'dsh-tui'].find(name => installed.has(name)) || ''
+})
 
 // 通知设置
 const notificationPlatformDefinitions = ref([])
@@ -1944,6 +2005,7 @@ const portsChanged = computed(() => {
     advancedSettings.value.maxLogs !== originalAdvancedSettings.value.maxLogs ||
     advancedSettings.value.statsInterval !== originalAdvancedSettings.value.statsInterval ||
     advancedSettings.value.enableSessionBinding !== originalAdvancedSettings.value.enableSessionBinding ||
+    advancedSettings.value.dshChannelProfile !== originalAdvancedSettings.value.dshChannelProfile ||
     nativeCliLogsChanged
 })
 // 菜单项配置
@@ -2137,6 +2199,7 @@ async function handleSessionBindingChange(value) {
         maxLogs: advancedSettings.value.maxLogs,
         statsInterval: advancedSettings.value.statsInterval,
         enableSessionBinding: value,
+        dshChannelProfile: advancedSettings.value.dshChannelProfile,
         nativeCliLogs: advancedSettings.value.nativeCliLogs
       })
     })
@@ -2159,7 +2222,7 @@ async function handleSessionBindingChange(value) {
 async function loadPortsConfig() {
   try {
     if (typeof platformStore.load === 'function') await platformStore.load()
-    const response = await fetch('/api/config/advanced')
+    const response = await fetch(`/api/config/advanced?ts=${Date.now()}`, { cache: 'no-store' })
     if (response.ok) {
       const data = await response.json()
       const nextPorts = {}
@@ -2173,9 +2236,12 @@ async function loadPortsConfig() {
         maxLogs: data.maxLogs || 100,
         statsInterval: data.statsInterval || 30,
         enableSessionBinding: data.enableSessionBinding !== false,
+        dshChannelProfile: data.dshChannelProfile || 'auto',
         nativeCliLogs: data.nativeCliLogs
       })
       originalAdvancedSettings.value = cloneAdvancedSettings(advancedSettings.value)
+      dshProfiles.value = Array.isArray(data.dshProfiles) ? data.dshProfiles : []
+      dshProfilesLoaded.value = true
     }
   } catch (error) {
     console.error('Failed to load advanced config:', error)
@@ -2357,6 +2423,7 @@ async function handleSavePorts() {
         maxLogs: advancedSettings.value.maxLogs,
         statsInterval: advancedSettings.value.statsInterval,
         enableSessionBinding: advancedSettings.value.enableSessionBinding,
+        dshChannelProfile: advancedSettings.value.dshChannelProfile,
         nativeCliLogs: advancedSettings.value.nativeCliLogs
       })
     })
@@ -2373,7 +2440,7 @@ async function handleSavePorts() {
         }
       }))
 
-      message.success('配置已保存，端口修改需要重启服务器生效；OMP 原生会话日志配置立即生效')
+      message.success('配置已保存，端口修改需要重启服务器生效；DSH 渠道 profile 与 OMP 原生会话日志配置立即生效')
     } else {
       const error = await response.json()
       message.error('保存失败：' + (error.error || '未知错误'))
@@ -2459,6 +2526,7 @@ onMounted(() => {
   loadPanelSettings()
   loadSecurityStatus()
   loadModelMetadata()
+  loadPortsConfig()
   if (props.visible) loadNotificationSettings()
 })
 

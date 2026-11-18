@@ -254,6 +254,43 @@ function resolvePackageDir(profileDir, packageName, paths = {}) {
   return null;
 }
 
+const DSH_PROFILE_PRIORITY = Object.freeze(['desktop', 'web', 'dsh-tui']);
+const DSH_PROFILE_ALIASES = Object.freeze({
+  auto: 'auto',
+  desktop: 'desktop',
+  web: 'web',
+  tui: 'dsh-tui',
+  'dsh-tui': 'dsh-tui'
+});
+
+function normalizeDshProfileChoice(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return DSH_PROFILE_ALIASES[normalized] ? normalized : 'auto';
+}
+
+function dshProfileDirectoryForChoice(choice) {
+  return DSH_PROFILE_ALIASES[normalizeDshProfileChoice(choice)] || 'desktop';
+}
+
+function resolveDshProfileName({ choice = 'auto', profiles = [], envProfile = '' } = {}) {
+  const names = profiles
+    .map(profile => (typeof profile === 'string' ? profile : profile?.name))
+    .map(name => String(name || '').trim())
+    .filter(Boolean);
+  const requested = String(envProfile || '').trim();
+  if (requested && requested.toLowerCase() !== 'auto') {
+    return requested.toLowerCase() === 'tui' ? 'dsh-tui' : requested;
+  }
+  if (normalizeDshProfileChoice(choice) === 'auto') {
+    return DSH_PROFILE_PRIORITY.find(name => names.includes(name)) || '';
+  }
+  return dshProfileDirectoryForChoice(choice);
+}
+
+function listDshProfileNames(context = {}) {
+  return listProfiles(context).map(profile => profile.name);
+}
+
 function listProfiles(context = {}) {
   const paths = resolvePaths(context);
   if (!fs.existsSync(paths.profiles)) return [];
@@ -734,6 +771,24 @@ function effectiveRawPatchEntry(context = {}, profileName, entryId) {
   return byId.get(entryId) || null;
 }
 
+function readProfileChannelConfig(context = {}, profileName) {
+  const paths = resolvePaths(context);
+  const profile = safeProfileName(profileName);
+  const defaultPatchPath = path.join(paths.profiles, profile, 'cordis.patch.yml');
+  if (!fs.existsSync(path.join(paths.profiles, profile))) return null;
+  const entry = effectiveRawPatchEntry(context, profile, 'llm-pi-ai');
+  const defaultEntry = effectiveRawPatchEntry(context, profile, 'agent-default-model');
+  const config = entry?.disabled === true ? {} : (isObject(entry?.config) ? entry.config : {});
+  return {
+    profile,
+    patchPath: defaultPatchPath,
+    disabled: entry?.disabled === true,
+    config,
+    providers: isObject(config.providers) ? config.providers : {},
+    selected: isObject(defaultEntry?.config) && defaultEntry.disabled !== true ? defaultEntry.config : {}
+  };
+}
+
 function restoreRedactedValues(value, original) {
   if (value === '[REDACTED]' || value === '[EXPRESSION]') return clone(original);
   if (Array.isArray(value)) {
@@ -772,6 +827,10 @@ module.exports = {
   mergeSettings,
   credentialMetadata,
   listProfiles,
+  listDshProfileNames,
+  normalizeDshProfileChoice,
+  resolveDshProfileName,
+  dshProfileDirectoryForChoice,
   listProfilePlugins,
   listManageableProfilePlugins,
   listProfileCapabilities,
@@ -782,6 +841,7 @@ module.exports = {
   listPlugins,
   profilePatchFiles,
   readProfilePatchContributions,
+  readProfileChannelConfig,
   dumpYaml,
   updateProfilePatch,
   upsertProfilePatchRow,

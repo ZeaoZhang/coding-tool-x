@@ -717,6 +717,339 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
     }
   });
 
+  test('exposes offline catalog metadata for DSH channel models', () => {
+    tempHome = makeTempHome();
+    const driver = createChannelDriver({ paths: dshPaths(tempHome) });
+
+    const result = driver.catalogMetadata({
+      body: {
+        providerKey: 'deepseek',
+        model: 'deepseek/deepseek-v4-pro'
+      },
+      route: { capability: 'channels', operation: 'catalogMetadata' }
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      status: 'ok',
+      platform: 'dsh',
+      capability: 'channels',
+      operation: 'catalogMetadata'
+    }));
+    expect(result.data.models).toEqual([
+      expect.objectContaining({
+        id: 'deepseek/deepseek-v4-pro',
+        limit: expect.objectContaining({ context: expect.any(Number), output: expect.any(Number) })
+      })
+    ]);
+    expect(result.data.source).toEqual(expect.objectContaining({ name: 'models.dev' }));
+  });
+
+  function writeProfileFixture(home, profileName, providers, selected) {
+    const profileDir = path.join(home, 'profiles', profileName);
+    fs.mkdirSync(profileDir, { recursive: true });
+    writeJson(path.join(profileDir, 'package.json'), {
+      name: profileName,
+      dsh: { profile: { bundles: [] } }
+    });
+    fs.writeFileSync(path.join(profileDir, 'cordis.patch.yml'), `${JSON.stringify([
+      {
+        id: 'llm-pi-ai',
+        name: '@deepseek-ai/dsh-llm-pi-ai',
+        config: { providers }
+      },
+      {
+        id: 'agent-default-model',
+        config: selected
+      }
+    ], null, 2)}\n`);
+    return { profileDir, patchPath: path.join(profileDir, 'cordis.patch.yml') };
+  }
+
+  function findPatchEntry(document, id) {
+    for (const item of Array.isArray(document) ? document : []) {
+      if (item?.id === id) return item;
+      for (const operation of ['insert', 'replace', 'update']) {
+        const entry = Array.isArray(item?.[operation])
+          ? item[operation].find(candidate => candidate?.id === id)
+          : null;
+        if (entry) return entry;
+      }
+    }
+    return null;
+  }
+
+  test('syncs providers from the active DSH profile when legacy settings.yaml is absent', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const { patchPath } = writeProfileFixture(tempHome, 'desktop', {
+      foo: {
+        displayName: 'Foo Provider',
+        api: 'openai-completions',
+        baseURL: 'https://foo.example/v1',
+        apiKeyEnv: 'FOO_KEY',
+        models: [
+          { id: 'foo-model', contextWindow: 1000, maxTokens: 100 },
+          { id: 'foo-secondary', contextWindow: 2000, maxTokens: 200 }
+        ]
+      },
+      bar: {
+        displayName: 'Bar Provider',
+        api: 'anthropic-messages',
+        baseURL: 'https://bar.example',
+        apiKeyEnv: 'BAR_KEY',
+        models: [{ id: 'bar-model' }]
+      }
+    }, { provider: 'foo', model: 'foo-model', reasoningEffort: 'high' });
+    writeJson(paths.credentials, {
+      version: 1,
+      refs: { FOO_KEY: 'sk-foo', BAR_KEY: 'sk-bar' },
+      records: {}
+    });
+
+    const driver = createChannelDriver({ paths });
+    const result = driver.sync({ route: { capability: 'channels', operation: 'sync' } });
+
+    expect(result.status).toBe('ok');
+    expect(result.data.source).toEqual(expect.objectContaining({
+      type: 'profile',
+      profile: 'desktop',
+      path: patchPath
+    }));
+    expect(result.data.added).toBe(2);
+    expect(result.data.channels).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        providerKey: 'foo',
+        model: 'foo-model',
+        models: [
+          expect.objectContaining({ id: 'foo-model' }),
+          expect.objectContaining({ id: 'foo-secondary' })
+        ],
+        apiKeyConfigured: true,
+        enabled: true
+      }),
+      expect.objectContaining({
+        providerKey: 'bar',
+        model: 'bar-model',
+        apiKeyConfigured: true,
+        enabled: true
+      })
+    ]));
+    expect(result.data.current).toEqual(expect.objectContaining({
+      providerKey: 'foo',
+      model: 'foo-model'
+    }));
+    expect(fs.existsSync(paths.settings)).toBe(false);
+  });
+
+  test('writes channel changes back into the active DSH profile patch', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const { readYamlFile } = require('../../../src/platforms/drivers/dsh/common');
+    const { patchPath } = writeProfileFixture(tempHome, 'desktop', {
+      foo: {
+        displayName: 'Foo Provider',
+        api: 'openai-completions',
+        baseURL: 'https://foo.example/v1',
+        apiKeyEnv: 'FOO_KEY',
+        models: [{ id: 'foo-model' }]
+      }
+    }, { provider: 'foo', model: 'foo-model' });
+    writeJson(paths.credentials, {
+      version: 1,
+      refs: { FOO_KEY: 'sk-foo' },
+      records: {}
+    });
+
+    const driver = createChannelDriver({ paths });
+    const created = driver.create({
+      body: {
+        name: 'New Provider',
+        providerKey: 'new-provider',
+        providerApi: 'openai-completions',
+        baseUrl: 'https://new.example/v1',
+        apiKey: 'sk-new',
+        apiKeyEnv: 'NEW_PROVIDER_KEY',
+        model: 'new-model',
+        models: ['new-model']
+      }
+    });
+
+    expect(created.status).toBe('ok');
+    const document = readYamlFile(patchPath, []);
+    const llm = findPatchEntry(document, 'llm-pi-ai');
+    expect(llm.config.providers).toEqual(expect.objectContaining({
+      foo: expect.objectContaining({ baseURL: 'https://foo.example/v1' }),
+      'new-provider': expect.objectContaining({
+        baseURL: 'https://new.example/v1',
+        apiKeyEnv: 'NEW_PROVIDER_KEY'
+      })
+    }));
+    expect(findPatchEntry(document, 'agent-default-model').config).toEqual(
+      expect.objectContaining({ provider: 'new-provider', model: 'new-model' })
+    );
+    expect(fs.existsSync(paths.settings)).toBe(false);
+    expect(readYamlFile(paths.credentials, {}).refs.NEW_PROVIDER_KEY).toBe('sk-new');
+  });
+
+  test('honors DSH_PROFILE for an empty dsh-tui profile and writes only that profile', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const { readYamlFile } = require('../../../src/platforms/drivers/dsh/common');
+    const { patchPath: desktopPatch } = writeProfileFixture(tempHome, 'desktop', {
+      foo: {
+        displayName: 'Desktop Provider',
+        api: 'openai-completions',
+        baseURL: 'https://desktop.example/v1',
+        apiKeyEnv: 'FOO_KEY',
+        models: [{ id: 'desktop-model' }]
+      }
+    }, { provider: 'foo', model: 'desktop-model' });
+    const tuiDir = path.join(tempHome, 'profiles', 'dsh-tui');
+    fs.mkdirSync(tuiDir, { recursive: true });
+    writeJson(path.join(tuiDir, 'package.json'), {
+      name: 'dsh-tui',
+      dsh: { profile: { bundles: [] } }
+    });
+    const tuiPatch = path.join(tuiDir, 'cordis.patch.yml');
+    fs.writeFileSync(tuiPatch, '[]\n');
+    writeJson(paths.credentials, { version: 1, refs: { FOO_KEY: 'sk-foo' }, records: {} });
+    const desktopBefore = fs.readFileSync(desktopPatch, 'utf8');
+
+    process.env.DSH_PROFILE = 'dsh-tui';
+    try {
+      const driver = createChannelDriver({ paths });
+      const synced = driver.sync({ route: { capability: 'channels', operation: 'sync' } });
+
+      expect(synced.status).toBe('ok');
+      expect(synced.data.source).toEqual(expect.objectContaining({
+        type: 'profile',
+        profile: 'dsh-tui',
+        path: tuiPatch
+      }));
+      expect(synced.data.added).toBe(0);
+      expect(synced.data.warnings).toEqual([expect.stringContaining('llm-pi-ai.providers')]);
+
+      const created = driver.create({
+        body: {
+          name: 'TUI Provider',
+          providerKey: 'tui-provider',
+          providerApi: 'openai-completions',
+          baseUrl: 'https://tui.example/v1',
+          apiKey: 'sk-tui',
+          apiKeyEnv: 'TUI_KEY',
+          model: 'tui-model',
+          models: ['tui-model']
+        }
+      });
+      expect(created.status).toBe('ok');
+      const tuiDocument = readYamlFile(tuiPatch, []);
+      expect(findPatchEntry(tuiDocument, 'llm-pi-ai').config.providers).toEqual(
+        expect.objectContaining({ 'tui-provider': expect.any(Object) })
+      );
+      expect(fs.readFileSync(desktopPatch, 'utf8')).toBe(desktopBefore);
+      expect(fs.existsSync(paths.settings)).toBe(false);
+    } finally {
+      delete process.env.DSH_PROFILE;
+    }
+  });
+
+  test('selects DSH profiles by default desktop→web→tui priority', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    writeProfileFixture(tempHome, 'desktop', {
+      desktop: {
+        displayName: 'Desktop',
+        api: 'openai-completions',
+        baseURL: 'https://desktop.example/v1',
+        apiKeyEnv: 'DESKTOP_KEY',
+        models: [{ id: 'desktop-model' }]
+      }
+    }, { provider: 'desktop', model: 'desktop-model' });
+    writeProfileFixture(tempHome, 'web', {
+      web: {
+        displayName: 'Web',
+        api: 'openai-completions',
+        baseURL: 'https://web.example/v1',
+        apiKeyEnv: 'WEB_KEY',
+        models: [{ id: 'web-model' }]
+      }
+    }, { provider: 'web', model: 'web-model' });
+    writeJson(paths.credentials, {
+      version: 1,
+      refs: { DESKTOP_KEY: 'sk-desktop', WEB_KEY: 'sk-web' },
+      records: {}
+    });
+
+    const auto = createChannelDriver({ paths }).sync({
+      route: { capability: 'channels', operation: 'sync' }
+    });
+    expect(auto.data.source).toEqual(expect.objectContaining({ profile: 'desktop' }));
+
+    const web = createChannelDriver({
+      paths,
+      context: { config: { dshChannelProfile: 'web' } }
+    }).sync({ route: { capability: 'channels', operation: 'sync' } });
+    expect(web.data.source).toEqual(expect.objectContaining({ profile: 'web' }));
+  });
+
+  test('selected TUI profile stays the write target instead of falling back to desktop', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    writeProfileFixture(tempHome, 'desktop', {
+      desktop: {
+        displayName: 'Desktop',
+        api: 'openai-completions',
+        baseURL: 'https://desktop.example/v1',
+        apiKeyEnv: 'DESKTOP_KEY',
+        models: [{ id: 'desktop-model' }]
+      }
+    }, { provider: 'desktop', model: 'desktop-model' });
+    const tuiDir = path.join(tempHome, 'profiles', 'dsh-tui');
+    fs.mkdirSync(tuiDir, { recursive: true });
+    writeJson(path.join(tuiDir, 'package.json'), {
+      name: 'dsh-tui',
+      dsh: { profile: { bundles: [] } }
+    });
+    const tuiPatch = path.join(tuiDir, 'cordis.patch.yml');
+    fs.writeFileSync(tuiPatch, '[]\n');
+    writeJson(paths.credentials, {
+      version: 1,
+      refs: { DESKTOP_KEY: 'sk-desktop' },
+      records: {}
+    });
+
+    const driver = createChannelDriver({
+      paths,
+      context: { config: { dshChannelProfile: 'tui' } }
+    });
+    const synced = driver.sync({ route: { capability: 'channels', operation: 'sync' } });
+    expect(synced.data.source).toEqual(expect.objectContaining({
+      profile: 'dsh-tui',
+      missing: false
+    }));
+    expect(synced.data.added).toBe(0);
+
+    const created = driver.create({
+      body: {
+        name: 'TUI Profile Provider',
+        providerKey: 'tui-profile-provider',
+        providerApi: 'openai-completions',
+        baseUrl: 'https://tui-profile.example/v1',
+        apiKey: 'sk-tui-profile',
+        apiKeyEnv: 'TUI_PROFILE_KEY',
+        model: 'tui-profile-model',
+        models: ['tui-profile-model']
+      }
+    });
+    expect(created.status).toBe('ok');
+    const { readYamlFile } = require('../../../src/platforms/drivers/dsh/common');
+    expect(findPatchEntry(readYamlFile(tuiPatch, []), 'llm-pi-ai').config.providers).toEqual(
+      expect.objectContaining({ 'tui-profile-provider': expect.any(Object) })
+    );
+    expect(fs.readFileSync(path.join(tempHome, 'profiles', 'desktop', 'cordis.patch.yml'), 'utf8'))
+      .not.toContain('tui-profile-provider');
+  });
+
   test('sync enriches known DSH models with metadata while preserving provider overrides', () => {
     tempHome = makeTempHome();
     const paths = dshPaths(tempHome);

@@ -8,6 +8,7 @@
 ### Added
 - **多渠道直连（OpenCode / DSH / OMP）** - 关闭动态切换后可以同时启用多个渠道：所有已启用渠道都会写入原生配置（OpenCode `provider`、DSH `llm-pi-ai.providers`、OMP `models.yml`），可直接在 CLI 中按渠道选择模型；“写入配置（应用）”只切换默认模型，禁用或删除渠道会移除对应 provider；停止动态切换时恢复全部已启用渠道而不是只保留一个。Claude、Codex、Gemini 的原生配置只能承载单个 provider，继续强制单渠道。
 - **OpenCode / DSH 模型 Metadata 配置** - 渠道面板新增模型定义编辑器，可为单个模型配置上下文窗口、推理能力/等级与输入类型；OpenCode 写入 `opencode.json` 的 `limit`/`reasoning`/`modalities`，DSH 写入 `settings.yaml` 的 `contextWindow`/`maxTokens`/`reasoningEfforts`/`input`，动态代理与原生配置同步同样保留这些字段。
+- **DSH / OpenCode 模型 Metadata 自动填充** - “自动获取 Metadata”按钮现在同样适用于 DSH 与 OpenCode：从 Models.dev 离线快照按已选模型补齐上下文窗口、最大输出、推理能力与输入类型，保留用户已有定义，且不会触发网络请求或模型探测。
 - **原生路径可配置** - 新增 `~/.cc-tool/config/platform-paths.json` 路径覆盖层；Claude、Codex、Gemini、OpenCode、OMP 及新增 Registry 平台的原生配置、会话状态、渠道、Skills、Plugins 和请求快照均可按平台重定向，未配置时保持原有默认路径，不自动搬迁已有数据。
 - **配置驱动的平台 Registry** - 新增 Manifest 校验、allowlisted capability driver、`~/.cc-tool/config/platforms.json` 用户扩展和安全的 `GET /api/platforms` 公共目录；符合通用协议的 CLI 可通过受控 Manifest / driver 扩展，但不会自动获得任意平台的完整能力。
 - **Registry-backed CLI / Web UI 路由** - 代理、日志、统计、端口配置、Dashboard 聚合和前端平台元数据改为从 Registry 派生，同时保留旧 CLI/API facade、OMP managed mode 与现有测试 mock seam。
@@ -26,6 +27,9 @@
 - **Dependabot 依赖清账** - adm-zip 升至 0.6.1、toml 升至 5.0.1；根目录与 Web 统一 override minimatch 11.0.9、glob 14.0.6、editorconfig 4.0.1，清理 `@vue/test-utils` 开发链上的传递漏洞；根目录与 `src/web` 的 `npm audit` 均为 0
 
 ### Fixed
+- **DSH Profile 渠道同步** - DSH 0.2.x 将渠道配置保存在 `profiles/<name>/cordis.patch.yml` 而不是旧的 `settings.yaml`，导致“同步当前”始终读取空配置。现在会从 profile 的 `llm-pi-ai.providers` 导入渠道，并在新增/启用/应用渠道时写回当前 profile；前端高级设置新增 DSH 渠道配置来源（自动 desktop → web → tui / Desktop / Web / TUI），默认自动并按该优先级选择已安装 profile，保存后立即生效；`DSH_PROFILE` 仍可显式覆盖（包括尚无 provider 的 dsh-tui），同步结果会返回来源 profile。旧版 `settings.yaml` 仍保持兼容。
+- **渠道测速请求分帧** - 测速请求现在显式写入 `Content-Length`，不再使用 chunked 请求体；修复部分 OpenAI 兼容中转拒绝 chunked 后返回畸形响应、界面只显示 `Parse Error: Expected HTTP/, RTSP/ or ICE/` 的问题。OMP 渠道实测已恢复 200 与正常延迟。
+- **DSH Metadata 名称匹配** - 模型 Metadata 自动填充支持运行时模型 ID 与 Models.dev 展示名匹配（并保留唯一前缀匹配），例如 `deepseek-v4.1-flash` 可命中快照中的 `DeepSeek V4.1 Flash 1017`，不再显示“已读取 0 个模型”。
 - **动态切换 CLI** - CLI 现在从平台 manifest 读取 `proxyMode` / `proxyLabels`（新增 `channelCli.multiChannelDirect` 声明），OMP/DSH 的开启与关闭走受管 provider 分支，不再按标准代理流程写入或恢复错误的原生配置；通用与兼容 proxy driver 都暴露同一份元数据。
 - **OMP 默认 Agent 模型被覆盖** - 修复 OMP 每次渠道同步都从首次保存的 `original.modelRoles` 重建默认值，导致用户在 OMP CLI 选择的 managed 默认模型被改回旧值的问题；现在优先保留当前可见的 managed 默认模型，仅当模型失效或显式创建/启用/应用渠道时才切换。
 - **OMP 多渠道默认模型** - 修复新建或重新启用第二个直连渠道时 OMP `modelRoles.default` 仍停留在旧渠道的问题；创建/启用/应用现在显式请求切换默认模型，同时保留其他已启用 provider 与 `enabledModels`。

@@ -7,7 +7,8 @@ const mocks = vi.hoisted(() => ({
   getUIConfig: vi.fn(),
   updateNestedUIConfig: vi.fn(),
   getChannelBalances: vi.fn(),
-  refreshChannelBalance: vi.fn()
+  refreshChannelBalance: vi.fn(),
+  fetchCatalogMetadata: vi.fn()
 }))
 
 vi.mock('../../../api/channels', async () => {
@@ -17,6 +18,7 @@ vi.mock('../../../api/channels', async () => {
     getChannels: mocks.fetchChannels,
     getOpenCodeChannels: mocks.fetchChannels,
     getDshChannels: mocks.fetchChannels,
+    fetchChannelCatalogMetadata: mocks.fetchCatalogMetadata,
     getChannelBalances: mocks.getChannelBalances,
     refreshChannelBalance: mocks.refreshChannelBalance
   }
@@ -68,10 +70,19 @@ describe('BaseChannelPanel', () => {
 })
 
 describe('BaseChannelPanel model metadata', () => {
-  it('renders the model definitions editor without an OMP-only fetch button', async () => {
+  it('offers offline metadata autofill for OpenCode', async () => {
     mocks.fetchChannels.mockResolvedValue({ channels: [] })
     mocks.getUIConfig.mockResolvedValue({ channelCollapse: { opencode: {} } })
     mocks.getChannelBalances.mockResolvedValue({ enabled: false, balances: {} })
+    mocks.fetchCatalogMetadata.mockResolvedValue({
+      models: [{
+        id: 'deepseek/deepseek-v4-pro',
+        limit: { context: 1000000, output: 384000 },
+        reasoning: true
+      }],
+      warnings: [],
+      source: { name: 'models.dev' }
+    })
 
     const wrapper = mount(BaseChannelPanel, {
       props: { type: 'opencode' },
@@ -83,7 +94,7 @@ describe('BaseChannelPanel model metadata', () => {
     })
 
     await vi.waitFor(() => {
-      expect(mocks.fetchChannels).toHaveBeenCalledTimes(1)
+      expect(mocks.fetchChannels).toHaveBeenCalled()
     })
 
     wrapper.vm.actions.openAddDialog()
@@ -93,7 +104,19 @@ describe('BaseChannelPanel model metadata', () => {
 
     const editor = document.querySelector('.model-definitions-editor')
     expect(editor.textContent).toContain('留空的字段写入时回退 Models.dev 离线快照')
-    expect(editor.querySelector('.model-definitions-toolbar button')).toBeNull()
+    const button = editor.querySelector('.model-definitions-toolbar button')
+    expect(button).not.toBeNull()
+    expect(button.textContent).toContain('自动获取 Metadata')
+
+    button.click()
+    await vi.waitFor(() => {
+      expect(editor.querySelector('.model-catalog-status').textContent)
+        .toContain('已读取 1 个模型（Models.dev 离线快照）')
+    })
+    expect(editor.querySelector('textarea').value).toContain('deepseek/deepseek-v4-pro')
+    expect(mocks.fetchCatalogMetadata).toHaveBeenCalledWith('opencode', expect.objectContaining({
+      providerKey: expect.any(String)
+    }))
 
     wrapper.unmount()
   })

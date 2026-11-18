@@ -11,7 +11,13 @@ const {
   readYamlFile,
   writeAtomic,
   DSH_YAML_SOURCE_TAGS,
-  isObject
+  isObject,
+  listProfiles,
+  readProfileChannelConfig,
+  resolveDshProfileName,
+  normalizeDshProfileChoice,
+  upsertProfilePatchRow,
+  deleteProfilePatchRow
 } = require('./common');
 const { upsertSyncedChannels } = require('../../../server/services/channel-sync-utils');
 const {
@@ -43,7 +49,8 @@ const getStatePath = typeof resolveStatePath === 'function'
 let configuredState = {
   channels: getStatePath('channels', 'dsh'),
   activeChannel: getStatePath('activeChannel', 'dsh'),
-  native: null
+  native: null,
+  channelProfile: 'auto'
 };
 let service;
 
@@ -194,7 +201,7 @@ function clearActiveMarker() {
   }
 }
 
-function configure({ pathContext, paths, channelsFilePath } = {}) {
+function configure({ pathContext, paths, channelsFilePath, config } = {}) {
   const custom = pathContext?.customized === true;
   const native = pathContext?.native || paths || {};
   const directTestState = !pathContext && paths?.dir
@@ -210,7 +217,8 @@ function configure({ pathContext, paths, channelsFilePath } = {}) {
       : (paths?.dir && !pathContext
         ? path.join(paths.dir, 'active-channel.json')
         : getStatePath('activeChannel', 'dsh')),
-    native: resolvePaths({ paths: native, pathContext })
+    native: resolvePaths({ paths: native, pathContext }),
+    channelProfile: normalizeDshProfileChoice(config?.dshChannelProfile)
   };
   if (service) {
     service.channelsFilePath = configuredState.channels;
@@ -220,6 +228,64 @@ function configure({ pathContext, paths, channelsFilePath } = {}) {
 
 function isProxyModeEnabled() {
   return Boolean(readActiveMarker());
+}
+
+function listProfileChannelSources(nativePaths = configuredState.native) {
+  const profilesDir = nativePaths?.profiles;
+  if (!profilesDir || !fs.existsSync(profilesDir)) return [];
+  const context = { paths: nativePaths };
+  const sources = [];
+  for (const profile of listProfiles(context)) {
+    const config = readProfileChannelConfig(context, profile.name);
+    if (!config) continue;
+    const providerKeys = config.disabled === true ? [] : Object.keys(config.providers).filter(providerKey => (
+      providerKey !== 'ctx-dsh-proxy' && isObject(config.providers[providerKey])
+    ));
+    const patchPath = config.patchPath || path.join(profile.path, 'cordis.patch.yml');
+    let mtime = 0;
+    try {
+      mtime = fs.statSync(patchPath).mtimeMs;
+    } catch (_) {
+      // A missing patch file cannot win the recency tie-break.
+    }
+    sources.push({
+      ...config,
+      patchPath,
+      providerCount: providerKeys.length,
+      mtime
+    });
+  }
+  return sources.sort((left, right) => (
+    right.providerCount - left.providerCount
+    || right.mtime - left.mtime
+    || left.profile.localeCompare(right.profile)
+  ));
+}
+
+function missingProfileSource(nativePaths, profile) {
+  return {
+    profile,
+    patchPath: path.join(nativePaths?.profiles || '', profile, 'cordis.patch.yml'),
+    missing: true,
+    disabled: false,
+    config: {},
+    providers: {},
+    selected: {},
+    providerCount: 0,
+    mtime: 0
+  };
+}
+
+function resolveProfileChannelSource(nativePaths = configuredState.native) {
+  const sources = listProfileChannelSources(nativePaths);
+  if (sources.length === 0) return null;
+  const target = resolveDshProfileName({
+    choice: configuredState.channelProfile,
+    profiles: sources.map(source => source.profile),
+    envProfile: process.env.DSH_PROFILE
+  });
+  if (!target) return null;
+  return sources.find(source => source.profile === target) || missingProfileSource(nativePaths, target);
 }
 
 class DshChannelService extends BaseChannelService {
@@ -352,25 +418,86 @@ class DshChannelService extends BaseChannelService {
     });
   }
 
+  _profileChannelState(profileSource) {
+    return {
+      kind: 'profile',
+      profile: profileSource.profile,
+      patchPath: profileSource.patchPath,
+      config: profileSource.config,
+      providers: { ...profileSource.providers },
+      selected: { ...profileSource.selected },
+      missing: profileSource.missing === true,
+      settings: null
+    };
+  }
+
+  _resolveNativeChannelState() {
+    const profileSource = resolveProfileChannelSource(this.nativePaths);
+    if (profileSource) return this._profileChannelState(profileSource);
+
+    const settings = this._nativeSettings();
+    const llm = isObject(settings['llm-pi-ai']) ? settings['llm-pi-ai'] : {};
+    return {
+      kind: 'settings',
+      profile: null,
+      patchPath: this.nativePaths.settings,
+      config: llm,
+      providers: isObject(llm.providers) ? { ...llm.providers } : {},
+      selected: isObject(settings['agent-default-model']) ? { ...settings['agent-default-model'] } : {},
+      missing: false,
+      settings
+    };
+  }
+
+  _writeNativeChannelState(state, { providers = {}, selected = {} } = {}) {
+    if (!state) throw new Error('DSH native channel state is required');
+    if (state.missing) {
+      const error = new Error(`DSH profile "${state.profile}" 未安装或未初始化，请先在 DSH 中创建该 profile`);
+      error.statusCode = 400;
+      error.code = 'dsh_profile_missing';
+      throw error;
+    }
+    const nextSelected = isObject(selected) ? { ...selected } : {};
+    if (state.kind === 'profile') {
+      const context = { paths: this.nativePaths };
+      upsertProfilePatchRow(context, state.profile, {
+        id: 'llm-pi-ai',
+        config: {
+          ...(isObject(state.config) ? state.config : {}),
+          providers
+        }
+      });
+      if (Object.keys(nextSelected).length > 0) {
+        upsertProfilePatchRow(context, state.profile, {
+          id: 'agent-default-model',
+          config: nextSelected
+        });
+      } else {
+        deleteProfilePatchRow(context, state.profile, 'agent-default-model');
+      }
+      return;
+    }
+    const settings = isObject(state.settings) ? state.settings : {};
+    const llm = isObject(settings['llm-pi-ai']) ? { ...settings['llm-pi-ai'] } : {};
+    settings['llm-pi-ai'] = { ...llm, providers };
+    if (Object.keys(nextSelected).length > 0) settings['agent-default-model'] = nextSelected;
+    else delete settings['agent-default-model'];
+    this._writeNativeSettings(settings);
+  }
+
   _removeNativeProvider(providerKey) {
     const key = String(providerKey || '').trim();
     if (!key || key === 'ctx-dsh-proxy') return;
-    const settings = this._nativeSettings();
-    const llm = isObject(settings['llm-pi-ai']) ? { ...settings['llm-pi-ai'] } : {};
-    const providers = isObject(llm.providers) ? { ...llm.providers } : {};
-    if (!Object.prototype.hasOwnProperty.call(providers, key)) return;
+    const state = this._resolveNativeChannelState();
+    if (!Object.prototype.hasOwnProperty.call(state.providers, key)) return;
+    const providers = { ...state.providers };
     delete providers[key];
-    settings['llm-pi-ai'] = { ...llm, providers };
-    const selected = isObject(settings['agent-default-model'])
-      ? { ...settings['agent-default-model'] }
-      : null;
-    if (selected?.provider === key) {
+    const selected = { ...state.selected };
+    if (selected.provider === key) {
       delete selected.provider;
       delete selected.model;
-      if (Object.keys(selected).length > 0) settings['agent-default-model'] = selected;
-      else delete settings['agent-default-model'];
     }
-    this._writeNativeSettings(settings);
+    this._writeNativeChannelState(state, { providers, selected });
   }
 
   _writeCredentialsForChannels(channels = []) {
@@ -423,9 +550,8 @@ class DshChannelService extends BaseChannelService {
   _syncNativeSettingsForChannels(channels = [], preferredChannelId = null) {
     const allChannels = (channels || []).filter(channel => channel && channel.providerKey);
     const enabledChannels = this._orderEnabledChannels(allChannels, preferredChannelId);
-    const settings = this._nativeSettings();
-    const llm = isObject(settings['llm-pi-ai']) ? { ...settings['llm-pi-ai'] } : {};
-    const providers = isObject(llm.providers) ? { ...llm.providers } : {};
+    const state = this._resolveNativeChannelState();
+    const providers = { ...state.providers };
 
     delete providers['ctx-dsh-proxy'];
     const disabledChannels = allChannels.filter(channel => channel.enabled === false);
@@ -441,30 +567,22 @@ class DshChannelService extends BaseChannelService {
       };
     });
 
-    settings['llm-pi-ai'] = { ...llm, providers };
     this._writeCredentialsForChannels(enabledChannels);
 
-    const currentDefault = isObject(settings['agent-default-model'])
-      ? { ...settings['agent-default-model'] }
-      : {};
+    const currentDefault = { ...state.selected };
     const preferred = preferredChannelId
       ? enabledChannels.find(channel => channel.id === preferredChannelId)
       : enabledChannels.find(channel => channel.providerKey === currentDefault.provider);
     const selected = preferred || enabledChannels[0] || null;
     if (selected) {
-      settings['agent-default-model'] = {
-        ...currentDefault,
-        provider: selected.providerKey,
-        model: selected.model
-      };
+      currentDefault.provider = selected.providerKey;
+      currentDefault.model = selected.model;
     } else {
       delete currentDefault.provider;
       delete currentDefault.model;
-      if (Object.keys(currentDefault).length > 0) settings['agent-default-model'] = currentDefault;
-      else delete settings['agent-default-model'];
     }
 
-    this._writeNativeSettings(settings);
+    this._writeNativeChannelState(state, { providers, selected: currentDefault });
     return selected;
   }
 
@@ -486,8 +604,8 @@ class DshChannelService extends BaseChannelService {
         };
       }
     }
-    const settings = this._nativeSettings();
-    const selected = isObject(settings['agent-default-model']) ? settings['agent-default-model'] : {};
+    const state = this._resolveNativeChannelState();
+    const selected = state.selected;
     const providerKey = String(selected.provider || '').trim();
     const channel = this.loadChannels().channels.find(item => item.providerKey === providerKey) || null;
     return {
@@ -498,17 +616,27 @@ class DshChannelService extends BaseChannelService {
   }
 
   syncCurrentChannel() {
-    const settings = this._nativeSettings();
-    const selected = isObject(settings['agent-default-model'])
-      ? settings['agent-default-model']
-      : {};
+    const state = this._resolveNativeChannelState();
+    const selected = state.selected;
     const selectedProviderKey = String(selected.provider || '').trim();
-    const llm = isObject(settings['llm-pi-ai']) ? settings['llm-pi-ai'] : {};
-    const providers = isObject(llm.providers) ? llm.providers : {};
+    const providers = state.providers;
+    const source = state.kind === 'profile'
+      ? { type: 'profile', profile: state.profile, path: state.patchPath, missing: state.missing === true }
+      : { type: 'settings', path: state.patchPath };
     const configuredProviders = Object.entries(providers)
       .filter(([providerKey, provider]) => providerKey !== 'ctx-dsh-proxy' && isObject(provider));
     if (configuredProviders.length === 0) {
-      return { added: 0, updated: 0, skipped: 0, channels: [], current: null, warnings: ['DSH 设置中没有可同步的 llm-pi-ai.providers'] };
+      return {
+        added: 0,
+        updated: 0,
+        skipped: 0,
+        channels: [],
+        current: null,
+        source,
+        warnings: [state.missing
+          ? `DSH profile "${state.profile}" 未安装或未初始化`
+          : 'DSH 设置和 profiles 中没有可同步的 llm-pi-ai.providers']
+      };
     }
 
     const channels = this.loadChannels().channels;
@@ -580,16 +708,15 @@ class DshChannelService extends BaseChannelService {
       ]
     });
     const current = result.channels.find(channel => channel.providerKey === activeProviderKey) || null;
-    return { ...result, current };
+    return { ...result, current, source };
   }
 
   setProxyConfig(port, { activeChannelId } = {}) {
     const channels = this.getEnabledChannels();
     if (channels.length === 0) throw new Error('请先添加并启用至少一个 DSH 渠道');
     const selected = channels.find(channel => channel.id === activeChannelId) || channels[0];
-    const settings = this._nativeSettings();
-    const llm = isObject(settings['llm-pi-ai']) ? { ...settings['llm-pi-ai'] } : {};
-    const providers = isObject(llm.providers) ? { ...llm.providers } : {};
+    const state = this._resolveNativeChannelState();
+    const providers = { ...state.providers };
     const modelEntries = new Map();
     for (const channel of channels) {
       for (const model of normalizeModels(channel.models, channel.model)) {
@@ -606,13 +733,14 @@ class DshChannelService extends BaseChannelService {
       baseURL: `http://127.0.0.1:${Number(port)}/v1`,
       models: models.length > 0 ? models : [{ id: selected.model }]
     };
-    settings['llm-pi-ai'] = { ...llm, providers };
-    settings['agent-default-model'] = {
-      ...(isObject(settings['agent-default-model']) ? settings['agent-default-model'] : {}),
-      provider: 'ctx-dsh-proxy',
-      model: selected.model
-    };
-    this._writeNativeSettings(settings);
+    this._writeNativeChannelState(state, {
+      providers,
+      selected: {
+        ...state.selected,
+        provider: 'ctx-dsh-proxy',
+        model: selected.model
+      }
+    });
     writeActiveMarker(selected.id, port);
     return { channel: selected, port, provider: 'ctx-dsh-proxy' };
   }
@@ -668,11 +796,17 @@ function getCurrentChannel() {
 }
 
 function syncCurrentDshChannel() {
-  const result = getServiceInstance().syncCurrentChannel();
+  const instance = getServiceInstance();
+  const result = instance.syncCurrentChannel();
+  const fullChannels = instance.getChannels().channels;
+  const byId = new Map(fullChannels.map(channel => [channel.id, channel]));
+  const currentChannel = result.current ? byId.get(result.current.id) || result.current : null;
   return {
     ...result,
-    channels: Array.isArray(result.channels) ? result.channels.map(toPublicChannel) : [],
-    current: toPublicChannel(result.current)
+    channels: Array.isArray(result.channels)
+      ? result.channels.map(channel => toPublicChannel(byId.get(channel.id) || channel))
+      : [],
+    current: toPublicChannel(currentChannel)
   };
 }
 

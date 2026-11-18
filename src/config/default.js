@@ -25,6 +25,7 @@ const DEFAULT_CONFIG = {
   },
   maxLogs: 100,
   statsInterval: 30,
+  dshChannelProfile: 'auto',
   nativeCliLogs: {
     enabled: true,
     intervalSeconds: 5

@@ -288,6 +288,14 @@
       },
       {
         "method": "POST",
+        "path": "/channels/catalog-metadata",
+        "capability": "channels",
+        "operation": "catalogMetadata",
+        "request": "default",
+        "response": "default"
+      },
+      {
+        "method": "POST",
         "path": "/channels/order",
         "capability": "channels",
         "operation": "order",

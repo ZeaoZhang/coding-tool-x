@@ -546,13 +546,19 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
 
   const executeRequest = (requestConfig) => new Promise((resolve) => {
     const startTime = Date.now();
+    const requestBody = requestConfig.requestBody || '';
     const options = {
       hostname: parsedUrl.hostname,
       port: parsedUrl.port || (isHttps ? 443 : 80),
       path: requestConfig.aompPath,
       method: 'POST',
       timeout,
-      headers: requestConfig.headers
+      headers: {
+        ...requestConfig.headers,
+        // Some OpenAI-compatible relays reject chunked request bodies and then
+        // answer with a malformed response that surfaces as HPE_INVALID_CONSTANT.
+        'Content-Length': Buffer.byteLength(requestBody)
+      }
     };
 
     const req = httpModule.request(options, (res) => {
@@ -698,8 +704,7 @@ async function testAPIFunctionality(baseUrl, apiKey, timeout, channelType = 'cla
       }));
     });
 
-    req.write(requestConfig.requestBody);
-    req.end();
+    req.end(requestBody);
   });
 
   const primaryResult = await executeRequest(primaryRequestConfig);

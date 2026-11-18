@@ -1,6 +1,7 @@
 'use strict';
 
 const { normalizeModelSpec } = require('../server/services/model-definition-schema');
+const { MODEL_METADATA, MODEL_ALIASES, METADATA_SOURCE } = require('../config/model-metadata');
 
 /**
  * Shared model-definition helpers for CLI platforms whose native config
@@ -106,8 +107,143 @@ function resolveChannelModelDefinition(value, catalogMeta = {}) {
   };
 }
 
+function normalizeCatalogLookupKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+const CATALOG_ENTRIES = Object.entries(MODEL_METADATA).map(([id, metadata]) => {
+  const entryMetadata = isPlainObject(metadata) ? metadata : {};
+  return {
+    id,
+    metadata: entryMetadata,
+    normalizedName: normalizeCatalogLookupKey(entryMetadata.name)
+  };
+});
+const CATALOG_ENTRY_BY_ID = new Map(CATALOG_ENTRIES.map(entry => [entry.id.toLowerCase(), entry]));
+const CATALOG_ENTRY_BY_ALIAS = new Map();
+for (const [alias, canonical] of Object.entries(MODEL_ALIASES)) {
+  const entry = CATALOG_ENTRY_BY_ID.get(String(canonical || '').toLowerCase());
+  if (entry) CATALOG_ENTRY_BY_ALIAS.set(alias.toLowerCase(), entry);
+}
+
+function catalogModelId(value) {
+  if (isPlainObject(value)) {
+    return String(value.value || value.id || value.name || '').trim();
+  }
+  return String(value || '').trim();
+}
+
+function collectCatalogModelIds({
+  model = '',
+  speedTestModel = '',
+  allowedModels = [],
+  models = [],
+  availableModels = []
+} = {}) {
+  const ids = [];
+  const seen = new Set();
+  for (const value of [
+    model,
+    speedTestModel,
+    ...(Array.isArray(models) ? models : []),
+    ...(Array.isArray(allowedModels) ? allowedModels : []),
+    ...(Array.isArray(availableModels) ? availableModels : [])
+  ]) {
+    const id = catalogModelId(value);
+    if (!id) continue;
+    const key = id.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    ids.push(id);
+  }
+  return ids;
+}
+
+function findCatalogEntryByDisplayName(requestedId) {
+  const key = normalizeCatalogLookupKey(requestedId);
+  if (!key) return null;
+  const exact = CATALOG_ENTRIES.find(entry => entry.normalizedName === key);
+  if (exact) return exact;
+  // Catalog display names may carry a release suffix (for example
+  // "DeepSeek V4.1 Flash 1017") while the runtime model ID omits it.
+  const prefixed = CATALOG_ENTRIES.filter(entry => entry.normalizedName.startsWith(`${key}-`));
+  return prefixed.length === 1 ? prefixed[0] : null;
+}
+
+function findCatalogEntry(requestedId) {
+  const id = String(requestedId || '').trim().toLowerCase();
+  if (!id) return null;
+  return CATALOG_ENTRY_BY_ID.get(id)
+    || CATALOG_ENTRIES.find(entry => String(entry.metadata.sourceId || '').toLowerCase() === id)
+    || CATALOG_ENTRY_BY_ALIAS.get(id)
+    || CATALOG_ENTRIES.find(entry => entry.id.split('/').pop().toLowerCase() === id)
+    || findCatalogEntryByDisplayName(id)
+    || null;
+}
+
+function catalogEntriesForTool(toolType) {
+  const requested = String(toolType || '').trim().toLowerCase();
+  if (!requested) return CATALOG_ENTRIES;
+  return CATALOG_ENTRIES.filter(({ metadata }) => (
+    Array.isArray(metadata.toolTypes) && metadata.toolTypes.includes(requested)
+  ));
+}
+
+/**
+ * Resolve offline Models.dev metadata for channel model selectors.
+ *
+ * Requested IDs win over the provider fallback. The operation only reads the
+ * packaged snapshot: it never performs network or CLI discovery.
+ */
+function resolveChannelCatalogMetadata({
+  toolType = '',
+  providerKey = '',
+  model = '',
+  speedTestModel = '',
+  allowedModels = [],
+  models = [],
+  availableModels = []
+} = {}) {
+  const requestedIds = collectCatalogModelIds({
+    model,
+    speedTestModel,
+    allowedModels,
+    models,
+    availableModels
+  });
+  const eligibleEntries = catalogEntriesForTool(toolType);
+  const provider = String(providerKey || '').trim().toLowerCase();
+  const matchesProvider = entry => (
+    String(entry.metadata.provider || '').toLowerCase() === provider
+    || String(entry.metadata.sourceId || '').toLowerCase().startsWith(`${provider}/`)
+  );
+
+  const requestedEntries = requestedIds
+    .map(requestedId => ({ entry: findCatalogEntry(requestedId), requestedId }))
+    .filter(({ entry }) => Boolean(entry))
+    .filter(({ entry, requestedId }) => eligibleEntries.includes(entry) && Boolean(requestedId));
+  const providerEntries = provider
+    ? eligibleEntries.filter(matchesProvider).map(entry => ({ entry, requestedId: '' }))
+    : [];
+
+  const entries = requestedIds.length > 0 ? requestedEntries : providerEntries;
+
+  return {
+    models: entries.map(({ entry, requestedId }) => ({
+      ...structuredClone(entry.metadata),
+      id: requestedId || entry.id
+    })),
+    warnings: [],
+    source: { ...METADATA_SOURCE }
+  };
+}
+
 module.exports = {
   SUPPORTED_INPUT_TYPES,
   normalizeChannelModelDefinitions,
-  resolveChannelModelDefinition
+  resolveChannelModelDefinition,
+  resolveChannelCatalogMetadata
 };

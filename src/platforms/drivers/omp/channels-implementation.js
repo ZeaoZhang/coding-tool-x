@@ -5,7 +5,6 @@ const { execFileSync } = require('child_process');
 const { PATHS, ensureStorageDirMigrated } = require('../../../config/paths');
 const BaseChannelService = require('../../../shared/base-channel-service');
 const ompConfig = require('./config');
-const { MODEL_METADATA, METADATA_SOURCE } = require('../../../config/model-metadata');
 const {
   writeManagedOmpProviders,
   removeManagedOmpProviders,
@@ -16,6 +15,7 @@ const {
   normalizeProviderId,
   normalizeProviderApi
 } = require('./native-config-implementation');
+const { resolveChannelCatalogMetadata } = require('../../../shared/channel-model-metadata');
 const {
   createSkippedResult,
   isLocalProxyBaseUrl,
@@ -713,68 +713,8 @@ function buildOmpSyncCandidate(modelsConfig, selection, channels, options = {}) 
 }
 
 
-function getCatalogMetadata({
-  providerKey = '',
-  model = '',
-  speedTestModel = '',
-  allowedModels = [],
-  models = [],
-  availableModels = []
-} = {}) {
-  const requestedIds = [
-    model,
-    speedTestModel,
-    ...(Array.isArray(models)
-      ? models.map(item => (
-        item && typeof item === 'object' && !Array.isArray(item) ? item.id || item.name : item
-      ))
-      : []),
-    ...(Array.isArray(allowedModels)
-      ? allowedModels.map(item => (
-        item && typeof item === 'object' && !Array.isArray(item) ? item.id || item.name : item
-      ))
-      : []),
-    ...(Array.isArray(availableModels)
-      ? availableModels.map(item => (
-        item && typeof item === 'object' && !Array.isArray(item) ? item.value || item.id || item.name : item
-      ))
-      : [])
-  ]
-    .map(value => String(value || '').trim())
-    .filter(Boolean)
-    .filter((value, index, values) => values.findIndex(item => item.toLowerCase() === value.toLowerCase()) === index);
-  const normalizedProviderKey = String(providerKey || '').trim().toLowerCase();
-
-  const allEntries = Object.entries(MODEL_METADATA)
-    .filter(([, metadata]) => Array.isArray(metadata.toolTypes) && metadata.toolTypes.includes('omp'))
-    .map(([id, metadata]) => ({ ...structuredClone(metadata), id }));
-
-  const findRequestedEntry = requestedId => allEntries.find(entry => {
-    const normalizedRequestedId = requestedId.toLowerCase();
-    return normalizedRequestedId === entry.id.toLowerCase()
-      || normalizedRequestedId === String(entry.sourceId || '').toLowerCase()
-      || normalizedRequestedId === entry.id.split('/').pop().toLowerCase();
-  });
-  const matchesProvider = entry => (
-    String(entry.provider || '').toLowerCase() === normalizedProviderKey
-    || String(entry.sourceId || '').toLowerCase().startsWith(`${normalizedProviderKey}/`)
-  );
-  const requestedEntries = requestedIds.length > 0
-    ? requestedIds
-      .map(requestedId => {
-        const entry = findRequestedEntry(requestedId);
-        return entry ? { ...entry, id: requestedId } : null;
-      })
-      .filter(Boolean)
-    : [];
-  const providerEntries = normalizedProviderKey ? allEntries.filter(matchesProvider) : [];
-  const entries = requestedIds.length > 0 ? requestedEntries : providerEntries;
-
-  return {
-    models: entries,
-    warnings: [],
-    source: { ...METADATA_SOURCE }
-  };
+function getCatalogMetadata(input = {}) {
+  return resolveChannelCatalogMetadata({ ...input, toolType: 'omp' });
 }
 
 function syncCurrentOmpChannel(options = {}) {

@@ -157,6 +157,33 @@ describe('testChannelSpeed', () => {
     }
   });
 
+  test('frames OMP-compatible requests with Content-Length instead of chunked encoding', async () => {
+    let seenHeaders = null;
+    let seenBody = '';
+    const server = await withJsonServer(async (req, res) => {
+      seenHeaders = req.headers;
+      seenBody = await readRequestBody(req);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ id: 'ok' }));
+    });
+
+    try {
+      const result = await testChannelSpeed({
+        id: 'omp-chunked',
+        name: 'OMP chunked relay',
+        baseUrl: `${server.baseUrl}/v1`,
+        apiKey: 'omp-secret',
+        model: 'deepseek-flash'
+      }, 5000, 'openai_compatible', { authSourceType: 'omp' });
+
+      expect(result.success).toBe(true);
+      expect(seenHeaders['transfer-encoding']).toBeUndefined();
+      expect(Number(seenHeaders['content-length'])).toBe(Buffer.byteLength(seenBody));
+    } finally {
+      await server.close();
+    }
+  });
+
   test('sends Claude official speed test through shared streaming messages wire', async () => {
     let seen = null;
     const server = await withJsonServer(async (req, res) => {

@@ -106,6 +106,9 @@ function printPortToolIssue(issue = getPortToolIssue()) {
 async function startServer(port, host = '127.0.0.1', options = {}) {
   ensureStorageDirMigrated();
   const config = loadConfig();
+  require('../plugins/event-bus').on('config:saved', ({ config: savedConfig } = {}) => {
+    if (savedConfig && typeof savedConfig === 'object') Object.assign(config, savedConfig);
+  });
   if (typeof persistOmpAgentPath === 'function') {
     persistOmpAgentPath();
   }

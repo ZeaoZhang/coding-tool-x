@@ -30,6 +30,10 @@ export function deletePlatformChannel(platform, channelId) {
   return channelOperation(platform, 'remove', { pathParams: { channelId } })
 }
 
+export function fetchChannelCatalogMetadata(platform, payload = {}) {
+  return channelOperation(platform, 'catalogMetadata', { body: payload })
+}
+
 export function getDshChannels() {
   return getPlatformChannels('dsh')
 }

@@ -2,6 +2,7 @@
 
 const implementation = require('./channels-implementation');
 const { getSchedulerState } = require('../../../server/services/channel-scheduler');
+const { resolveChannelCatalogMetadata } = require('../../../shared/channel-model-metadata');
 
 function resultFor(request, status, data, error) {
   const route = request?.route || {};
@@ -66,7 +67,10 @@ function channelTypeForSpeed(channel) {
 }
 
 function createDriver(context = {}) {
-  implementation.configure(context);
+  implementation.configure({
+    ...context,
+    config: context.context?.config || context.config
+  });
   const driver = {
     platform: 'dsh',
     capability: 'channels',
@@ -141,6 +145,9 @@ function createDriver(context = {}) {
         models: Array.isArray(probe?.availableModels) ? probe.availableModels : []
       };
     }),
+    catalogMetadata: request => withResult(request, 'catalogMetadata', () => (
+      resolveChannelCatalogMetadata(bodyOf(request))
+    )),
     speedTest: request => withAsyncResult(request, 'speedTest', async () => {
       const { testChannelSpeed } = require('../../../server/services/speed-test');
       const channelId = request?.params?.channelId;

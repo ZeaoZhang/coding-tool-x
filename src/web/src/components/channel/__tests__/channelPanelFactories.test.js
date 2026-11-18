@@ -8,6 +8,7 @@ const {
   fetchOpenCodeChannels,
   fetchOmpChannels,
   fetchOmpCatalogMetadata,
+  fetchChannelCatalogMetadata,
   fetchOmpChannelModels,
   fetchOpenCodeChannelModels,
   createOpenCodeChannel,
@@ -28,6 +29,7 @@ const {
   fetchOpenCodeChannels: vi.fn(),
   fetchOmpChannels: vi.fn(),
   fetchOmpCatalogMetadata: vi.fn(),
+  fetchChannelCatalogMetadata: vi.fn(),
   fetchOmpChannelModels: vi.fn(),
   fetchOpenCodeChannelModels: vi.fn(),
   createOpenCodeChannel: vi.fn(),
@@ -51,6 +53,7 @@ vi.mock('../../../api/channels', async () => ({
   getOpenCodeChannels: fetchOpenCodeChannels,
   getOmpChannels: fetchOmpChannels,
   fetchOmpCatalogMetadata,
+  fetchChannelCatalogMetadata,
   fetchOmpChannelModels,
   fetchOpenCodeChannelModels,
   createOpenCodeChannel,
@@ -90,6 +93,7 @@ describe('channel panel model catalogs', () => {
       warnings: [],
       source: { name: 'models.dev' }
     })
+    fetchChannelCatalogMetadata.mockReset()
     fetchOmpChannelModels.mockReset()
     fetchOpenCodeChannelModels.mockReset()
     probeOmpChannelModels.mockReset()
@@ -430,6 +434,85 @@ describe('channel panel model catalogs', () => {
       allowedModels: ['gpt-5.6-luna', 'gpt-5.6-sol'],
       availableModels: []
     }))
+  })
+
+  it('autofills DSH and OpenCode metadata from the offline catalog', async () => {
+    fetchChannelCatalogMetadata.mockImplementation((platform, payload) => Promise.resolve({
+      models: [{
+        id: payload.model,
+        name: 'DeepSeek V4 Pro',
+        limit: { context: 1000000, output: 384000 },
+        input: ['text'],
+        reasoning: true
+      }],
+      warnings: [],
+      source: { name: 'models.dev' }
+    }))
+
+    for (const [platform, modelListKey] of [['dsh', 'models'], ['opencode', 'allowedModels']]) {
+      const config = channelPanelFactories[platform]()
+      const form = {
+        ...config.getInitialForm(),
+        providerKey: 'deepseek',
+        model: 'deepseek/deepseek-v4-pro',
+        [modelListKey]: ['deepseek/deepseek-v4-pro'],
+        modelDefinitionsJson: '[]'
+      }
+
+      await config.fetchModelMetadataForChannel(form)
+
+      expect(fetchChannelCatalogMetadata).toHaveBeenCalledWith(platform, expect.objectContaining({
+        providerKey: 'deepseek',
+        model: 'deepseek/deepseek-v4-pro',
+        allowedModels: ['deepseek/deepseek-v4-pro'],
+        availableModels: []
+      }))
+      expect(JSON.parse(form.modelDefinitionsJson)).toEqual([
+        expect.objectContaining({
+          id: 'deepseek/deepseek-v4-pro',
+          limit: { context: 1000000, output: 384000 },
+          reasoning: true
+        })
+      ])
+      expect(form.modelMetadataStatus).toBe('已读取 1 个模型（Models.dev 离线快照）')
+    }
+  })
+
+  it('merges catalog metadata without replacing existing definitions', async () => {
+    fetchChannelCatalogMetadata.mockResolvedValue({
+      models: [{
+        id: 'deepseek/deepseek-v4-pro',
+        limit: { context: 1000000, output: 384000 },
+        reasoning: true
+      }],
+      warnings: [],
+      source: { name: 'models.dev' }
+    })
+    const config = channelPanelFactories.dsh()
+    const form = {
+      ...config.getInitialForm(),
+      providerKey: 'deepseek',
+      models: ['deepseek/deepseek-v4-pro'],
+      modelDefinitionsJson: JSON.stringify([
+        { id: 'deepseek/deepseek-v4-pro', contextWindow: 64000 },
+        { id: 'local-only-model', contextWindow: 32000, maxTokens: 4096 }
+      ])
+    }
+
+    await config.fetchModelMetadataForChannel(form)
+
+    expect(JSON.parse(form.modelDefinitionsJson)).toEqual([
+      expect.objectContaining({
+        id: 'deepseek/deepseek-v4-pro',
+        contextWindow: 64000,
+        limit: expect.any(Object)
+      }),
+      expect.objectContaining({
+        id: 'local-only-model',
+        contextWindow: 32000,
+        maxTokens: 4096
+      })
+    ])
   })
 
   it('uses presets to select OAuth and hides API-only fields', () => {

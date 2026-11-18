@@ -19,6 +19,7 @@ import {
   getPlatformChannels,
   syncCurrentDshChannel,
   fetchDshModelsFromConfig,
+  fetchChannelCatalogMetadata,
   updatePlatformChannel
 } from '../channels'
 
@@ -26,6 +27,7 @@ const apiRoutes = [
   { method: 'GET', path: '/channels', capability: 'channels', operation: 'list' },
   { method: 'POST', path: '/channels/sync-now', capability: 'channels', operation: 'sync' },
   { method: 'POST', path: '/channels/models', capability: 'channels', operation: 'modelsFromConfig' },
+  { method: 'POST', path: '/channels/catalog-metadata', capability: 'channels', operation: 'catalogMetadata' },
   { method: 'PUT', path: '/channels/:channelId', capability: 'channels', operation: 'update' },
   { method: 'GET', path: '/channels/scheduler', capability: 'channels', operation: 'poolStatus' },
   { method: 'GET', path: '/projects', capability: 'projects', operation: 'listProjects' },
@@ -65,6 +67,18 @@ it('uses the DSH manifest route to discover models before a channel is saved', a
     apiKey: 'secret',
     providerApi: 'openai-completions',
     forceRefresh: true
+  }, undefined)
+})
+
+it('posts offline catalog metadata requests to the manifest route', async () => {
+  await fetchChannelCatalogMetadata('dsh', {
+    providerKey: 'deepseek',
+    model: 'deepseek/deepseek-v4-pro'
+  })
+
+  expect(mocks.post).toHaveBeenCalledWith('/platforms/dsh/channels/catalog-metadata', {
+    providerKey: 'deepseek',
+    model: 'deepseek/deepseek-v4-pro'
   }, undefined)
 })
 
