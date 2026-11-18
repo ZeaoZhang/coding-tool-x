@@ -924,7 +924,7 @@ async function handleProxyToggle(value) {
 
     if (result.success !== false) {
       if (props.channelType === 'omp') {
-        message.success(value ? 'OMP 动态切换已启用' : 'OMP 已切换为单渠道直连模式')
+        message.success(value ? 'OMP 动态切换已启用' : 'OMP 已切换为多渠道直连模式')
       } else {
         message.success(value ? `${channelTitle.value} 代理已启动` : `${channelTitle.value} 代理已停止`)
       }

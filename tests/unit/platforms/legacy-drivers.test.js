@@ -18,6 +18,47 @@ function makeRequire(stubs) {
 }
 
 describe('legacy drivers', () => {
+  test('exposes manifest proxy metadata for legacy proxy drivers', () => {
+    const { createLegacyDriver } = require('../../../src/platforms/drivers/legacy');
+    const managed = createLegacyDriver({
+      platform: 'omp',
+      capability: 'proxy',
+      manifest: {
+        proxyMode: 'managed',
+        proxyLabels: { stoppedMessage: 'OMP 已切换为多渠道直连模式' }
+      },
+      requireImpl: makeRequire({})
+    });
+    const standard = createLegacyDriver({
+      platform: 'claude',
+      capability: 'proxy',
+      manifest: {},
+      requireImpl: makeRequire({})
+    });
+
+    expect(managed.getCliMetadata()).toEqual({
+      managedProviderConfig: true,
+      proxyLabels: { stoppedMessage: 'OMP 已切换为多渠道直连模式' }
+    });
+    expect(standard.getCliMetadata()).toEqual({
+      managedProviderConfig: false,
+      proxyLabels: {}
+    });
+
+    const builtIn = createLegacyDriver({
+      platform: 'omp',
+      capability: 'proxy',
+      manifest: {
+        proxyMode: 'managed',
+        proxyLabels: { stoppedMessage: 'OMP 已切换为多渠道直连模式' }
+      }
+    });
+    expect(builtIn.getCliMetadata()).toEqual({
+      managedProviderConfig: true,
+      proxyLabels: { stoppedMessage: 'OMP 已切换为多渠道直连模式' }
+    });
+  });
+
   test('lazily loads codex channels and exposes the normalized list operation', () => {
     const requireImpl = makeRequire({
       './codex/channels-implementation': {

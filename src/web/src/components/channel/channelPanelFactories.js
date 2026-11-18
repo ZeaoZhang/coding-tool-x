@@ -485,6 +485,7 @@ const channelPanelFactories = {
     modalWidth: 600,
     formLabelWidth: 95,
     showApplyButton: true,
+    applyConfirmContent: '将把该渠道设为默认模型，其他已启用渠道保持可用，是否继续？',
     formSections: [
       {
         title: '基本信息',

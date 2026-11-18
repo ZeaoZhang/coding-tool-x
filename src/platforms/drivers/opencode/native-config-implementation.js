@@ -458,6 +458,41 @@ function setProxyConfig(proxyPort, options = {}) {
   return { success: true, port: proxyPort, path: filePath };
 }
 
+function resolveManagedProviderKey(providers = {}, channel = {}) {
+  const baseProviderKey = sanitizeProviderKey(channel.providerKey || channel.name || 'ctx-channel');
+  let providerKey = baseProviderKey;
+  let suffix = 2;
+  while (providers[providerKey] && !isManagedChannelProvider(providers[providerKey])) {
+    providerKey = `${baseProviderKey}-${suffix}`;
+    suffix += 1;
+  }
+  return providerKey;
+}
+
+function buildManagedChannelModels(channel = {}) {
+  const modelCandidates = collectChannelModelCandidates(channel);
+  const fallbackModel = String(channel.model || channel.speedTestModel || modelCandidates[0] || '').trim();
+  const modelsMap = buildModelsMap(modelCandidates, fallbackModel);
+  const modelIds = Object.keys(modelsMap);
+  if (modelIds.length === 0) {
+    throw new Error('OpenCode 渠道缺少可写入的模型，请至少配置默认模型或可用模型。');
+  }
+  return { modelsMap, modelIds, defaultModel: fallbackModel || modelIds[0] };
+}
+
+function buildManagedProviderEntry(channel = {}, providerKey = '', models = { modelsMap: {} }) {
+  return {
+    [MANAGED_PROVIDER_MARKER]: true,
+    npm: '@ai-sdk/openai-compatible',
+    name: channel.name || providerKey,
+    options: {
+      baseURL: String(channel.baseUrl || '').trim(),
+      apiKey: String(channel.apiKey || '').trim()
+    },
+    models: models.modelsMap
+  };
+}
+
 function setChannelConfig(channel = {}) {
   const filePath = selectConfigPath();
 
@@ -468,35 +503,12 @@ function setChannelConfig(channel = {}) {
     next.provider = {};
   }
 
-  const baseProviderKey = sanitizeProviderKey(channel.providerKey || channel.name || 'ctx-channel');
-  let providerKey = baseProviderKey;
-  let suffix = 2;
-  while (next.provider[providerKey] && !isManagedChannelProvider(next.provider[providerKey])) {
-    providerKey = `${baseProviderKey}-${suffix}`;
-    suffix += 1;
-  }
+  const providerKey = resolveManagedProviderKey(next.provider, channel);
+  const { modelsMap, modelIds, defaultModel } = buildManagedChannelModels(channel);
 
-  const modelCandidates = collectChannelModelCandidates(channel);
-  const fallbackModel = String(channel.model || channel.speedTestModel || modelCandidates[0] || '').trim();
-  const modelsMap = buildModelsMap(modelCandidates, fallbackModel);
-  const modelIds = Object.keys(modelsMap);
+  next.provider[providerKey] = buildManagedProviderEntry(channel, providerKey, { modelsMap });
 
-  if (modelIds.length === 0) {
-    throw new Error('OpenCode 渠道缺少可写入的模型，请至少配置默认模型或可用模型。');
-  }
-
-  next.provider[providerKey] = {
-    [MANAGED_PROVIDER_MARKER]: true,
-    npm: '@ai-sdk/openai-compatible',
-    name: channel.name || providerKey,
-    options: {
-      baseURL: String(channel.baseUrl || '').trim(),
-      apiKey: String(channel.apiKey || '').trim()
-    },
-    models: modelsMap
-  };
-
-  const topModel = normalizeOpenCodeModel(fallbackModel || modelIds[0], providerKey);
+  const topModel = normalizeOpenCodeModel(defaultModel || modelIds[0], providerKey);
   if (topModel) {
     next.model = topModel;
   } else {
@@ -505,6 +517,104 @@ function setChannelConfig(channel = {}) {
 
   writeConfig(filePath, next);
   return { success: true, path: filePath, providerKey, model: next.model || null };
+}
+
+/**
+ * 直连模式写入全部已启用渠道，每个渠道一个原生 provider；
+ * CLI 可在这些 provider 的模型之间直接切换。
+ */
+function setChannelsConfig(channels = [], options = {}) {
+  const filePath = selectConfigPath();
+  const current = readConfig(filePath);
+  const next = (current && typeof current === 'object') ? current : {};
+
+  if (!next.provider || typeof next.provider !== 'object') {
+    next.provider = {};
+  }
+  const removedProviderKeys = clearManagedProviders(next);
+  if (!next.provider || typeof next.provider !== 'object') {
+    next.provider = {};
+  }
+
+  const written = [];
+  const skipped = [];
+  const usedProviderKeys = new Set();
+  (Array.isArray(channels) ? channels : []).forEach((channel) => {
+    if (!channel || channel.enabled === false) return;
+    const baseUrl = String(channel.baseUrl || '').trim();
+    if (!baseUrl) {
+      skipped.push({
+        id: channel.id || null,
+        name: channel.name || '',
+        reason: 'missing-base-url'
+      });
+      return;
+    }
+
+    let models = null;
+    try {
+      models = buildManagedChannelModels(channel);
+    } catch (error) {
+      skipped.push({
+        id: channel.id || null,
+        name: channel.name || '',
+        reason: error.message
+      });
+      return;
+    }
+
+    const baseProviderKey = sanitizeProviderKey(channel.providerKey || channel.name || 'ctx-channel');
+    let providerKey = baseProviderKey;
+    let suffix = 2;
+    while (next.provider[providerKey] || usedProviderKeys.has(providerKey)) {
+      providerKey = `${baseProviderKey}-${suffix}`;
+      suffix += 1;
+    }
+    usedProviderKeys.add(providerKey);
+
+    next.provider[providerKey] = buildManagedProviderEntry(channel, providerKey, models);
+    written.push({
+      providerKey,
+      channelId: channel.id || null,
+      name: channel.name || providerKey,
+      defaultModel: models.defaultModel,
+      modelIds: models.modelIds
+    });
+  });
+
+  const preferred = options.preferredChannelId
+    ? written.find(item => item.channelId === options.preferredChannelId)
+    : null;
+  const currentModel = String(next.model || '').trim();
+  if (preferred) {
+    next.model = normalizeOpenCodeModel(preferred.defaultModel, preferred.providerKey);
+  } else if (currentModel.includes('/')) {
+    const currentProviderId = currentModel.slice(0, currentModel.indexOf('/')).trim();
+    const currentModelId = currentModel.slice(currentModel.indexOf('/') + 1).trim();
+    const currentProvider = written.find(item => item.providerKey === currentProviderId);
+    if (!currentProvider) {
+      if (written.length > 0) {
+        next.model = normalizeOpenCodeModel(written[0].defaultModel, written[0].providerKey);
+      } else {
+        clearManagedModelRef(next, removedProviderKeys);
+      }
+    } else if (!currentProvider.modelIds.some(id => id.toLowerCase() === currentModelId.toLowerCase())) {
+      next.model = normalizeOpenCodeModel(currentProvider.defaultModel, currentProvider.providerKey);
+    }
+  } else if (written.length > 0) {
+    next.model = normalizeOpenCodeModel(written[0].defaultModel, written[0].providerKey);
+  } else {
+    clearManagedModelRef(next, removedProviderKeys);
+  }
+
+  writeConfig(filePath, next);
+  return {
+    success: true,
+    path: filePath,
+    providers: written.map(({ providerKey, channelId, name }) => ({ providerKey, channelId, name })),
+    skipped,
+    model: next.model || null
+  };
 }
 
 function clearManagedChannelConfig() {
@@ -585,6 +695,7 @@ module.exports = {
   selectConfigPath,
   setProxyConfig,
   setChannelConfig,
+  setChannelsConfig,
   clearManagedChannelConfig,
   restoreSettings,
   deleteBackup,

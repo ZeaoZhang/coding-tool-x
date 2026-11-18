@@ -194,6 +194,7 @@ class DshChannelService extends BaseChannelService {
       platform: 'dsh',
       channelsFilePath: configuredState.channels,
       defaultGatewaySource: 'openai_compatible',
+      allowMultipleEnabled: true,
       isProxyRunning: isProxyModeEnabled
     });
     this.nativePaths = configuredState.native || resolvePaths({});
@@ -241,6 +242,12 @@ class DshChannelService extends BaseChannelService {
   }
 
   _validateBeforeChannelMutation(channel, _allChannels, { operation }) {
+    if (operation === 'apply' && isProxyModeEnabled()) {
+      const error = new Error('请先停止 DSH 动态代理，再写入渠道配置');
+      error.statusCode = 409;
+      error.code = 'dsh_proxy_running';
+      throw error;
+    }
     if (!channel.baseUrl) throw new Error('DSH channel baseUrl is required');
     try {
       const parsed = new URL(channel.baseUrl);
@@ -275,31 +282,28 @@ class DshChannelService extends BaseChannelService {
     }
   }
 
-  _activeChannel(channels = []) {
-    return channels.find(channel => channel.enabled !== false) || null;
-  }
-
-  _onAfterCreate(channel) {
-    if (!isProxyModeEnabled() && channel.enabled !== false) {
-      this._applyToNativeSettings(channel);
-    }
+  /**
+   * 直连模式下原生配置承载所有已启用渠道；preferredChannelId 用于决定默认模型。
+   */
+  _onAfterCreate(channel, allChannels) {
+    if (isProxyModeEnabled()) return;
+    this._syncNativeSettingsForChannels(allChannels, channel.enabled !== false ? channel.id : null);
   }
 
   _onAfterUpdate(oldChannel, nextChannel, allChannels) {
-    if (isProxyModeEnabled()) return;
     if (oldChannel.providerKey !== nextChannel.providerKey) {
       this._removeNativeProvider(oldChannel.providerKey);
     }
-    const active = this._activeChannel(allChannels);
-    if (active) this._applyToNativeSettings(active);
-    else this._removeNativeProvider(nextChannel.providerKey);
+    if (isProxyModeEnabled()) return;
+    const justEnabled = oldChannel.enabled === false && nextChannel.enabled !== false;
+    this._syncNativeSettingsForChannels(allChannels, justEnabled ? nextChannel.id : null);
   }
 
   _onAfterDelete(channel, allChannels) {
-    if (isProxyModeEnabled()) return;
     this._removeNativeProvider(channel.providerKey);
-    const active = this._activeChannel(allChannels);
-    if (active) this._applyToNativeSettings(active);
+    this._removeCredentialsForChannels([channel]);
+    if (isProxyModeEnabled()) return;
+    this._syncNativeSettingsForChannels(allChannels);
   }
 
   _nativeSettings() {
@@ -335,12 +339,35 @@ class DshChannelService extends BaseChannelService {
     this._writeNativeSettings(settings);
   }
 
-  _writeCredentials(channel) {
-    if (channel.authMode !== 'api_key') return;
+  _writeCredentialsForChannels(channels = []) {
+    const apiKeyChannels = (channels || []).filter(channel => channel.authMode === 'api_key');
+    if (apiKeyChannels.length === 0) return;
     const credentials = readYamlFile(this.nativePaths.credentials, { version: 1, refs: {}, records: {} });
     if (!isObject(credentials.refs)) credentials.refs = {};
-    credentials.refs[channel.apiKeyEnv] = channel.apiKey || '';
+    apiKeyChannels.forEach(channel => {
+      credentials.refs[channel.apiKeyEnv] = channel.apiKey || '';
+    });
     if (!isObject(credentials.records)) credentials.records = {};
+    writeYamlFile(this.nativePaths.credentials, credentials, {
+      atomic: true,
+      mode: 0o600,
+      customTags: DSH_YAML_SOURCE_TAGS
+    });
+  }
+
+  _removeCredentialsForChannels(channels = []) {
+    const apiKeyChannels = (channels || [])
+      .filter(channel => channel.authMode === 'api_key' && channel.apiKeyEnv);
+    if (apiKeyChannels.length === 0) return;
+    const credentials = readYamlFile(this.nativePaths.credentials, { version: 1, refs: {}, records: {} });
+    if (!isObject(credentials.refs)) return;
+    let changed = false;
+    apiKeyChannels.forEach(channel => {
+      if (!Object.prototype.hasOwnProperty.call(credentials.refs, channel.apiKeyEnv)) return;
+      delete credentials.refs[channel.apiKeyEnv];
+      changed = true;
+    });
+    if (!changed) return;
     writeYamlFile(this.nativePaths.credentials, credentials, {
       atomic: true,
       mode: 0o600,
@@ -359,34 +386,57 @@ class DshChannelService extends BaseChannelService {
     return entry;
   }
 
-  _applyToNativeSettings(channel) {
+  _syncNativeSettingsForChannels(channels = [], preferredChannelId = null) {
+    const allChannels = (channels || []).filter(channel => channel && channel.providerKey);
+    const enabledChannels = this._orderEnabledChannels(allChannels, preferredChannelId);
     const settings = this._nativeSettings();
     const llm = isObject(settings['llm-pi-ai']) ? { ...settings['llm-pi-ai'] } : {};
     const providers = isObject(llm.providers) ? { ...llm.providers } : {};
-    providers[channel.providerKey] = {
-      ...(isObject(providers[channel.providerKey]) ? providers[channel.providerKey] : {}),
-      ...this._providerEntry(channel)
-    };
+
+    delete providers['ctx-dsh-proxy'];
+    const disabledChannels = allChannels.filter(channel => channel.enabled === false);
+    disabledChannels.forEach(channel => {
+      delete providers[channel.providerKey];
+    });
+    this._removeCredentialsForChannels(disabledChannels);
+
+    enabledChannels.forEach(channel => {
+      providers[channel.providerKey] = {
+        ...(isObject(providers[channel.providerKey]) ? providers[channel.providerKey] : {}),
+        ...this._providerEntry(channel)
+      };
+    });
+
     settings['llm-pi-ai'] = { ...llm, providers };
-    settings['agent-default-model'] = {
-      ...(isObject(settings['agent-default-model']) ? settings['agent-default-model'] : {}),
-      provider: channel.providerKey,
-      model: channel.model
-    };
+    this._writeCredentialsForChannels(enabledChannels);
+
+    const currentDefault = isObject(settings['agent-default-model'])
+      ? { ...settings['agent-default-model'] }
+      : {};
+    const preferred = preferredChannelId
+      ? enabledChannels.find(channel => channel.id === preferredChannelId)
+      : enabledChannels.find(channel => channel.providerKey === currentDefault.provider);
+    const selected = preferred || enabledChannels[0] || null;
+    if (selected) {
+      settings['agent-default-model'] = {
+        ...currentDefault,
+        provider: selected.providerKey,
+        model: selected.model
+      };
+    } else {
+      delete currentDefault.provider;
+      delete currentDefault.model;
+      if (Object.keys(currentDefault).length > 0) settings['agent-default-model'] = currentDefault;
+      else delete settings['agent-default-model'];
+    }
+
     this._writeNativeSettings(settings);
-    this._writeCredentials(channel);
-    clearActiveMarker();
-    return channel;
+    return selected;
   }
 
-  applyChannelToSettings(channelId) {
-    if (isProxyModeEnabled()) {
-      const error = new Error('请先停止 DSH 动态代理，再写入单渠道配置');
-      error.statusCode = 409;
-      error.code = 'dsh_proxy_running';
-      throw error;
-    }
-    return super.applyChannelToSettings(channelId);
+  _applyToNativeSettings(channel) {
+    clearActiveMarker();
+    return this._syncNativeSettingsForChannels(this.loadChannels().channels, channel?.id || null);
   }
 
   getCurrentChannel() {
@@ -481,7 +531,7 @@ class DshChannelService extends BaseChannelService {
         apiKeyEnv: apiKeyEnv || undefined,
         ...(apiKey ? { apiKey } : {}),
         authMode,
-        enabled: providerKey === activeProviderKey
+        enabled: true
       });
     }
 
@@ -527,21 +577,13 @@ class DshChannelService extends BaseChannelService {
   restoreNativeConfig() {
     const marker = readActiveMarker();
     const channels = this.loadChannels().channels;
-    const selected = channels.find(channel => channel.id === marker?.activeChannelId)
-      || channels.find(channel => channel.enabled !== false)
-      || channels[0];
-    if (!selected) {
-      clearActiveMarker();
-      return null;
-    }
-    const settings = this._nativeSettings();
-    const llm = isObject(settings['llm-pi-ai']) ? { ...settings['llm-pi-ai'] } : {};
-    const providers = isObject(llm.providers) ? { ...llm.providers } : {};
-    delete providers['ctx-dsh-proxy'];
-    settings['llm-pi-ai'] = { ...llm, providers };
-    this._writeNativeSettings(settings);
+    const enabledChannels = channels.filter(channel => channel.enabled !== false);
+    const selected = enabledChannels.find(channel => channel.id === marker?.activeChannelId)
+      || enabledChannels[0]
+      || null;
     clearActiveMarker();
-    return this.applyChannelToSettings(selected.id);
+    this._syncNativeSettingsForChannels(channels, selected?.id || null);
+    return selected;
   }
 
   getEffectiveApiKey(channel) {

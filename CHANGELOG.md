@@ -6,6 +6,7 @@
 
 ## [Unreleased]
 ### Added
+- **多渠道直连（OpenCode / DSH / OMP）** - 关闭动态切换后可以同时启用多个渠道：所有已启用渠道都会写入原生配置（OpenCode `provider`、DSH `llm-pi-ai.providers`、OMP `models.yml`），可直接在 CLI 中按渠道选择模型；“写入配置（应用）”只切换默认模型，禁用或删除渠道会移除对应 provider；停止动态切换时恢复全部已启用渠道而不是只保留一个。Claude、Codex、Gemini 的原生配置只能承载单个 provider，继续强制单渠道。
 - **原生路径可配置** - 新增 `~/.cc-tool/config/platform-paths.json` 路径覆盖层；Claude、Codex、Gemini、OpenCode、OMP 及新增 Registry 平台的原生配置、会话状态、渠道、Skills、Plugins 和请求快照均可按平台重定向，未配置时保持原有默认路径，不自动搬迁已有数据。
 - **配置驱动的平台 Registry** - 新增 Manifest 校验、allowlisted capability driver、`~/.cc-tool/config/platforms.json` 用户扩展和安全的 `GET /api/platforms` 公共目录；符合通用协议的 CLI 可通过受控 Manifest / driver 扩展，但不会自动获得任意平台的完整能力。
 - **Registry-backed CLI / Web UI 路由** - 代理、日志、统计、端口配置、Dashboard 聚合和前端平台元数据改为从 Registry 派生，同时保留旧 CLI/API facade、OMP managed mode 与现有测试 mock seam。
@@ -24,6 +25,7 @@
 - **Dependabot 依赖清账** - adm-zip 升至 0.6.1、toml 升至 5.0.1；根目录与 Web 统一 override minimatch 11.0.9、glob 14.0.6、editorconfig 4.0.1，清理 `@vue/test-utils` 开发链上的传递漏洞；根目录与 `src/web` 的 `npm audit` 均为 0
 
 ### Fixed
+- **动态切换 CLI** - CLI 现在从平台 manifest 读取 `proxyMode` / `proxyLabels`（新增 `channelCli.multiChannelDirect` 声明），OMP/DSH 的开启与关闭走受管 provider 分支，不再按标准代理流程写入或恢复错误的原生配置；通用与兼容 proxy driver 都暴露同一份元数据。
 - **OMP 会话统计回退** - 修复 OMP 统计回退调用异步 `getAllSessions()` 未 await，`Array.isArray(Promise)` 恒为 false 导致原生会话统计始终为空的问题；现在按需读取会话索引并仅保留统计字段，今日统计首次约 337ms、后续约 38ms，页面加载约 168ms。
 - **DSH 页面卡顿与进程重启** - `/api/dsh/statistics/today` 不再在无当日会话时解压解析全部历史会话：按会话文件 mtime 预过滤，并逐个会话聚合、及时释放事件数组；`/api/dsh/projects` 改为只读取会话头且跳过首条消息扫描。实测今日统计从 30s 超时/GB 级内存降至 20-30ms，项目列表从 533ms/229MB 降至约 235ms/70MB，DSH 页面加载从 15s 连接重置降至约 0.3s，避免触发 PM2 500M 限制后的重启循环。
 - **DSH 资源管理** - 修复 DSH 插件安装/卸载后 30 秒内插件列表仍返回旧数据（平台 Driver 变更现在会使列表缓存失效），并支持按 `requestedVersion` 重装外置插件；插件安装/卸载直接使用 mutation 返回的 Profile inventory 更新列表并显示即时“安装中”占位卡片，不再等待二次全量刷新；Skills 页面新增 Profile 选择并按 Profile 扫描（profile 级 `customSkillDirs` 等配置生效）；MCP 表单按 Manifest `mcpTransports` 过滤选项（DSH 禁用 `sse`）；DSH 只读 Skills 不再显示无效启停开关。

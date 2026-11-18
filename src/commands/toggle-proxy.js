@@ -139,7 +139,7 @@ function pickRestoredChannel(cliType, channels = []) {
   return pickLatestEnabledChannel(channels);
 }
 
-function restoreSingleChannelMode(cliType, runtime = getPlatformRuntime()) {
+function restoreChannelConfig(cliType, runtime = getPlatformRuntime()) {
   const platform = normalizePlatformKey(cliType || 'claude');
   const channelsDriver = runtime?.getDriver?.(platform, 'channels');
   if (!channelsDriver || typeof channelsDriver.list !== 'function') {
@@ -321,7 +321,9 @@ async function handleStopProxy(cliType, services) {
     console.log(chalk.gray(`• 之后调整 ${toolName} 渠道或模型将按平台配置策略生效\n`));
   } else {
     console.log(chalk.gray('• 代理服务将被停止'));
-    console.log(chalk.gray('• 配置将恢复为当前激活渠道的单渠道模式'));
+    console.log(chalk.gray(services.multiChannelDirect === true
+      ? '• 配置将恢复为全部已启用渠道的直连配置'
+      : '• 配置将恢复为当前激活渠道的单渠道模式'));
     console.log(chalk.gray(`• 之后管理渠道将需要重启 ${toolName}\n`));
   }
 
@@ -359,7 +361,7 @@ async function handleStopProxy(cliType, services) {
       } else if (hasBackup) {
         settingsManager.deleteBackup?.();
       }
-      const restoredChannel = restoreSingleChannelMode(cliType);
+      const restoredChannel = restoreChannelConfig(cliType);
       removeActiveChannelMarker(cliType);
       if (restoredChannel?.name) {
         console.log(chalk.green(`[OK] 已恢复到渠道: ${restoredChannel.name}`));
@@ -404,6 +406,6 @@ module.exports = {
     getProxyServices,
     getSettingsManager,
     pickRestoredChannel,
-    restoreSingleChannelMode
+    restoreChannelConfig
   }
 };

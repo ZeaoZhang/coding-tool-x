@@ -269,6 +269,117 @@ describe('opencode-settings-manager proxy configuration', () => {
     });
   });
 
+  test('writes every enabled channel as its own provider and keeps the current default', () => {
+    const configPath = path.join(configDir, 'opencode.json');
+    writeJson(configPath, {
+      model: 'alpha/gpt-4o',
+      provider: {
+        manual: {
+          options: {
+            baseURL: 'https://manual.example.com',
+            apiKey: 'manual-key'
+          }
+        },
+        'ctx-alpha': {
+          __ctx_managed__: true,
+          options: { baseURL: 'https://stale.example.com', apiKey: 'stale' }
+        }
+      }
+    });
+
+    const result = manager.setChannelsConfig([
+      {
+        id: 'alpha',
+        name: 'Alpha',
+        providerKey: 'alpha',
+        baseUrl: 'https://alpha.example.com/v1',
+        apiKey: 'alpha-key',
+        model: 'gpt-4o'
+      },
+      {
+        id: 'beta',
+        name: 'Beta',
+        providerKey: 'beta',
+        baseUrl: 'https://beta.example.com/v1',
+        apiKey: 'beta-key',
+        model: 'claude-sonnet'
+      },
+      {
+        id: 'disabled',
+        name: 'Disabled',
+        providerKey: 'disabled',
+        baseUrl: 'https://disabled.example.com/v1',
+        apiKey: 'disabled-key',
+        model: 'gpt-4o',
+        enabled: false
+      }
+    ]);
+
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      model: 'alpha/gpt-4o',
+      providers: [
+        expect.objectContaining({ providerKey: 'alpha', channelId: 'alpha' }),
+        expect.objectContaining({ providerKey: 'beta', channelId: 'beta' })
+      ],
+      skipped: []
+    }));
+
+    const config = manager.readConfig(configPath);
+    expect(Object.keys(config.provider).sort()).toEqual(['alpha', 'beta', 'manual']);
+    expect(config.provider.manual).toEqual({ options: { baseURL: 'https://manual.example.com', apiKey: 'manual-key' } });
+    expect(config.provider.alpha.options).toEqual({ baseURL: 'https://alpha.example.com/v1', apiKey: 'alpha-key' });
+    expect(config.provider.beta.options).toEqual({ baseURL: 'https://beta.example.com/v1', apiKey: 'beta-key' });
+    expect(Object.keys(config.provider.alpha.models)).toEqual(['gpt-4o']);
+    expect(Object.keys(config.provider.beta.models)).toEqual(['claude-sonnet']);
+    expect(config.model).toBe('alpha/gpt-4o');
+  });
+
+  test('switches the default model to the preferred channel without dropping other providers', () => {
+    manager.setChannelsConfig([
+      { id: 'alpha', name: 'Alpha', providerKey: 'alpha', baseUrl: 'https://alpha.example.com/v1', apiKey: 'a', model: 'gpt-4o' },
+      { id: 'beta', name: 'Beta', providerKey: 'beta', baseUrl: 'https://beta.example.com/v1', apiKey: 'b', model: 'claude-sonnet' }
+    ]);
+
+    const result = manager.setChannelsConfig([
+      { id: 'alpha', name: 'Alpha', providerKey: 'alpha', baseUrl: 'https://alpha.example.com/v1', apiKey: 'a', model: 'gpt-4o' },
+      { id: 'beta', name: 'Beta', providerKey: 'beta', baseUrl: 'https://beta.example.com/v1', apiKey: 'b', model: 'claude-sonnet' }
+    ], { preferredChannelId: 'beta' });
+    const config = manager.readConfig(result.path);
+
+    expect(result.model).toBe('beta/claude-sonnet');
+    expect(Object.keys(config.provider).sort()).toEqual(['alpha', 'beta']);
+    expect(config.model).toBe('beta/claude-sonnet');
+  });
+
+  test('gives every enabled channel a unique provider key', () => {
+    const result = manager.setChannelsConfig([
+      { id: 'one', name: 'One', providerKey: 'shared', baseUrl: 'https://one.example.com/v1', apiKey: 'one', model: 'gpt-4o' },
+      { id: 'two', name: 'Two', providerKey: 'shared', baseUrl: 'https://two.example.com/v1', apiKey: 'two', model: 'claude-sonnet' }
+    ]);
+    const config = manager.readConfig(result.path);
+
+    expect(result.providers.map(item => item.providerKey)).toEqual(['shared', 'shared-2']);
+    expect(Object.keys(config.provider).sort()).toEqual(['shared', 'shared-2']);
+    expect(config.provider.shared.options).toEqual({ baseURL: 'https://one.example.com/v1', apiKey: 'one' });
+    expect(config.provider['shared-2'].options).toEqual({ baseURL: 'https://two.example.com/v1', apiKey: 'two' });
+  });
+
+  test('falls back to the remaining provider when the default channel is removed', () => {
+    manager.setChannelsConfig([
+      { id: 'alpha', name: 'Alpha', providerKey: 'alpha', baseUrl: 'https://alpha.example.com/v1', apiKey: 'a', model: 'gpt-4o' },
+      { id: 'beta', name: 'Beta', providerKey: 'beta', baseUrl: 'https://beta.example.com/v1', apiKey: 'b', model: 'claude-sonnet' }
+    ], { preferredChannelId: 'beta' });
+
+    const result = manager.setChannelsConfig([
+      { id: 'alpha', name: 'Alpha', providerKey: 'alpha', baseUrl: 'https://alpha.example.com/v1', apiKey: 'a', model: 'gpt-4o' }
+    ]);
+    const config = manager.readConfig(result.path);
+
+    expect(Object.keys(config.provider)).toEqual(['alpha']);
+    expect(config.model).toBe('alpha/gpt-4o');
+  });
+
   test('restores sentinel backups by removing proxy-created config files', () => {
     const result = manager.setProxyConfig(9876, { model: 'gpt-4o' });
     expect(manager.hasBackup()).toBe(true);

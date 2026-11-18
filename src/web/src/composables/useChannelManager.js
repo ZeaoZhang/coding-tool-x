@@ -689,7 +689,7 @@ export default function useChannelManager(config) {
     if (typeof config.api.applyToSettings !== 'function') return
     dialog.warning({
       title: '写入配置',
-      content: '写入配置后会关闭动态切换并默认使用该渠道，是否继续？',
+      content: config.applyConfirmContent || '写入配置后会关闭动态切换并默认使用该渠道，是否继续？',
       positiveText: '确定',
       negativeText: '取消',
       onPositiveClick: async () => {

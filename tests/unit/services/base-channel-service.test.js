@@ -316,6 +316,55 @@ describe('BaseChannelService', () => {
     });
   });
 
+  describe('allowMultipleEnabled', () => {
+    class MultiService extends BaseChannelService {
+      constructor(options = {}) {
+        super({
+          platform: 'test',
+          channelsFilePath: channelsFile,
+          allowMultipleEnabled: true,
+          ...options
+        });
+        this.applied = [];
+      }
+      _applyToNativeSettings(channel) { this.applied.push(channel.id); }
+    }
+
+    it('keeps every enabled channel when proxy is off', () => {
+      const svc = new MultiService({ isProxyRunning: () => false });
+      svc.createChannel({ name: 'Ch1', enabled: true });
+      svc.createChannel({ name: 'Ch2', enabled: true });
+
+      const enabled = svc.getChannels().channels.filter(channel => channel.enabled);
+      expect(enabled.map(channel => channel.name)).toEqual(['Ch1', 'Ch2']);
+    });
+
+    it('keeps other channels enabled when enabling one more', () => {
+      const svc = new MultiService({ isProxyRunning: () => false });
+      const ch1 = svc.createChannel({ name: 'Ch1', enabled: true });
+      const ch2 = svc.createChannel({ name: 'Ch2', enabled: false });
+
+      svc.updateChannel(ch2.id, { enabled: true });
+
+      const data = svc.getChannels();
+      expect(data.channels.find(channel => channel.id === ch1.id).enabled).toBe(true);
+      expect(data.channels.find(channel => channel.id === ch2.id).enabled).toBe(true);
+    });
+
+    it('enables the applied channel without disabling the others', () => {
+      const svc = new MultiService({ isProxyRunning: () => false });
+      const ch1 = svc.createChannel({ name: 'Ch1', enabled: true });
+      const ch2 = svc.createChannel({ name: 'Ch2', enabled: false });
+
+      svc.applyChannelToSettings(ch2.id);
+
+      const data = svc.getChannels();
+      expect(data.channels.find(channel => channel.id === ch1.id).enabled).toBe(true);
+      expect(data.channels.find(channel => channel.id === ch2.id).enabled).toBe(true);
+      expect(svc.applied).toEqual([ch2.id]);
+    });
+  });
+
   describe('subclass hooks', () => {
     it('should call _onAfterCreate hook', () => {
       let hookCalled = false;
