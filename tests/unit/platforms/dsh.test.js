@@ -89,6 +89,23 @@ describe('DSH platform integration', () => {
     }).native.skills).toBe(path.join(dshHome, 'skills'));
   });
 
+  test('keeps user DSH skill roots when the project root is the home directory', () => {
+    tempHome = makeTempHome();
+    const dshHome = path.join(tempHome, '.dsh');
+    fs.mkdirSync(path.join(dshHome, 'skills', 'home-skill'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dshHome, 'skills', 'home-skill', 'SKILL.md'),
+      '---\nname: home-skill\ndescription: Home\n---\n\nHome body\n'
+    );
+    const skills = listSkills({ paths: { dir: dshHome } }, { scope: 'user', cwd: tempHome });
+    expect(skills.roots).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: path.join(dshHome, 'skills'), source: 'user-dsh' })
+    ]));
+    expect(skills.skills).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'home-skill', source: 'user-dsh' })
+    ]));
+  });
+
   test('daily statistics skip logs untouched since before the requested day', () => {
     tempHome = makeTempHome();
     const paths = dshPaths(tempHome);

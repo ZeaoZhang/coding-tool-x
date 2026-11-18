@@ -59,7 +59,10 @@ function pathIsReadableDirectory(value) {
 function addRoot(roots, rootPath, source) {
   if (typeof rootPath !== 'string' || !rootPath.trim()) return;
   const resolved = path.resolve(rootPath);
-  if (roots.some(root => root.path === resolved)) return;
+  // Project and user roots legitimately overlap when the project root is the
+  // home directory (for example the server cwd). Keep both so a user-scope
+  // scan never loses the user root to a project root with the same path.
+  if (roots.some(root => root.path === resolved && root.source === source)) return;
   roots.push({ path: resolved, source, rank: ROOT_RANKS[source] || ROOT_RANKS.custom });
 }
 
