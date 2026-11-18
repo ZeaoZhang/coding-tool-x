@@ -773,10 +773,9 @@ function getServiceInstance() {
 
 function toPublicChannel(channel) {
   if (!channel || typeof channel !== 'object') return channel;
-  const { apiKey: _apiKey, ...publicChannel } = channel;
   return {
-    ...publicChannel,
-    apiKey: channel.apiKey ? REDACTED_API_KEY : '',
+    ...channel,
+    apiKey: channel.apiKey || '',
     apiKeyConfigured: Boolean(channel.apiKey),
     models: normalizeModels(channel.models, channel.model)
   };

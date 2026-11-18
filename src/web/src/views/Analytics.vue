@@ -517,7 +517,7 @@ const lineOption = computed(() => {
       trigger: 'axis',
       formatter: (params) => {
         const p = params[0]
-        return `<b>${p.axisValue}</b><br>Cumulative: <b>${formatMetric(p.value)}</b>`
+        return `<b>${p.axisValue}</b><br>累计: <b>${formatMetric(p.value)}</b>`
       }
     },
     grid: { left: '3%', right: '4%', bottom: '10%', top: '5%', containLabel: true },
@@ -531,7 +531,7 @@ const lineOption = computed(() => {
       axisLabel: { fontSize: 11, formatter: formatAxisValue }
     },
     series: [{
-      name: `Cumulative ${metricLabel.value}`,
+      name: `累计 ${metricLabel.value}`,
       type: 'line',
       data: cumulative,
       smooth: true,

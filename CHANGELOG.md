@@ -27,6 +27,8 @@
 - **Dependabot 依赖清账** - adm-zip 升至 0.6.1、toml 升至 5.0.1；根目录与 Web 统一 override minimatch 11.0.9、glob 14.0.6、editorconfig 4.0.1，清理 `@vue/test-utils` 开发链上的传递漏洞；根目录与 `src/web` 的 `npm audit` 均为 0
 
 ### Fixed
+- **DSH 渠道 API Key 明文返回** - DSH 渠道列表与同步结果不再返回 `[REDACTED]` 占位符，改为与其他 CLI 一致返回真实 `apiKey`；编辑表单可直接查看/修改原值。
+- **统计累计趋势中文化** - 统计页累计曲线点击提示与图例由 `Cumulative` 改为「累计」，与页面其余中文文案一致。
 - **DSH Profile 渠道同步** - DSH 0.2.x 将渠道配置保存在 `profiles/<name>/cordis.patch.yml` 而不是旧的 `settings.yaml`，导致“同步当前”始终读取空配置。现在会从 profile 的 `llm-pi-ai.providers` 导入渠道，并在新增/启用/应用渠道时写回当前 profile；前端高级设置新增 DSH 渠道配置来源（自动 desktop → web → tui / Desktop / Web / TUI），默认自动并按该优先级选择已安装 profile，保存后立即生效；`DSH_PROFILE` 仍可显式覆盖（包括尚无 provider 的 dsh-tui），同步结果会返回来源 profile。旧版 `settings.yaml` 仍保持兼容。
 - **渠道测速请求分帧** - 测速请求现在显式写入 `Content-Length`，不再使用 chunked 请求体；修复部分 OpenAI 兼容中转拒绝 chunked 后返回畸形响应、界面只显示 `Parse Error: Expected HTTP/, RTSP/ or ICE/` 的问题。OMP 渠道实测已恢复 200 与正常延迟。
 - **DSH Metadata 名称匹配** - 模型 Metadata 自动填充支持运行时模型 ID 与 Models.dev 展示名匹配（并保留唯一前缀匹配），例如 `deepseek-v4.1-flash` 可命中快照中的 `DeepSeek V4.1 Flash 1017`，不再显示“已读取 0 个模型”。

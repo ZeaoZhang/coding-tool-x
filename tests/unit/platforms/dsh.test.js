@@ -678,11 +678,11 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
     expect(synced.data.channels.map(channel => channel.providerKey).sort()).toEqual(['primary', 'secondary']);
     expect(synced.data.current).toEqual(expect.objectContaining({ id: 'existing-primary', providerKey: 'primary' }));
     expect(synced.data.channels).toEqual(expect.arrayContaining([
-      expect.objectContaining({ providerKey: 'primary', enabled: true, apiKey: '[REDACTED]' }),
-      expect.objectContaining({ providerKey: 'secondary', enabled: true, apiKey: '[REDACTED]' })
+      expect.objectContaining({ providerKey: 'primary', enabled: true, apiKey: 'sk-primary' }),
+      expect.objectContaining({ providerKey: 'secondary', enabled: true, apiKey: 'sk-secondary' })
     ]));
-    expect(JSON.stringify(synced.data)).not.toContain('sk-primary');
-    expect(JSON.stringify(synced.data)).not.toContain('sk-secondary');
+    expect(JSON.stringify(synced.data)).toContain('sk-primary');
+    expect(JSON.stringify(synced.data)).toContain('sk-secondary');
     expect(fs.readFileSync(paths.settings, 'utf8')).toBe(settingsText);
   });
 
@@ -1221,7 +1221,7 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
       apiKey: 'sk-primary'
     });
     expect(first.status).toBe('ok');
-    expect(first.data.channel).toEqual(expect.objectContaining({ providerKey: 'primary', apiKey: '[REDACTED]', apiKeyConfigured: true }));
+    expect(first.data.channel).toEqual(expect.objectContaining({ providerKey: 'primary', apiKey: 'sk-primary', apiKeyConfigured: true }));
 
     const edited = channelDriver.update({
       params: { channelId: first.data.channel.id },
@@ -1230,7 +1230,7 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
     });
     expect(edited.status).toBe('ok');
     expect(edited.data.channel.model).toBe('deepseek-reasoner');
-    expect(edited.data.channel.apiKey).toBe('[REDACTED]');
+    expect(edited.data.channel.apiKey).toBe('sk-primary');
 
     const proxyDriver = createProxyDriver({
       paths,
