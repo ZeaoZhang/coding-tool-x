@@ -230,10 +230,11 @@
                   </n-radio>
                 </n-space>
               </n-radio-group>
-              <!-- OMP 完整模型定义编辑器 -->
+              <!-- 平台模型定义编辑器 -->
               <div v-else-if="field.type === 'model-definitions'" class="model-definitions-editor">
                 <div class="model-definitions-toolbar">
                   <n-button
+                    v-if="typeof config.fetchModelMetadataForChannel === 'function'"
                     size="tiny"
                     secondary
                     :loading="state.formData.modelMetadataFetching"
@@ -242,7 +243,7 @@
                     自动获取 Metadata
                   </n-button>
                   <span class="model-catalog-status" role="status" aria-live="polite">
-                    {{ state.formData.modelMetadataStatus || 'Metadata 读取 Models.dev 离线快照；模型列表按钮才探测渠道，普通保存不会启动网络或 OMP 命令。' }}
+                    {{ state.formData.modelMetadataStatus || config.modelMetadataHint || 'Metadata 读取 Models.dev 离线快照；普通保存不会启动网络或模型命令。' }}
                   </span>
                 </div>
                 <n-input
@@ -461,11 +462,11 @@ async function handleModelCatalogAction() {
 async function handleModelMetadataSync() {
   if (typeof config.fetchModelMetadataForChannel !== 'function' || state.formData.modelMetadataFetching) return
   state.formData.modelMetadataFetching = true
-  state.formData.modelMetadataStatus = '正在读取 OMP metadata…'
+  state.formData.modelMetadataStatus = '正在读取模型 metadata…'
   try {
     await config.fetchModelMetadataForChannel(state.formData)
   } catch (error) {
-    state.formData.modelMetadataStatus = error?.response?.data?.error || error?.message || '读取 OMP metadata 失败'
+    state.formData.modelMetadataStatus = error?.response?.data?.error || error?.message || '读取模型 metadata 失败'
   } finally {
     state.formData.modelMetadataFetching = false
   }

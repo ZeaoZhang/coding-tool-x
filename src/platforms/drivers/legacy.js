@@ -1,6 +1,9 @@
 'use strict';
 
 const { buildProxyCliMetadata } = require('../../shared/proxy-driver');
+const {
+  normalizeChannelModelDefinitions
+} = require('../../shared/channel-model-metadata');
 
 const MODULE_PATHS = Object.freeze({
   claude: Object.freeze({
@@ -383,27 +386,17 @@ function createProxyDriver({ platform, capability, requireImpl, manifest = {} })
       const enabledChannels = typeof channelsModule.getEnabledChannels === 'function'
         ? channelsModule.getEnabledChannels()
         : (channelsModule.getChannels?.().channels || []);
-      const allModels = [];
-      const seenModels = new Set();
+      const collectedModels = [];
       for (const channel of enabledChannels) {
-        for (const model of [channel.model, channel.speedTestModel]) {
-          if (typeof model === 'string' && model.trim() && !seenModels.has(model.trim().toLowerCase())) {
-            seenModels.add(model.trim().toLowerCase());
-            allModels.push(model.trim());
-          }
-        }
+        if (Array.isArray(channel.models)) collectedModels.push(...channel.models);
+        collectedModels.push(channel.model, channel.speedTestModel);
+        if (Array.isArray(channel.allowedModels)) collectedModels.push(...channel.allowedModels);
       }
       if (typeof proxyModule?.collectProxyModelList === 'function') {
         const detectedModels = await proxyModule.collectProxyModelList(enabledChannels, { useCacheOnly: true });
-        if (Array.isArray(detectedModels)) {
-          for (const model of detectedModels) {
-            if (typeof model === 'string' && model.trim() && !seenModels.has(model.trim().toLowerCase())) {
-              seenModels.add(model.trim().toLowerCase());
-              allModels.push(model.trim());
-            }
-          }
-        }
+        if (Array.isArray(detectedModels)) collectedModels.push(...detectedModels);
       }
+      const allModels = normalizeChannelModelDefinitions(collectedModels);
       const firstChannel = enabledChannels[0];
       const sync = requireImpl(MODULE_PATHS.opencode.nativeConfig).setProxyConfig(port, {
         model: firstChannel && (firstChannel.model || firstChannel.speedTestModel) || null,

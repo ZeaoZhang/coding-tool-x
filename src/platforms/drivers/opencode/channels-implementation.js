@@ -11,6 +11,7 @@ const {
   selectConfigPath
 } = require('./native-config-implementation');
 const { normalizeGatewaySourceType } = require('../../../shared/proxy-utils');
+const { normalizeChannelModelDefinitions, SUPPORTED_INPUT_TYPES } = require('../../../shared/channel-model-metadata');
 const {
   createSkippedResult,
   isLocalProxyBaseUrl,
@@ -217,6 +218,7 @@ function createChannel(name, baseUrl, apiKey, extraConfig = {}) {
     modelRedirects: extraConfig.modelRedirects || [],
     speedTestModel: extraConfig.speedTestModel || null,
     model: extraConfig.model || null,
+    models: normalizeChannelModelDefinitions(extraConfig.models),
     gatewaySourceType: normalizeGatewaySourceType(extraConfig.gatewaySourceType, 'codex'),
     providerKey: extraConfig.providerKey || null,
     presetId: extraConfig.presetId || null,
@@ -527,6 +529,7 @@ function normalizeOpenCodeChannel(channel = {}) {
     balanceUserId: channel.balanceUserId || null,
     modelRedirects: channel.modelRedirects || [],
     speedTestModel: channel.speedTestModel || null,
+    models: normalizeChannelModelDefinitions(channel.models),
     wireApi: channel.wireApi || 'openai',
     gatewaySourceType: normalizeGatewaySourceType(channel.gatewaySourceType, 'codex'),
     allowedModels: Array.isArray(channel.allowedModels) ? channel.allowedModels : []
@@ -550,6 +553,41 @@ function collectOpenCodeProviderModels(provider = {}) {
     ? Object.keys(provider.models)
     : [];
   return models.map(model => String(model || '').trim()).filter(Boolean);
+}
+
+function collectOpenCodeProviderModelDefinitions(provider = {}) {
+  const entries = provider?.models && typeof provider.models === 'object' && !Array.isArray(provider.models)
+    ? Object.entries(provider.models)
+    : [];
+  const definitions = [];
+  for (const [rawId, model] of entries) {
+    const id = String(rawId || '').trim();
+    if (!id || !model || typeof model !== 'object') continue;
+    const limit = model.limit && typeof model.limit === 'object' ? model.limit : {};
+    const modalities = model.modalities && typeof model.modalities === 'object' ? model.modalities : {};
+    const cost = model.cost && typeof model.cost === 'object' ? model.cost : {};
+    const definition = { id };
+    if (typeof model.name === 'string' && model.name.trim()) definition.name = model.name.trim();
+    if (typeof limit.context === 'number') definition.contextWindow = limit.context;
+    if (typeof limit.output === 'number') definition.maxTokens = limit.output;
+    if (typeof model.reasoning === 'boolean') definition.reasoning = model.reasoning;
+    if (Array.isArray(modalities.input)) {
+      // Channel definitions only carry the modalities both CLIs accept; an
+      // imported audio/video/pdf entry must not fail channel-form validation.
+      const input = modalities.input.filter(item => SUPPORTED_INPUT_TYPES.includes(item));
+      if (input.length > 0) definition.input = input;
+    }
+    if (typeof cost.input === 'number' && typeof cost.output === 'number') {
+      definition.cost = {
+        input: cost.input,
+        output: cost.output,
+        cacheRead: typeof cost.cache_read === 'number' ? cost.cache_read : 0,
+        cacheWrite: typeof cost.cache_write === 'number' ? cost.cache_write : 0
+      };
+    }
+    definitions.push(definition);
+  }
+  return definitions;
 }
 
 function buildOpenCodeSyncCandidate(config, channels) {
@@ -612,6 +650,7 @@ function buildOpenCodeSyncCandidate(config, channels) {
     apiKey,
     wireApi: existing?.wireApi || 'openai',
     model: model || existing?.model || allowedModels[0] || null,
+    models: collectOpenCodeProviderModelDefinitions(provider),
     allowedModels,
     gatewaySourceType: existing?.gatewaySourceType || 'codex',
     credentialSource: credential.value ? credential.source : 'existing-channel'

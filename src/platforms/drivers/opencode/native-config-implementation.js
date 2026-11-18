@@ -4,15 +4,10 @@ const { readJsoncFile, writeJsoncFile } = require('../../../utils/native-config-
 const { NATIVE_PATHS } = require('../../../config/paths');
 const { resolveModelMetadata } = require('../../../config/model-metadata');
 const { resolveModelPricing } = require('../../../server/utils/pricing');
-
-/**
- * 根据模型 ID 查找 limit（context + output）
- * 委托给集中式 model-metadata.js
- */
-function resolveModelLimit(modelId) {
-  const meta = resolveModelMetadata(modelId);
-  return meta ? meta.limit : null;
-}
+const {
+  normalizeChannelModelDefinitions,
+  resolveChannelModelDefinition
+} = require('../../../shared/channel-model-metadata');
 
 /**
  * 根据模型 ID 查找定价信息
@@ -143,34 +138,50 @@ function buildModelsMap(models = [], fallbackModel = '') {
   const seen = new Set();
 
   const add = (value) => {
-    if (typeof value !== 'string') return;
-    const trimmed = value.trim();
-    if (!trimmed) return;
-    const key = trimmed.toLowerCase();
+    const catalog = resolveModelMetadata(typeof value === 'string' ? value : value?.id);
+    const resolved = resolveChannelModelDefinition(value, catalog || {});
+    if (!resolved?.id) return;
+    const key = resolved.id.toLowerCase();
     if (seen.has(key)) return;
     seen.add(key);
 
-    const entry = { name: trimmed };
+    const entry = { name: resolved.name || resolved.id };
 
     // 注入 limit（context + output），供 OpenCode 显示 "X% used"
     // OpenCode schema 要求 limit 必须同时包含 context 和 output
-    const limit = resolveModelLimit(trimmed);
-    if (limit) {
-      entry.limit = { context: limit.context, output: limit.output };
+    if (resolved.contextWindow && resolved.maxTokens) {
+      entry.limit = { context: resolved.contextWindow, output: resolved.maxTokens };
+    }
+
+    // 注入推理能力与输入模态；值来自渠道模型定义，缺省回退 Models.dev 目录
+    if (typeof resolved.reasoning === 'boolean') {
+      entry.reasoning = resolved.reasoning;
+    }
+    if (resolved.input?.length) {
+      entry.modalities = { input: [...resolved.input] };
     }
 
     // 注入定价信息，供 OpenCode 计算 cost
-    const pricing = resolveModelCost(trimmed);
-    if (pricing) {
+    if (resolved.cost) {
       entry.cost = {
-        input: pricing.input,
-        output: pricing.output,
-        cache_read: pricing.cacheRead,
-        cache_write: pricing.cacheCreation
+        input: resolved.cost.input,
+        output: resolved.cost.output,
+        cache_read: resolved.cost.cacheRead,
+        cache_write: resolved.cost.cacheWrite
       };
+    } else {
+      const pricing = resolveModelCost(resolved.id);
+      if (pricing) {
+        entry.cost = {
+          input: pricing.input,
+          output: pricing.output,
+          cache_read: pricing.cacheRead,
+          cache_write: pricing.cacheCreation
+        };
+      }
     }
 
-    map[trimmed] = entry;
+    map[resolved.id] = entry;
   };
 
   if (Array.isArray(models)) {
@@ -200,40 +211,30 @@ function resolveProxyBaseUrl(config) {
 }
 
 function collectChannelModelCandidates(channel = {}) {
-  const seen = new Set();
-  const models = [];
-  const add = (value) => {
-    if (typeof value !== 'string') return;
-    const trimmed = value.trim();
-    if (!trimmed) return;
-    const key = trimmed.toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    models.push(trimmed);
-  };
-
-  add(channel.model);
-  add(channel.speedTestModel);
+  const values = [];
+  if (Array.isArray(channel.models)) values.push(...channel.models);
+  values.push(channel.model, channel.speedTestModel);
 
   if (Array.isArray(channel.allowedModels)) {
-    channel.allowedModels.forEach(add);
+    values.push(...channel.allowedModels);
   }
 
   if (channel.modelConfig && typeof channel.modelConfig === 'object') {
-    add(channel.modelConfig.model);
-    add(channel.modelConfig.opusModel);
-    add(channel.modelConfig.sonnetModel);
-    add(channel.modelConfig.haikuModel);
+    values.push(
+      channel.modelConfig.model,
+      channel.modelConfig.opusModel,
+      channel.modelConfig.sonnetModel,
+      channel.modelConfig.haikuModel
+    );
   }
 
   if (Array.isArray(channel.modelRedirects)) {
     channel.modelRedirects.forEach((rule) => {
-      add(rule?.from);
-      add(rule?.to);
+      values.push(rule?.from, rule?.to);
     });
   }
 
-  return models;
+  return normalizeChannelModelDefinitions(values);
 }
 
 function clearManagedProviders(config) {
@@ -392,7 +393,8 @@ function setProxyConfig(proxyPort, options = {}) {
       }
       usedKeys.add(key);
 
-      const modelsMap = buildModelsMap(ch.models, ch.model);
+      const modelCandidates = collectChannelModelCandidates(ch);
+      const modelsMap = buildModelsMap(modelCandidates, ch.model);
       const modelIds = Object.keys(modelsMap);
 
       if (modelIds.length > 0) {
@@ -471,7 +473,7 @@ function resolveManagedProviderKey(providers = {}, channel = {}) {
 
 function buildManagedChannelModels(channel = {}) {
   const modelCandidates = collectChannelModelCandidates(channel);
-  const fallbackModel = String(channel.model || channel.speedTestModel || modelCandidates[0] || '').trim();
+  const fallbackModel = String(channel.model || channel.speedTestModel || modelCandidates[0]?.id || '').trim();
   const modelsMap = buildModelsMap(modelCandidates, fallbackModel);
   const modelIds = Object.keys(modelsMap);
   if (modelIds.length === 0) {

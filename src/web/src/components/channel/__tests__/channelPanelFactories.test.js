@@ -152,6 +152,85 @@ describe('channel panel model catalogs', () => {
     expect(routingField.description).toContain('API 协议')
   })
 
+  it('exposes model metadata editors for DSH and OpenCode', () => {
+    for (const platform of ['dsh', 'opencode']) {
+      const config = channelPanelFactories[platform]()
+      const field = config.formSections
+        .flatMap(section => section.fields)
+        .find(item => item.type === 'model-definitions')
+
+      expect(field).toEqual(expect.objectContaining({ key: 'modelDefinitionsJson' }))
+      expect(field.validate('[{"id":"model-a","contextWindow":0}]')).toContain('contextWindow')
+      expect(field.validate('[{"id":"model-a","input":["text"]}]')).toBe('')
+    }
+
+    const opencodeField = channelPanelFactories.opencode().formSections
+      .flatMap(section => section.fields)
+      .find(item => item.type === 'model-definitions')
+    const dshField = channelPanelFactories.dsh().formSections
+      .flatMap(section => section.fields)
+      .find(item => item.type === 'model-definitions')
+
+    expect(opencodeField.validate('[{"id":"model-b","contextWindow":1000}]')).toContain('同时配置')
+    expect(opencodeField.validate('[{"id":"model-b","contextWindow":1000,"maxTokens":10}]')).toBe('')
+    expect(dshField.validate('[{"id":"model-b","contextWindow":1000.5}]')).toContain('正整数')
+    expect(dshField.validate('[{"id":"model-b","reasoningEfforts":{"turbo":"turbo"}}]')).toContain('不支持档位')
+    expect(dshField.validate('[{"id":"model-b","reasoningEfforts":{"off":null}}]')).toContain('至少需要一个')
+    expect(dshField.validate('[{"id":"model-b","reasoningEfforts":{"high":""}}]')).toContain('必须是字符串')
+    expect(dshField.validate('[{"id":"model-b","reasoningEfforts":{"high":"high"}}]')).toBe('')
+  })
+
+  it('saves DSH definitions merged with the selected model list', async () => {
+    const config = channelPanelFactories.dsh()
+    const form = {
+      ...config.getInitialForm(),
+      name: 'Metadata provider',
+      providerKey: 'metadata-provider',
+      baseUrl: 'https://api.example.test/v1',
+      apiKey: 'sk-metadata',
+      model: 'model-a',
+      models: ['model-a', 'model-b'],
+      modelDefinitionsJson: JSON.stringify([
+        { id: 'model-a', contextWindow: 64000, maxTokens: 8192 }
+      ])
+    }
+
+    await config.api.create(form)
+
+    expect(createDshChannel).toHaveBeenCalledWith(expect.objectContaining({
+      models: [
+        expect.objectContaining({ id: 'model-a', contextWindow: 64000, maxTokens: 8192 }),
+        'model-b'
+      ]
+    }))
+  })
+
+  it('saves OpenCode model metadata definitions', async () => {
+    const config = channelPanelFactories.opencode()
+    const form = {
+      ...config.getInitialForm(),
+      name: 'Metadata provider',
+      providerKey: 'metadata-provider',
+      baseUrl: 'https://api.example.test/v1',
+      apiKey: 'sk-metadata',
+      model: 'model-a',
+      modelDefinitionsJson: JSON.stringify([
+        { id: 'model-a', reasoning: true, input: ['text', 'image'] }
+      ])
+    }
+
+    await config.api.create(form)
+
+    expect(createOpenCodeChannel).toHaveBeenCalledWith(
+      'Metadata provider',
+      'https://api.example.test/v1',
+      'sk-metadata',
+      expect.objectContaining({
+        models: [{ id: 'model-a', reasoning: true, input: ['text', 'image'] }]
+      })
+    )
+  })
+
   it('keeps DSH credentials and model fields in basic information', () => {
     const config = channelPanelFactories.dsh()
     const sections = config.formSections
@@ -161,6 +240,7 @@ describe('channel panel model catalogs', () => {
 
     expect(sections.map(section => section.title)).toEqual([
       '基本信息',
+      '模型 Metadata',
       '模型重定向',
       '调度配置'
     ])
