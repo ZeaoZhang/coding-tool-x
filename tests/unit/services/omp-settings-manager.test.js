@@ -121,6 +121,40 @@ describe('omp-settings-manager OMP models.yml sync', () => {
     expect(settings.modelRoles.default).toBe('ctx-beta/beta-model');
   });
 
+  test('preserves a manually selected managed default across unrelated syncs', () => {
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
+    const channelA = {
+      id: 'channel-a',
+      providerKey: 'alpha',
+      baseUrl: 'https://alpha.example/v1',
+      apiKey: 'sk-alpha',
+      model: 'alpha-model',
+      models: [{ id: 'alpha-model' }]
+    };
+    const channelB = {
+      id: 'channel-b',
+      providerKey: 'beta',
+      baseUrl: 'https://beta.example/v1',
+      apiKey: 'sk-beta',
+      model: 'beta-model',
+      models: [{ id: 'beta-model' }]
+    };
+
+    manager.writeManagedOmpProviders([channelA, channelB]);
+    const edited = yaml.load(fs.readFileSync(paths.settings, 'utf8'));
+    edited.modelRoles.default = 'ctx-beta/beta-model:high';
+    fs.writeFileSync(paths.settings, yaml.dump(edited), 'utf8');
+
+    manager.writeManagedOmpProviders([channelA, channelB]);
+
+    const settings = yaml.load(fs.readFileSync(paths.settings, 'utf8'));
+    expect(settings.modelRoles.default).toBe('ctx-beta/beta-model:high');
+    expect(settings.enabledModels).toEqual(expect.arrayContaining([
+      'ctx-alpha/alpha-model',
+      'ctx-beta/beta-model'
+    ]));
+  });
+
   test('keeps local OMP OAuth models in enabledModels without requiring a base URL', () => {
     const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
 

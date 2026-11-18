@@ -916,21 +916,36 @@ function removeManagedSelectorTree(value) {
   return value;
 }
 
-function applyManagedModelRoles(settings, visibility, mappings, previousState = null, options = {}) {
-  const originalRoles = previousState?.active && previousState.original?.modelRolesHadValue
-    ? previousState.original.modelRoles
-    : settings.modelRoles;
-  const roles = originalRoles && typeof originalRoles === 'object' && !Array.isArray(originalRoles)
-    ? rewriteSelectorTree(cloneJson(originalRoles), mappings.originalToManaged)
+function splitManagedModelRef(ref) {
+  const raw = String(ref || '').trim();
+  const slash = raw.indexOf('/');
+  if (slash <= 0) return null;
+  const providerId = raw.slice(0, slash).trim();
+  const { modelId } = splitModelSelector(raw.slice(slash + 1));
+  if (!providerId || !modelId) return null;
+  return { providerId, modelId };
+}
+
+function isVisibleManagedModel(ref, visibility = {}) {
+  const selected = splitManagedModelRef(ref);
+  if (!selected || !isManagedProviderId(selected.providerId)) return false;
+  const expected = `${selected.providerId}/${selected.modelId}`.toLowerCase();
+  return (visibility.managedEnabledModels || []).some((item) => {
+    const candidate = splitManagedModelRef(item);
+    return Boolean(candidate)
+      && `${candidate.providerId}/${candidate.modelId}`.toLowerCase() === expected;
+  });
+}
+
+function applyManagedModelRoles(settings, visibility, mappings, _previousState = null, options = {}) {
+  const currentRoles = settings.modelRoles && typeof settings.modelRoles === 'object' && !Array.isArray(settings.modelRoles)
+    ? settings.modelRoles
     : {};
-  const originalDefault = String(originalRoles?.default || '');
-  const mappedDefault = rewriteModelSelector(originalDefault, mappings.originalToManaged);
-  const defaultWasMapped = originalDefault && mappedDefault !== originalDefault;
-  const defaultIsManaged = isManagedProviderId(String(roles.default || '').split('/')[0]);
+  const roles = rewriteSelectorTree(cloneJson(currentRoles), mappings.originalToManaged);
   if (visibility.managedDefaultModel && (
     options.forceManagedDefault === true
     || !roles.default
-    || (!defaultWasMapped && !defaultIsManaged)
+    || !isVisibleManagedModel(roles.default, visibility)
   )) {
     roles.default = visibility.managedDefaultModel;
   }
