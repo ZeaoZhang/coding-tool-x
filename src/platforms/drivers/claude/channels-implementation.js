@@ -409,6 +409,10 @@ function getAllChannels() {
   return data.channels;
 }
 
+function getEnabledChannels() {
+  return service.getEnabledChannels();
+}
+
 function getCurrentChannel(channels = getAllChannels()) {
   const activeId = loadActiveChannelId();
   if (activeId) {
@@ -585,6 +589,7 @@ function disableAllChannels() {
 module.exports = {
   configure,
   getAllChannels,
+  getEnabledChannels,
   getCurrentChannel,
   getCurrentSettings,
   createChannel,

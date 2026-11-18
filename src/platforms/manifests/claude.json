@@ -210,14 +210,6 @@
       },
       {
         "method": "POST",
-        "path": "/sessions/:projectName/create",
-        "capability": "sessions",
-        "operation": "createSession",
-        "request": "default",
-        "response": "default"
-      },
-      {
-        "method": "POST",
         "path": "/sessions/:projectName/order",
         "capability": "sessions",
         "operation": "saveSessionOrder",

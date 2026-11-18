@@ -823,6 +823,11 @@ function expandHomePath(input = '') {
   return input;
 }
 
+function getDshDir() {
+  const configured = resolveExistingEnvPath(process.env.DSH_HOME);
+  return configured ? path.resolve(expandHomePath(configured)) : path.join(HOME_DIR, '.dsh');
+}
+
 function pickExistingDir(candidates, fallback) {
   for (const candidate of candidates) {
     if (candidate && fs.existsSync(candidate)) {
@@ -1019,6 +1024,7 @@ function persistOmpAgentPath(agentDir = lastOmpPathResolution?.agentDir, options
 }
 
 const OMP_AGENT_DIR = getOmpAgentDir();
+const DSH_DIR = getDshDir();
 
 // 工具特定的原生配置路径（不改变）
 const NATIVE_PATHS = {
@@ -1090,6 +1096,17 @@ const NATIVE_PATHS = {
     extensions: path.join(OMP_AGENT_DIR, 'extensions'),
     themes: path.join(OMP_AGENT_DIR, 'themes'),
     packages: path.join(OMP_AGENT_DIR, 'packages')
+  },
+
+  // DSH 原生配置
+  dsh: {
+    dir: DSH_DIR,
+    settings: path.join(DSH_DIR, 'settings.yaml'),
+    credentials: path.join(DSH_DIR, '.credentials.yaml'),
+    sessions: path.join(DSH_DIR, 'sessions'),
+    profiles: path.join(DSH_DIR, 'profiles'),
+    patch: path.join(DSH_DIR, 'cordis.patch.yml'),
+    skills: path.join(DSH_DIR, 'skills')
   }
 };
 
@@ -1108,6 +1125,7 @@ module.exports = {
   getClaudeConfigDir,
   getCodexDir,
   getGeminiDir,
+  getDshDir,
   getOpenCodeDataDir,
   getOpenCodeConfigDir,
   getOmpAgentDir,

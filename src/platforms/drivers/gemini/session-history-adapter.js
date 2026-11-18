@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { HOME_DIR } = require('../../../config/paths');
+const { HOME_DIR, PATHS } = require('../../../config/paths');
 const { getGeminiDir } = require('./config');
 
 const HASH_RE = /^[a-f0-9]{64}$/;
@@ -66,22 +66,47 @@ function extractContentText(value) {
 }
 
 /**
+ * Collect project roots already known to ctx/Claude so legacy Gemini storage
+ * hashes can still be shown with a readable path.
+ */
+function loadKnownProjectRoots() {
+  const roots = new Set();
+  try {
+    const workspaces = JSON.parse(fs.readFileSync(PATHS.workspaces, 'utf8'));
+    for (const entry of workspaces?.workspaces || []) {
+      const projectPath = entry?.path || entry?.rootPath;
+      if (typeof projectPath === 'string' && projectPath.trim()) roots.add(projectPath.trim());
+    }
+  } catch (_) {}
+  try {
+    const claude = JSON.parse(fs.readFileSync(path.join(HOME_DIR, '.claude.json'), 'utf8'));
+    for (const projectPath of Object.keys(claude?.projects || {})) {
+      if (typeof projectPath === 'string' && projectPath.trim()) roots.add(projectPath.trim());
+    }
+  } catch (_) {}
+  return [...roots];
+}
+
+/**
  * Load storage-name → project root mapping from projects.json.
  */
 async function loadProjectRootsByStorageName() {
   const projectsPath = path.join(getGeminiDir(), 'projects.json');
+  const map = new Map();
   try {
     const content = await fs.promises.readFile(projectsPath, 'utf8');
     const parsed = JSON.parse(content);
     const projects = parsed && typeof parsed.projects === 'object' ? parsed.projects : {};
-    return new Map(
-      Object.entries(projects)
-        .filter(([, storageName]) => typeof storageName === 'string')
-        .map(([projectRoot, storageName]) => [storageName, projectRoot])
-    );
-  } catch {
-    return new Map();
+    for (const [projectRoot, storageName] of Object.entries(projects)) {
+      if (typeof storageName === 'string') map.set(storageName, projectRoot);
+    }
+  } catch (_) {}
+  // Gemini >= 0.23 only persists sha256(projectRoot) as the storage name.
+  for (const projectRoot of loadKnownProjectRoots()) {
+    const hash = getFilePathHash(projectRoot);
+    if (!map.has(hash)) map.set(hash, projectRoot);
   }
+  return map;
 }
 
 /**
@@ -282,7 +307,10 @@ async function inventory() {
           projectRoot = null;
         }
       }
-      projectRoot = header.projectPath || projectRoot;
+      const headerPath = typeof header.projectPath === 'string' && path.isAbsolute(header.projectPath)
+        ? header.projectPath
+        : null;
+      projectRoot = headerPath || projectRoot;
 
       descriptors.push({
         filePath,
@@ -326,7 +354,10 @@ async function summarize(descriptor) {
       fs.closeSync(fd);
     }
   } catch (_) {}
-  const projectPath = header.projectPath || descriptor.projectRoot || null;
+  const headerPath = typeof header.projectPath === 'string' && path.isAbsolute(header.projectPath)
+    ? header.projectPath
+    : null;
+  const projectPath = headerPath || descriptor.projectRoot || null;
   const projectName = header.projectHash || descriptor.projectName
     || (projectPath ? getFilePathHash(projectPath) : 'unknown');
   return {

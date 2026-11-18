@@ -8,7 +8,8 @@ const FORMAT_IDS = Object.freeze({
   codex: 'codex-skill-v1',
   gemini: 'gemini-skill-v1',
   opencode: 'opencode-skill-v1',
-  omp: 'omp-skill-v1'
+  omp: 'omp-skill-v1',
+  dsh: 'dsh-skill-v1'
 });
 
 function contentToString(content) {

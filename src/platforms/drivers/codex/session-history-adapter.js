@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { getCodexDir } = require('./config');
-const { parseSession, parseSessionSummary } = require('./parser');
+const { parseSession, parseSessionSummary, extractCodexProjectName } = require('./parser');
 
 function configure({ pathContext } = {}) {
   require('./config').configure?.({ pathContext });
@@ -56,23 +56,6 @@ async function scanSessionFiles(projectsDir = null) {
 
   await scanDir(sessionsDir);
   return results;
-}
-
-/**
- * Extract project name from Codex session metadata.
- */
-function extractCodexProjectName(meta) {
-  if (!meta) return 'unknown';
-  if (typeof meta.cwd === 'string' && meta.cwd.trim()) {
-    // Use last directory of cwd as project name
-    const cleaned = meta.cwd.trim().replace(/[/\\]$/, '');
-    if (cleaned) {
-      const parts = cleaned.split(/[/\\]/);
-      const last = parts[parts.length - 1];
-      if (last) return last;
-    }
-  }
-  return 'unknown';
 }
 
 /**

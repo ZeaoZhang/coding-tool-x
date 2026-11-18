@@ -67,6 +67,11 @@ describe('DSH platform integration', () => {
       resourceTypes: expect.objectContaining({ skills: true, commands: false, agents: true, plugins: true })
     }));
     expect(manifest.resourceActions.skills.toggle).toBe(false);
+    expect(manifest.resourceActions.skills.create).toBe(true);
+    expect(manifest.projectResources.skills).toEqual({
+      canonicalRoot: '.dsh/skills',
+      readRoots: ['.dsh/skills', '.agents/skills']
+    });
     expect(manifest.mcpTransports).toEqual(['stdio', 'streamable_http']);
     expect(registry.getPublicDefinition('dsh').mcpTransports).toEqual(['stdio', 'streamable_http']);
     expect(registry.getCapability('dsh', 'projects')).toBe('dsh-projects');
@@ -78,6 +83,10 @@ describe('DSH platform integration', () => {
     tempHome = makeTempHome();
     const dshHome = path.join(tempHome, 'dsh-home');
     expect(registry.resolvePaths('dsh', { homeDir: tempHome, env: { DSH_HOME: dshHome } }).home).toBe(dshHome);
+    expect(registry.resolvePathContext('dsh', {
+      homeDir: tempHome,
+      env: { DSH_HOME: dshHome }
+    }).native.skills).toBe(path.join(dshHome, 'skills'));
   });
 
   test('daily statistics skip logs untouched since before the requested day', () => {
@@ -571,8 +580,9 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
 
     const api = createApiDriver({ paths, platform: 'dsh' });
     const runtime = { getDriver: () => api };
+    const manifest = require('../../../src/platforms/manifests/dsh.json');
     const registry = {
-      resolve: () => ({ projectResources: {} }),
+      resolve: () => ({ projectResources: manifest.projectResources }),
       resolvePathContext: () => ({
         customized: true,
         native: paths,
@@ -584,16 +594,44 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
       })
     };
 
-    const skills = await new SkillService('dsh', {
+    const service = new SkillService('dsh', {
       registry,
       runtime,
       artifactStore: {}
-    }).scanSkills({ scope: 'user', cwd: projectDir });
+    });
+    expect(service.installDir).toBe(path.join(paths.dir, 'skills'));
+    const skills = await service.scanSkills({ scope: 'user', cwd: projectDir });
     expect(skills.skills).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'user-skill', sourceProvider: 'dsh', readonly: true, managed: false })
     ]));
     expect(skills.skills).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'project-skill' })
+    ]));
+
+    service.createCustomSkill({
+      name: 'native-created',
+      directory: 'native-created',
+      description: 'Created in DSH home',
+      content: 'Native body'
+    });
+    expect(fs.existsSync(path.join(paths.dir, 'skills', 'native-created', 'SKILL.md'))).toBe(true);
+    const userCreated = await service.scanSkills({ scope: 'user', cwd: projectDir });
+    expect(userCreated.skills).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'native-created', sourceProvider: 'dsh' })
+    ]));
+
+    service.createCustomSkill({
+      name: 'project-created',
+      directory: 'project-created',
+      description: 'Created in project DSH root',
+      content: 'Project body',
+      scope: 'project',
+      cwd: projectDir
+    });
+    expect(fs.existsSync(path.join(projectDir, '.dsh', 'skills', 'project-created', 'SKILL.md'))).toBe(true);
+    const projectCreated = await service.scanSkills({ scope: 'project', cwd: projectDir });
+    expect(projectCreated.skills).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'project-created', sourceScope: 'project' })
     ]));
 
     const plugins = new PluginsService('dsh', { registry, runtime });

@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('assert');
-const { getPlatformRegistry, getPlatformRuntime } = require('../src/platforms/runtime');
+const { createPlatformContext } = require('../src/server/platform-context');
 
 const CORE_PROJECT_ROUTE_KEYS = new Set([
   'GET /projects',
@@ -36,8 +36,7 @@ function assertCoverage(name, routes, required) {
 }
 
 function run() {
-  const registry = getPlatformRegistry();
-  const runtime = getPlatformRuntime();
+  const { registry, runtime } = createPlatformContext();
   const records = [];
 
   for (const manifest of registry.list({ enabledOnly: true })) {
@@ -46,10 +45,23 @@ function run() {
     assertCoverage(manifest.key, routes, CORE_PROJECT_ROUTE_KEYS);
     assertCoverage(manifest.key, routes, CORE_SESSION_ROUTE_KEYS);
 
-    const apiDriver = runtime.getDriver(manifest.key, 'api');
-    assert(apiDriver, `${manifest.key} API Driver 不可达`);
+    const drivers = new Map();
+    const driverFor = (capability, route) => {
+      const key = `${capability}:${route.operation}`;
+      if (!drivers.has(key)) {
+        drivers.set(key, runtime.getDriver(manifest.key, capability, {
+          config: {},
+          manifest,
+          route,
+          apiRoute: true
+        }));
+      }
+      return drivers.get(key);
+    };
     for (const route of routes) {
-      assert.strictEqual(typeof apiDriver[route.operation], 'function', `${manifest.key} 缺少 ${route.operation}`);
+      const driver = driverFor(route.capability, route);
+      assert(driver, `${manifest.key} ${route.capability} Driver 不可达`);
+      assert.strictEqual(typeof driver[route.operation], 'function', `${manifest.key} 缺少 ${route.operation}`);
       assert.strictEqual(registry.getCapability(manifest.key, route.capability) !== undefined, true, `${manifest.key} 未声明 ${route.capability}`);
     }
 

@@ -8,7 +8,9 @@ const {
   extractMessages,
   extractTokenUsage,
   parseSession,
-  parseSessionMeta
+  parseSessionMeta,
+  parseSessionSummary,
+  extractCodexProjectName
 } = require('../../../src/platforms/drivers/codex/parser');
 
 // ---------------------------------------------------------------------------
@@ -496,6 +498,50 @@ describe('parseSessionMeta', () => {
     const result = parseSessionMeta(filePath);
     // 4 response_item lines (user, assistant, user, function_call)
     expect(result.messageCount).toBe(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseSessionSummary
+// ---------------------------------------------------------------------------
+
+describe('parseSessionSummary', () => {
+  test('derives the project name from the session cwd', () => {
+    const filePath = path.join(testDir, 'summary.jsonl');
+    fs.writeFileSync(filePath, toJSONL([
+      makeSessionMeta({ cwd: '/Users/example/workspace/my-project' }),
+      makeUserMessage('hello')
+    ]));
+
+    const result = parseSessionSummary(filePath, { sessionId: 'fallback-id', mtimeMs: 123 });
+
+    expect(result.session).toEqual(expect.objectContaining({
+      sessionId: 'sess-001',
+      projectName: 'my-project',
+      projectDisplayName: 'my-project',
+      projectFullPath: '/Users/example/workspace/my-project',
+      firstMessage: 'hello',
+      updatedAt: 123
+    }));
+  });
+
+  test('falls back to unknown when cwd is missing', () => {
+    const filePath = path.join(testDir, 'summary-no-cwd.jsonl');
+    fs.writeFileSync(filePath, toJSONL([
+      makeSessionMeta({ cwd: undefined }),
+      makeUserMessage('hello')
+    ]));
+
+    const result = parseSessionSummary(filePath);
+    expect(result.session.projectName).toBe('unknown');
+  });
+});
+
+describe('extractCodexProjectName', () => {
+  test('uses the last path segment and normalizes trailing separators', () => {
+    expect(extractCodexProjectName({ cwd: '/Users/example/project/' })).toBe('project');
+    expect(extractCodexProjectName({ cwd: 'C:\\work\\demo\\' })).toBe('demo');
+    expect(extractCodexProjectName(null)).toBe('unknown');
   });
 });
 

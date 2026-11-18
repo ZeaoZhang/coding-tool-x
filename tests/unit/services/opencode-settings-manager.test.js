@@ -60,6 +60,9 @@ beforeEach(() => {
     filename: MODEL_META_PATH,
     loaded: true,
     exports: {
+      MODEL_METADATA: known,
+      MODEL_ALIASES: {},
+      METADATA_SOURCE: { name: 'test', url: '', lastUpdated: '' },
       resolveModelMetadata: vi.fn((modelId) => {
         return known[modelId] || null;
       })

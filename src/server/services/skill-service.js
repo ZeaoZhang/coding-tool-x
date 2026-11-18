@@ -54,6 +54,7 @@ const CACHE_TTL = 5 * 60 * 1000;
 const MAX_SKILL_DETAIL_BYTES = 128 * 1024;
 const MAX_PREPARED_SKILL_CACHE_ENTRIES = 32;
 const MAX_LOCAL_ARTIFACT_CACHE_ENTRIES = 2048;
+const DSH_SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 function sanitizeRefreshError(value) {
   return String(value || '')
@@ -3261,7 +3262,7 @@ class SkillService {
   }
 
   resolveWritableSkillPath(directory, options = {}) {
-    if (options.scope === 'project') {
+    if (this.platform === 'dsh' || options.scope === 'project') {
       return this.resolveInstallPath(directory, 'skill directory', options);
     }
     return this.resolveStoragePath(directory);
@@ -3581,6 +3582,9 @@ class SkillService {
 
     const normalizedDescription = (description || '').trim();
     const skillName = name || directory;
+    if (this.platform === 'dsh' && !DSH_SKILL_NAME_PATTERN.test(skillName)) {
+      throw new Error('DSH skill name must be lowercase kebab-case');
+    }
 
     // 创建目录
     fs.mkdirSync(dest, { recursive: true });
@@ -3595,11 +3599,16 @@ ${content}
 `;
 
     const projectRoot = scope === 'project' ? this.resolveScopeOptions(options).cwd : null;
+    const nativeDsh = this.platform === 'dsh';
     this._writeSkillFileAtomic(
       path.join(dest, 'SKILL.md'),
       skillMdContent,
-      projectRoot || this.storageDir
+      projectRoot || (nativeDsh ? this.installDir : this.storageDir)
     );
+    if (nativeDsh) {
+      this.clearCache({ removeFile: true });
+      return { success: true, message: '技能创建成功', directory: safeDirectory };
+    }
     const control = this._registerCreatedSkill({
       root: dest,
       directory: safeDirectory,
@@ -3645,13 +3654,24 @@ ${content}
     fs.mkdirSync(dest, { recursive: true });
 
     const projectRoot = scope === 'project' ? this.resolveScopeOptions(options).cwd : null;
-    const targetRoot = projectRoot || this.storageDir;
+    const nativeDsh = this.platform === 'dsh';
+    const targetRoot = projectRoot || (nativeDsh ? this.installDir : this.storageDir);
     for (const file of safeFiles) {
       const filePath = resolveInsideRoot(dest, file.safePath, 'skill file path', { allowHiddenSegments: true });
       const fileContent = file.isBase64
         ? Buffer.from(file.content, 'base64')
         : Buffer.from(file.content, 'utf8');
       this._writeSkillFileAtomic(filePath, fileContent, targetRoot);
+    }
+
+    if (nativeDsh) {
+      this.clearCache({ removeFile: true });
+      return {
+        success: true,
+        message: '技能创建成功',
+        directory: safeDirectory,
+        fileCount: files.length
+      };
     }
 
     const control = this._registerCreatedSkill({

@@ -227,7 +227,8 @@ function getDefaultNativePaths(platform, homeDir, env, rootOverride) {
         credentials: path.join(root, '.credentials.yaml'),
         sessions: path.join(root, 'sessions'),
         profiles: path.join(root, 'profiles'),
-        patch: path.join(root, 'cordis.patch.yml')
+        patch: path.join(root, 'cordis.patch.yml'),
+        skills: path.join(root, 'skills')
       };
     default:
       return { dir: homeDir };

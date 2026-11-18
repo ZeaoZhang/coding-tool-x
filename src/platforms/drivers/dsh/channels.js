@@ -77,6 +77,7 @@ function createDriver(context = {}) {
     getCliMetadata: () => ({ ...(context.manifest?.channelCli || {}) }),
     list: request => withResult(request, 'list', () => implementation.getChannels()),
     getChannels: () => implementation.getChannels().channels,
+    enabled: request => withResult(request, 'enabled', () => ({ channels: implementation.getEnabledChannels() })),
     getEnabled: request => withResult(request, 'enabled', () => ({ channels: implementation.getEnabledChannels() })),
     getEnabledChannels: () => implementation.getEnabledChannels(),
     poolStatus: request => withResult(request, 'poolStatus', () => ({ scheduler: getSchedulerState('dsh') })),

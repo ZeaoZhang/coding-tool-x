@@ -36,7 +36,7 @@ const INVENTORY_PARSE_BATCH_SIZE = 8;
 /** @type {number} Maximum number of files parsed concurrently */
 const INVENTORY_PARSE_CONCURRENCY = 2;
 const SUMMARY_REFRESH_CONCURRENCY = 8;
-const SUMMARY_VERSION = 1;
+const SUMMARY_VERSION = 2;
 // A relational `instr()` scan over 200k user messages costs ~115ms on a warm
 // local SQLite file; FTS5 trigram is only worth the round trip above this
 // point. Below it the scan cannot drift from the rows it queries.

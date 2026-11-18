@@ -40,7 +40,7 @@
   "mcpTransports": ["stdio", "streamable_http"],
   "resourceActions": {
     "skills": {
-      "create": false,
+      "create": true,
       "repositories": true,
       "import": false,
       "refresh": true,
@@ -58,6 +58,22 @@
   "agentCapabilities": {
     "projectScope": false,
     "repoOperations": false
+  },
+  "projectResources": {
+    "instruction": {
+      "path": null
+    },
+    "skills": {
+      "canonicalRoot": ".dsh/skills",
+      "readRoots": [
+        ".dsh/skills",
+        ".agents/skills"
+      ]
+    },
+    "mcp": {
+      "path": null,
+      "format": "none"
+    }
   },
   "api": {
     "prefix": "dsh",

@@ -82,7 +82,8 @@ function resolvePaths(context = {}) {
     credentials: paths.credentials || path.join(home, '.credentials.yaml'),
     sessions: paths.sessions || path.join(home, 'sessions'),
     profiles: paths.profiles || path.join(home, 'profiles'),
-    patch: paths.patch || path.join(home, 'cordis.patch.yml')
+    patch: paths.patch || path.join(home, 'cordis.patch.yml'),
+    skills: paths.skills || path.join(home, 'skills')
   };
   const installAnchor = paths.installAnchor || context.installAnchor || process.env.DSH_INSTALL_ANCHOR;
   const installRoot = paths.installRoot || context.installRoot || process.env.DSH_INSTALL_ROOT || resolveDshInstallRoot(context);

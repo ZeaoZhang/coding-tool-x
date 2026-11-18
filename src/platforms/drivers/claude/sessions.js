@@ -1,6 +1,7 @@
 'use strict';
 
 const { createCapabilityDriver } = require('../../../shared/capability-driver');
+const { batchDeleteSessions } = require('../../../shared/session-batch-delete');
 
 function createDriver(context = {}) {
   return createCapabilityDriver({
@@ -22,6 +23,14 @@ function createDriver(context = {}) {
       messages: 'getSessionMessages'
     },
     customMethods: {
+      batchDelete: async (service, projectName, sessionIds, options = {}) => {
+        const result = await batchDeleteSessions({
+          sessionIds,
+          deleteOne: sessionId => service.deleteSession(options.config || {}, projectName, sessionId)
+        });
+        context.sessionHistoryIndex?.invalidateSource('claude');
+        return result;
+      },
       // HTTP launch returns a copyable command; CLI resume keeps spawning.
       launchCommand: (service, sessionId, options = {}) => service.getSessionLaunchCommand(sessionId, {
         fork: options.fork === true,

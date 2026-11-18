@@ -57,6 +57,24 @@ function extractSessionMeta(lines) {
 }
 
 /**
+ * Extract project name from Codex session metadata.
+ * @param {Object} meta - normalized session metadata
+ * @returns {string} last cwd segment, or 'unknown'
+ */
+function extractCodexProjectName(meta) {
+  if (!meta) return 'unknown';
+  if (typeof meta.cwd === 'string' && meta.cwd.trim()) {
+    const cleaned = meta.cwd.trim().replace(/[/\\]$/, '');
+    if (cleaned) {
+      const parts = cleaned.split(/[/\\]/);
+      const last = parts[parts.length - 1];
+      if (last) return last;
+    }
+  }
+  return 'unknown';
+}
+
+/**
  * 提取对话消息
  * @param {Array} lines - JSONL 行数组
  * @returns {Array} 消息数组
@@ -385,8 +403,12 @@ function parseSessionSummary(filePath, { sessionId = null, mtimeMs = null } = {}
         extraJson: JSON.stringify({ cwd: meta.cwd || null })
       }
     };
-  } catch (_) {
-    return null;
+  } catch (error) {
+    // File-level failures are expected (removed, unreadable, partially written
+    // rollouts). Programming errors such as an undefined helper must surface
+    // instead of silently degrading every summary to projectName=unknown.
+    if (error && (error.code || error instanceof SyntaxError)) return null;
+    throw error;
   } finally {
     if (fd !== undefined) {
       try { fs.closeSync(fd); } catch (_) {}
@@ -397,6 +419,7 @@ function parseSessionSummary(filePath, { sessionId = null, mtimeMs = null } = {}
 module.exports = {
   readJSONL,
   extractSessionMeta,
+  extractCodexProjectName,
   extractMessages,
   extractTokenUsage,
   parseSession,

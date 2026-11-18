@@ -1,6 +1,7 @@
 'use strict';
 
 const { createCapabilityDriver } = require('../../../shared/capability-driver');
+const { batchDeleteSessions } = require('../../../shared/session-batch-delete');
 
 function createDriver(context = {}) {
   return createCapabilityDriver({
@@ -26,6 +27,14 @@ function createDriver(context = {}) {
       messages: 'getSessionMessages'
     },
     customMethods: {
+      batchDelete: async (service, projectName, sessionIds) => {
+        const result = await batchDeleteSessions({
+          sessionIds,
+          deleteOne: sessionId => service.deleteSession(sessionId)
+        });
+        context.sessionHistoryIndex?.invalidateSource('gemini');
+        return result;
+      },
       search: (service, projectName, keyword, contextLength, options = {}) => service.searchSessions(
         keyword,
         contextLength,

@@ -10,7 +10,8 @@ const ADAPTER_PATHS = Object.freeze({
 function optionalAdapter(name) {
   try {
     return require(ADAPTER_PATHS[name]);
-  } catch (_) {
+  } catch (error) {
+    console.warn(`[SessionHistory] Failed to load ${name} session adapter:`, error?.message || error);
     return {
       inventory: async () => [],
       summarize: async descriptor => ({ sessionId: descriptor?.sessionId || null }),

@@ -97,6 +97,32 @@ function createCapabilityDriver({
       }
     };
   }
+  // The shared session index owns outline generation for every CLI that uses
+  // it. Drivers with a native outline implementation (OpenCode) keep theirs.
+  const sessionHistoryIndex = injected.sessionHistoryIndex
+    || injected.dependencies?.sessionHistoryIndex
+    || context.sessionHistoryIndex;
+  if (
+    capability === 'sessions'
+    && typeof driver.outline !== 'function'
+    && typeof sessionHistoryIndex?.getSessionOutline === 'function'
+  ) {
+    driver.outline = request => {
+      const sessionId = request?.params?.sessionId || request?.sessionId;
+      if (!sessionId) return unsupported(platform, capability, 'outline');
+      const options = request?.config ? { config: request.config } : {};
+      if (request?.query?.fresh === '1' || request?.query?.force === '1') options.force = true;
+      try {
+        const value = sessionHistoryIndex.getSessionOutline(platform, sessionId, options);
+        const wrap = result => ok(platform, capability, 'outline', result);
+        return value && typeof value.then === 'function'
+          ? value.then(wrap).catch(error => failed(platform, capability, 'outline', error))
+          : wrap(value);
+      } catch (error) {
+        return failed(platform, capability, 'outline', error);
+      }
+    };
+  }
   Object.defineProperty(driver, '_service', { value: load, enumerable: false });
   return driver;
 }

@@ -48,12 +48,6 @@ export async function forkSession(projectName, sessionId, channel = 'claude', op
   return response.data
 }
 
-export async function createSession(projectName, toolType = 'claude') {
-  // 新建会话统一走 Claude 通用 sessions API，由 toolType 区分实际 CLI 类型
-  const response = await client.post(`/sessions/${projectName}/create`, { toolType })
-  return response.data
-}
-
 export async function launchSession(projectName, sessionId, fork = false, channel = 'claude') {
   const prefix = getChannelPrefix(channel)
   const response = await client.post(`${prefix}/sessions/${projectName}/${sessionId}/launch`, {

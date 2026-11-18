@@ -285,19 +285,27 @@ const simpleFormData = ref({
   content: ''
 })
 
-const simpleRules = {
+const isDshPlatform = computed(() => props.platform === 'dsh')
+
+const simpleRules = computed(() => ({
   directory: [
     { required: true, message: '请输入目录名称', trigger: 'blur' },
-    {
-      pattern: /^[a-zA-Z0-9_-]+$/,
-      message: '只能包含英文、数字、横杠和下划线',
-      trigger: 'blur'
-    }
+    isDshPlatform.value
+      ? {
+        pattern: /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+        message: 'DSH 技能名称只能包含小写字母、数字和横杠',
+        trigger: 'blur'
+      }
+      : {
+        pattern: /^[a-zA-Z0-9_-]+$/,
+        message: '只能包含英文、数字、横杠和下划线',
+        trigger: 'blur'
+      }
   ],
   content: [
     { required: true, message: '请输入技能内容', trigger: 'blur' }
   ]
-}
+}))
 
 // 高级模式表单
 const advancedFormRef = ref(null)
@@ -306,16 +314,22 @@ const advancedFormData = ref({
   files: []
 })
 
-const advancedRules = {
+const advancedRules = computed(() => ({
   directory: [
     { required: true, message: '请输入目录名称', trigger: 'blur' },
-    {
-      pattern: /^[a-zA-Z0-9_-]+$/,
-      message: '只能包含英文、数字、横杠和下划线',
-      trigger: 'blur'
-    }
+    isDshPlatform.value
+      ? {
+        pattern: /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+        message: 'DSH 技能名称只能包含小写字母、数字和横杠',
+        trigger: 'blur'
+      }
+      : {
+        pattern: /^[a-zA-Z0-9_-]+$/,
+        message: '只能包含英文、数字、横杠和下划线',
+        trigger: 'blur'
+      }
   ]
-}
+}))
 
 const submitting = ref(false)
 
@@ -484,7 +498,9 @@ async function submitSimpleMode() {
     }, props.platform)
 
     if (result.success) {
-      message.success('技能已缓存，当前为关闭状态，审批后可启用')
+      message.success(isDshPlatform.value
+        ? '技能已创建，DSH 会自动发现并加载'
+        : '技能已缓存，当前为关闭状态，审批后可启用')
       emit('created')
       handleClose()
     } else {
@@ -522,7 +538,9 @@ async function submitAdvancedMode() {
     }, props.platform)
 
     if (result.success) {
-      message.success(`技能已缓存，当前为关闭状态，包含 ${result.fileCount} 个文件`)
+      message.success(isDshPlatform.value
+        ? `技能已创建，DSH 会自动发现并加载（${result.fileCount} 个文件）`
+        : `技能已缓存，当前为关闭状态，包含 ${result.fileCount} 个文件`)
       emit('created')
       handleClose()
     } else {

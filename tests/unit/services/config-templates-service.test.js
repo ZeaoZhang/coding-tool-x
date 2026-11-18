@@ -407,7 +407,8 @@ describe('config-templates-service persistence and discovery', () => {
       codex: [{ directory: 'skill-codex', name: 'skill-codex', description: 'Codex skill', repoOwner: null, repoName: null, repoBranch: null }],
       gemini: [{ directory: 'skill-gemini', name: 'Skill Gemini', description: '', repoOwner: null, repoName: null, repoBranch: null }],
       opencode: [{ directory: 'skill-opencode', name: 'Skill OpenCode', description: '', repoOwner: null, repoName: null, repoBranch: null }],
-      omp: [{ directory: 'skill-omp', name: 'Skill OMP', description: 'OMP skill', repoOwner: null, repoName: null, repoBranch: null }]
+      omp: [{ directory: 'skill-omp', name: 'Skill OMP', description: 'OMP skill', repoOwner: null, repoName: null, repoBranch: null }],
+      dsh: []
     });
     expect(result.agents).toEqual([
       expect.objectContaining({

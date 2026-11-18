@@ -265,6 +265,39 @@ describe('gemini-sessions project discovery and querying', () => {
     ]);
   });
 
+  test('resolves legacy hash storage names from known project roots', async () => {
+    const projectPath = path.join(homeDir, 'workspace', 'legacy-app');
+    fs.mkdirSync(projectPath, { recursive: true });
+    const projectHash = hashPath(projectPath);
+    writeJson(path.join(homeDir, '.claude.json'), {
+      projects: { [projectPath]: { allowedTools: [] } }
+    });
+    const sessionId = 'd5bee61b-bcdf-406c-ba9a-51700c608d27';
+    createGeminiJsonlSession(
+      projectHash,
+      'session-2026-05-16T13-50-d5bee61b.jsonl',
+      {
+        sessionId,
+        projectHash,
+        projectPath: projectHash,
+        lastUpdated: '2026-05-16T13:50:39.855Z'
+      },
+      [{ type: 'user', content: 'hash path', timestamp: '2026-05-16T13:51:00.000Z' }]
+    );
+
+    const adapter = require('../../../src/platforms/drivers/gemini/session-history-adapter');
+    const [descriptor] = await adapter.inventory();
+
+    expect(descriptor).toMatchObject({ sessionId, projectName: projectHash, projectRoot: projectPath });
+    const summary = await adapter.summarize(descriptor);
+    expect(summary.session).toMatchObject({
+      sessionId,
+      projectName: projectHash,
+      projectDisplayName: 'legacy-app',
+      projectFullPath: projectPath
+    });
+  });
+
   test('groups multiple files for one native session id before choosing the newest descriptor', async () => {
     const sessionId = 'd5bee61b-bcdf-406c-ba9a-51700c608d26';
     createGeminiJsonlSession(
