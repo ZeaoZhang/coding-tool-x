@@ -61,7 +61,7 @@ beforeEach(() => {
   mockGetStatistics.mockReturnValue({ lastUpdated: '2026-07-08T00:00:00.000Z', byToolType: {} });
   mockGetDailyStatistics.mockReturnValue({ date: '2026-07-08', byToolType: {} });
   mockGetTodayStatistics.mockReturnValue({ date: '2026-07-08', byToolType: {} });
-  mockGetAllSessions.mockReturnValue([]);
+  mockGetAllSessions.mockResolvedValue([]);
   mockNormalizeUsageTokens.mockImplementation((type, tokens = {}) => ({
     input: tokens.input || 0,
     output: tokens.output || 0,
@@ -88,7 +88,7 @@ afterEach(() => {
 });
 
 describe('omp-statistics-service', () => {
-  test('uses shared OMP statistics when they exist', () => {
+  test('uses shared OMP statistics when they exist', async () => {
     mockGetStatistics.mockReturnValue({
       lastUpdated: '2026-07-08T01:00:00.000Z',
       byToolType: {
@@ -103,7 +103,7 @@ describe('omp-statistics-service', () => {
     });
 
     const service = loadService();
-    const result = service.getStatistics();
+    const result = await service.getStatistics();
 
     expect(result.source).toBe('shared-stats');
     expect(result.global.totalRequests).toBe(2);
@@ -111,14 +111,14 @@ describe('omp-statistics-service', () => {
     expect(mockGetAllSessions).not.toHaveBeenCalled();
   });
 
-  test('falls back to OMP session-derived summary statistics', () => {
-    mockGetAllSessions.mockReturnValue([
+  test('falls back to OMP session-derived summary statistics', async () => {
+    mockGetAllSessions.mockResolvedValue([
       {
         sessionId: 's1',
         provider: 'openai',
         model: 'gpt-5',
         mtime: '2026-07-08T02:00:00.000Z',
-        usage: { input: 100, output: 50, cached: 10, reasoning: 5, total: 165 }
+        tokens: { input: 100, output: 50, cached: 10, reasoning: 5, total: 165, cost: 0.5 }
       },
       {
         sessionId: 's2',
@@ -130,7 +130,7 @@ describe('omp-statistics-service', () => {
     ]);
 
     const service = loadService();
-    const result = service.getStatistics();
+    const result = await service.getStatistics();
 
     expect(result.source).toBe('sessions');
     expect(result.global.totalRequests).toBe(2);
@@ -138,14 +138,15 @@ describe('omp-statistics-service', () => {
     expect(result.byChannel.openai).toMatchObject({
       name: 'openai',
       requests: 2,
-      tokens: expect.objectContaining({ total: 195 })
+      tokens: expect.objectContaining({ total: 195 }),
+      cost: 0.5
     });
     expect(result.byModel['gpt-5'].tokens.total).toBe(165);
     expect(result.byModel['gpt-5-mini'].tokens.total).toBe(30);
   });
 
-  test('falls back to OMP session-derived daily statistics', () => {
-    mockGetAllSessions.mockReturnValue([
+  test('falls back to OMP session-derived daily statistics', async () => {
+    mockGetAllSessions.mockResolvedValue([
       {
         sessionId: 's1',
         provider: 'openai',
@@ -163,7 +164,7 @@ describe('omp-statistics-service', () => {
     ]);
 
     const service = loadService();
-    const result = service.getDailyStatistics('2026-07-08');
+    const result = await service.getDailyStatistics('2026-07-08');
 
     expect(result.source).toBe('sessions');
     expect(result.date).toBe('2026-07-08');
@@ -175,10 +176,10 @@ describe('omp-statistics-service', () => {
     expect(result.byModel['gpt-5'].tokens.total).toBe(150);
   });
 
-  test('marks OMP statistics as empty when shared stats and sessions have no usage', () => {
+  test('marks OMP statistics as empty when shared stats and sessions have no usage', async () => {
     const service = loadService();
 
-    expect(service.getStatistics()).toMatchObject({
+    await expect(service.getStatistics()).resolves.toMatchObject({
       source: 'empty',
       global: {
         totalRequests: 0,
@@ -188,7 +189,7 @@ describe('omp-statistics-service', () => {
       byChannel: {},
       byModel: {}
     });
-    expect(service.getDailyStatistics('2026-07-08')).toMatchObject({
+    await expect(service.getDailyStatistics('2026-07-08')).resolves.toMatchObject({
       date: '2026-07-08',
       source: 'empty',
       summary: {

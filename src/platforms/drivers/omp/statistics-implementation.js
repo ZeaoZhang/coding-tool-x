@@ -172,17 +172,28 @@ function addSessionUsage(entry, session) {
   return true;
 }
 
-function readSessionUsage() {
+async function readSessionUsage() {
   try {
     const { getAllSessions } = require('./sessions-implementation');
-    const sessions = getAllSessions();
-    return Array.isArray(sessions) ? sessions : [];
+    const sessions = await getAllSessions();
+    return Array.isArray(sessions)
+      ? sessions.map(session => ({
+        provider: session.provider,
+        model: session.model,
+        timestamp: session.timestamp,
+        mtime: session.mtime,
+        mtimeMs: session.mtimeMs,
+        usage: session.usage || session.tokens,
+        tokens: session.tokens,
+        cost: session.cost || session.usage?.cost || session.tokens?.cost
+      }))
+      : [];
   } catch {
     return [];
   }
 }
 
-function buildSessionDerivedStatistics(sessions = readSessionUsage()) {
+function buildSessionDerivedStatistics(sessions = []) {
   const globalEntry = initAggregateEntry('OMP Sessions');
   const byChannel = {};
   const byModel = {};
@@ -226,7 +237,7 @@ function buildSessionDerivedStatistics(sessions = readSessionUsage()) {
   };
 }
 
-function buildSessionDerivedDailyStatistics(date, sessions = readSessionUsage()) {
+function buildSessionDerivedDailyStatistics(date, sessions = []) {
   const globalEntry = initAggregateEntry('OMP Sessions');
   const byChannel = {};
   const byModel = {};
@@ -288,21 +299,24 @@ function recordRequest(requestData = {}) {
   });
 }
 
-function getStatistics() {
+async function getStatistics() {
   const shared = buildSummaryStatistics(getSharedStatistics());
-  return hasSummaryData(shared) ? shared : buildSessionDerivedStatistics();
+  return hasSummaryData(shared) ? shared : buildSessionDerivedStatistics(await readSessionUsage());
 }
 
-function getDailyStatistics(date) {
+async function getDailyStatistics(date) {
   const shared = buildDailyStatistics(getSharedDailyStatistics(date), date);
-  return hasDailyData(shared) ? shared : buildSessionDerivedDailyStatistics(date);
+  return hasDailyData(shared) ? shared : buildSessionDerivedDailyStatistics(date, await readSessionUsage());
 }
 
-function getTodayStatistics() {
+async function getTodayStatistics() {
   const shared = buildDailyStatistics(getSharedTodayStatistics());
   return hasDailyData(shared)
     ? shared
-    : buildSessionDerivedDailyStatistics(shared.date || new Date().toISOString().slice(0, 10));
+    : buildSessionDerivedDailyStatistics(
+      shared.date || new Date().toISOString().slice(0, 10),
+      await readSessionUsage()
+    );
 }
 
 module.exports = {
