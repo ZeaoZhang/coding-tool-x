@@ -88,6 +88,39 @@ describe('omp-settings-manager OMP models.yml sync', () => {
     expect(settings.enabledModels).toEqual(['ctx-demo/gpt-demo', 'ctx-demo/gpt-demo-mini']);
   });
 
+  test('switches the managed default when a newly enabled channel is preferred', () => {
+    const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
+    const channelA = {
+      id: 'channel-a',
+      providerKey: 'alpha',
+      baseUrl: 'https://alpha.example/v1',
+      apiKey: 'sk-alpha',
+      model: 'alpha-model',
+      models: [{ id: 'alpha-model' }]
+    };
+    const channelB = {
+      id: 'channel-b',
+      providerKey: 'beta',
+      baseUrl: 'https://beta.example/v1',
+      apiKey: 'sk-beta',
+      model: 'beta-model',
+      models: [{ id: 'beta-model' }]
+    };
+
+    manager.writeManagedOmpProviders([channelA]);
+    manager.writeManagedOmpProviders([channelB, channelA], { forceManagedDefault: true });
+
+    const config = yaml.load(fs.readFileSync(paths.modelsYml, 'utf8'));
+    expect(Object.keys(config.providers)).toEqual(expect.arrayContaining(['ctx-alpha', 'ctx-beta']));
+
+    const settings = yaml.load(fs.readFileSync(paths.settings, 'utf8'));
+    expect(settings.enabledModels).toEqual([
+      'ctx-beta/beta-model',
+      'ctx-alpha/alpha-model'
+    ]);
+    expect(settings.modelRoles.default).toBe('ctx-beta/beta-model');
+  });
+
   test('keeps local OMP OAuth models in enabledModels without requiring a base URL', () => {
     const manager = require('../../../src/platforms/drivers/omp/native-config-implementation');
 

@@ -916,7 +916,7 @@ function removeManagedSelectorTree(value) {
   return value;
 }
 
-function applyManagedModelRoles(settings, visibility, mappings, previousState = null) {
+function applyManagedModelRoles(settings, visibility, mappings, previousState = null, options = {}) {
   const originalRoles = previousState?.active && previousState.original?.modelRolesHadValue
     ? previousState.original.modelRoles
     : settings.modelRoles;
@@ -927,7 +927,11 @@ function applyManagedModelRoles(settings, visibility, mappings, previousState = 
   const mappedDefault = rewriteModelSelector(originalDefault, mappings.originalToManaged);
   const defaultWasMapped = originalDefault && mappedDefault !== originalDefault;
   const defaultIsManaged = isManagedProviderId(String(roles.default || '').split('/')[0]);
-  if (visibility.managedDefaultModel && (!roles.default || (!defaultWasMapped && !defaultIsManaged))) {
+  if (visibility.managedDefaultModel && (
+    options.forceManagedDefault === true
+    || !roles.default
+    || (!defaultWasMapped && !defaultIsManaged)
+  )) {
     roles.default = visibility.managedDefaultModel;
   }
   return roles;
@@ -959,7 +963,7 @@ function syncManagedOmpVisibility(channels = [], modelsConfig = { providers: {} 
     ...collectUserDisabledProviders(settings, previousState),
     ...visibility.managedDisabledProviders
   ]);
-  settings.modelRoles = applyManagedModelRoles(settings, visibility, mappings, previousState);
+  settings.modelRoles = applyManagedModelRoles(settings, visibility, mappings, previousState, options);
   const fallbackChains = applyManagedFallbackChains(settings, mappings, previousState);
   if (fallbackChains !== undefined) {
     settings.retry = settings.retry && typeof settings.retry === 'object' && !Array.isArray(settings.retry)

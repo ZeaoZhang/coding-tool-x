@@ -285,11 +285,15 @@ class OmpChannelService extends BaseChannelService {
       writeManagedOmpProviders(this._orderEnabledChannels(channels, channel.id), state?.gateway ? {
         gateway: state.gateway,
         activeChannelId: channel.id,
-        knownProviderIds
-      } : { knownProviderIds });
+        knownProviderIds,
+        forceManagedDefault: true
+      } : { knownProviderIds, forceManagedDefault: true });
       return;
     }
-    writeManagedOmpProviders(this._orderEnabledChannels(channels, channel.id), { knownProviderIds });
+    writeManagedOmpProviders(this._orderEnabledChannels(channels, channel.id), {
+      knownProviderIds,
+      forceManagedDefault: true
+    });
   }
 
   disableAllChannels() {
@@ -299,19 +303,24 @@ class OmpChannelService extends BaseChannelService {
   }
 
   _onAfterCreate(channel, allChannels) {
-    this.syncOmpProvidersForCurrentMode(allChannels, channel?.enabled !== false ? channel?.id : null);
+    const enabled = channel?.enabled !== false;
+    this.syncOmpProvidersForCurrentMode(allChannels, enabled ? channel?.id : null, {
+      forceManagedDefault: enabled
+    });
   }
 
   _onAfterUpdate(oldChannel, newChannel, allChannels) {
     const justEnabled = oldChannel?.enabled === false && newChannel?.enabled !== false;
-    this.syncOmpProvidersForCurrentMode(allChannels, justEnabled ? newChannel.id : null);
+    this.syncOmpProvidersForCurrentMode(allChannels, justEnabled ? newChannel.id : null, {
+      forceManagedDefault: justEnabled
+    });
   }
 
   _onAfterDelete(_channel, allChannels) {
     this.syncOmpProvidersForCurrentMode(allChannels);
   }
 
-  syncOmpProvidersForCurrentMode(channels = this.getChannels().channels, preferredChannelId = null) {
+  syncOmpProvidersForCurrentMode(channels = this.getChannels().channels, preferredChannelId = null, options = {}) {
     if (isManagedOmpModeEnabled()) {
       const state = loadManagedOmpModeState();
       return this.syncManagedOmpProviders(channels, {
@@ -324,7 +333,8 @@ class OmpChannelService extends BaseChannelService {
     }
     const preferred = preferredChannelId || resolveCurrentDirectDefaultChannelId(channels);
     return this.syncManagedOmpProviders(this._orderEnabledChannels(channels, preferred), {
-      knownProviderIds: channels.map(getChannelManagedProviderId)
+      knownProviderIds: channels.map(getChannelManagedProviderId),
+      ...(options.forceManagedDefault === true ? { forceManagedDefault: true } : {})
     });
   }
 

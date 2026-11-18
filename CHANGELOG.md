@@ -27,6 +27,7 @@
 
 ### Fixed
 - **动态切换 CLI** - CLI 现在从平台 manifest 读取 `proxyMode` / `proxyLabels`（新增 `channelCli.multiChannelDirect` 声明），OMP/DSH 的开启与关闭走受管 provider 分支，不再按标准代理流程写入或恢复错误的原生配置；通用与兼容 proxy driver 都暴露同一份元数据。
+- **OMP 多渠道默认模型** - 修复新建或重新启用第二个直连渠道时 OMP `modelRoles.default` 仍停留在旧渠道的问题；创建/启用/应用现在显式请求切换默认模型，同时保留其他已启用 provider 与 `enabledModels`。
 - **OMP 会话统计回退** - 修复 OMP 统计回退调用异步 `getAllSessions()` 未 await，`Array.isArray(Promise)` 恒为 false 导致原生会话统计始终为空的问题；现在按需读取会话索引并仅保留统计字段，今日统计首次约 337ms、后续约 38ms，页面加载约 168ms。
 - **DSH 页面卡顿与进程重启** - `/api/dsh/statistics/today` 不再在无当日会话时解压解析全部历史会话：按会话文件 mtime 预过滤，并逐个会话聚合、及时释放事件数组；`/api/dsh/projects` 改为只读取会话头且跳过首条消息扫描。实测今日统计从 30s 超时/GB 级内存降至 20-30ms，项目列表从 533ms/229MB 降至约 235ms/70MB，DSH 页面加载从 15s 连接重置降至约 0.3s，避免触发 PM2 500M 限制后的重启循环。
 - **DSH 资源管理** - 修复 DSH 插件安装/卸载后 30 秒内插件列表仍返回旧数据（平台 Driver 变更现在会使列表缓存失效），并支持按 `requestedVersion` 重装外置插件；插件安装/卸载直接使用 mutation 返回的 Profile inventory 更新列表并显示即时“安装中”占位卡片，不再等待二次全量刷新；Skills 页面新增 Profile 选择并按 Profile 扫描（profile 级 `customSkillDirs` 等配置生效）；MCP 表单按 Manifest `mcpTransports` 过滤选项（DSH 禁用 `sse`）；DSH 只读 Skills 不再显示无效启停开关。

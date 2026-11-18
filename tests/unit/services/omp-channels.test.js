@@ -277,7 +277,7 @@ describe('managed provider activation lifecycle', () => {
         providerApi: 'openai-codex-responses',
         gatewaySourceType: 'codex'
       })
-    ], { knownProviderIds: ['ctx-edge'] });
+    ], { knownProviderIds: ['ctx-edge'], forceManagedDefault: true });
   });
 
   it('accepts the empty balance token sent with synced OAuth channels', () => {
@@ -411,7 +411,7 @@ describe('managed provider activation lifecycle', () => {
     expect(writeManagedOmpProviders).toHaveBeenCalledWith([
       expect.objectContaining({ id: 'channel-b' }),
       expect.objectContaining({ id: 'channel-a' })
-    ], { knownProviderIds: ['ctx-channel-a', 'ctx-channel-b'] });
+    ], { knownProviderIds: ['ctx-channel-a', 'ctx-channel-b'], forceManagedDefault: true });
   });
 
   it('hands back direct providers while the managed mode marker still exists', () => {
@@ -435,7 +435,7 @@ describe('managed provider activation lifecycle', () => {
     expect(writeManagedOmpProviders).toHaveBeenCalledWith([
       expect.objectContaining({ id: 'channel-b' }),
       expect.objectContaining({ id: 'channel-a' })
-    ], { knownProviderIds: ['ctx-channel-a', 'ctx-channel-b'] });
+    ], { knownProviderIds: ['ctx-channel-a', 'ctx-channel-b'], forceManagedDefault: true });
   });
 
   it('enabling a second direct channel keeps the existing channel enabled', () => {
@@ -452,6 +452,20 @@ describe('managed provider activation lifecycle', () => {
       expect.objectContaining({ id: 'channel-b', enabled: true })
     ]);
   });
+  it('orders a newly enabled second direct channel first for default selection', () => {
+    seedChannels([
+      makeChannel('channel-a'),
+      makeChannel('channel-b', { enabled: false })
+    ]);
+
+    service.updateChannel('channel-b', { enabled: true });
+
+    expect(writeManagedOmpProviders).toHaveBeenLastCalledWith([
+      expect.objectContaining({ id: 'channel-b' }),
+      expect.objectContaining({ id: 'channel-a' })
+    ], { knownProviderIds: ['ctx-channel-a', 'ctx-channel-b'], forceManagedDefault: true });
+  });
+
   it('keeps the persisted gateway secret after managed mode is disabled', () => {
     const first = service.getOrCreateOmpGatewaySecret();
     service.enableManagedOmpMode('channel-a', {
