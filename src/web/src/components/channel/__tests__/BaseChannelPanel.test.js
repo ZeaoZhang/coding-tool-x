@@ -15,6 +15,8 @@ vi.mock('../../../api/channels', async () => {
   return {
     ...actual,
     getChannels: mocks.fetchChannels,
+    getOpenCodeChannels: mocks.fetchChannels,
+    getDshChannels: mocks.fetchChannels,
     getChannelBalances: mocks.getChannelBalances,
     refreshChannelBalance: mocks.refreshChannelBalance
   }
@@ -62,6 +64,38 @@ describe('BaseChannelPanel', () => {
 
 
     expect(mocks.fetchChannels).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('BaseChannelPanel model metadata', () => {
+  it('renders the model definitions editor without an OMP-only fetch button', async () => {
+    mocks.fetchChannels.mockResolvedValue({ channels: [] })
+    mocks.getUIConfig.mockResolvedValue({ channelCollapse: { opencode: {} } })
+    mocks.getChannelBalances.mockResolvedValue({ enabled: false, balances: {} })
+
+    const wrapper = mount(BaseChannelPanel, {
+      props: { type: 'opencode' },
+      attachTo: document.body,
+      global: {
+        plugins: [createPinia()],
+        stubs: { ChannelCard: true }
+      }
+    })
+
+    await vi.waitFor(() => {
+      expect(mocks.fetchChannels).toHaveBeenCalledTimes(1)
+    })
+
+    wrapper.vm.actions.openAddDialog()
+    await vi.waitFor(() => {
+      expect(document.querySelector('.model-definitions-editor textarea')).not.toBeNull()
+    })
+
+    const editor = document.querySelector('.model-definitions-editor')
+    expect(editor.textContent).toContain('留空的字段写入时回退 Models.dev 离线快照')
+    expect(editor.querySelector('.model-definitions-toolbar button')).toBeNull()
+
+    wrapper.unmount()
   })
 })
 

@@ -91,6 +91,9 @@ const CHANNEL_EXTENSION_FIELDS = [
   'apiFormat',
   'proxyUrl'
 ]
+const MODEL_INPUT_TYPES = ['text', 'image']
+const REASONING_EFFORT_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+const MODEL_METADATA_HINT = '留空的字段写入时回退 Models.dev 离线快照；普通保存不会启动网络或模型命令。'
 
 function normalizeChannel(channel) {
   const extra = channel?.extra
@@ -184,6 +187,14 @@ function parseModelDefinitions(value) {
   return parsed
 }
 
+function readModelLimitFields(model = {}) {
+  const limit = model.limit && typeof model.limit === 'object' ? model.limit : {}
+  return {
+    contextWindow: model.contextWindow ?? model.context_window ?? limit.context,
+    maxTokens: model.maxTokens ?? model.max_tokens ?? limit.output
+  }
+}
+
 function validateModelDefinitionsJson(value) {
   try {
     const parsed = parseModelDefinitions(value)
@@ -195,11 +206,105 @@ function validateModelDefinitionsJson(value) {
       const key = id.toLowerCase()
       if (seen.has(key)) return `模型 ID 重复：${id}`
       seen.add(key)
+      const limits = readModelLimitFields(model)
+      for (const [field, value] of Object.entries(limits)) {
+        if (value === undefined) continue
+        const num = Number(value)
+        if (!Number.isInteger(num) || num <= 0) return `${id}: ${field} 必须是正整数`
+      }
+      if (model.reasoning !== undefined && typeof model.reasoning !== 'boolean') {
+        return `${id}: reasoning 必须是布尔值`
+      }
+      if (model.input !== undefined) {
+        if (!Array.isArray(model.input) || model.input.some(item => !MODEL_INPUT_TYPES.includes(item))) {
+          return `${id}: input 仅支持 ${MODEL_INPUT_TYPES.join(' / ')}`
+        }
+      }
+      if (model.reasoningEfforts !== undefined && model.reasoningEfforts !== false) {
+        if (!model.reasoningEfforts || typeof model.reasoningEfforts !== 'object' || Array.isArray(model.reasoningEfforts)) {
+          return `${id}: reasoningEfforts 必须是对象或 false`
+        }
+        const efforts = Object.entries(model.reasoningEfforts)
+        const unknownLevel = efforts.find(([level]) => !REASONING_EFFORT_LEVELS.includes(level))
+        if (unknownLevel) return `${id}: reasoningEfforts 不支持档位 ${unknownLevel[0]}`
+        const invalidWire = efforts.find(([level, wire]) => (
+          level === 'off'
+            ? wire !== null && (typeof wire !== 'string')
+            : typeof wire !== 'string' || !wire.trim()
+        ))
+        if (invalidWire) return `${id}: reasoningEfforts.${invalidWire[0]} 必须是字符串`
+        if (!efforts.some(([level]) => level !== 'off')) {
+          return `${id}: reasoningEfforts 至少需要一个 Off 以外的档位`
+        }
+      }
     }
   } catch (error) {
     return error.message
   }
   return ''
+}
+
+function validateOpenCodeModelDefinitionsJson(value) {
+  const error = validateModelDefinitionsJson(value)
+  if (error) return error
+  try {
+    const parsed = parseModelDefinitions(value)
+    const partial = parsed.find(model => {
+      const limits = readModelLimitFields(model)
+      return (limits.contextWindow === undefined) !== (limits.maxTokens === undefined)
+    })
+    if (partial) {
+      return `${partial.id}: OpenCode 的 limit 需要同时配置 contextWindow 与 maxTokens`
+    }
+  } catch (parseError) {
+    return parseError.message
+  }
+  return ''
+}
+
+function mergeModelDefinitions(definitions = [], modelIds = []) {
+  const byId = new Map()
+  for (const definition of definitions) {
+    const id = String(definition?.id || '').trim()
+    if (!id) continue
+    byId.set(id.toLowerCase(), { ...definition, id })
+  }
+  const merged = []
+  const seen = new Set()
+  for (const value of modelIds) {
+    const id = typeof value === 'string'
+      ? value.trim()
+      : String(value?.id || value?.name || '').trim()
+    if (!id) continue
+    const key = id.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    merged.push(byId.get(key) || id)
+  }
+  for (const [key, definition] of byId) {
+    if (seen.has(key)) continue
+    seen.add(key)
+    merged.push(definition)
+  }
+  return merged
+}
+
+function buildModelMetadataSection({ description, placeholder, validate = validateModelDefinitionsJson } = {}) {
+  return {
+    title: '模型 Metadata',
+    ...(description ? { description } : {}),
+    collapsible: true,
+    fields: [
+      {
+        key: 'modelDefinitionsJson',
+        label: '模型定义',
+        type: 'model-definitions',
+        fullWidth: true,
+        placeholder,
+        validate
+      }
+    ]
+  }
 }
 
 function parseProviderConfig(value) {
@@ -480,6 +585,7 @@ const channelPanelFactories = {
     emptyDescription: '暂无 DSH 渠道',
     showEmptyAction: true,
     emptyActionText: '添加 DSH 渠道',
+    modelMetadataHint: MODEL_METADATA_HINT,
     addTitle: '添加 DSH 渠道',
     editTitle: '编辑 DSH 渠道',
     modalWidth: 600,
@@ -549,6 +655,10 @@ const channelPanelFactories = {
           }
         ]
       },
+      buildModelMetadataSection({
+        description: '可覆盖上下文窗口、推理等级与输入类型（text / image）；保存时写入 DSH settings.yaml 的 llm-pi-ai provider models。',
+        placeholder: '[\n  {\n    "id": "deepseek/deepseek-v4-pro",\n    "contextWindow": 1048576,\n    "maxTokens": 393216,\n    "reasoning": true,\n    "input": ["text"],\n    "reasoningEfforts": { "low": "low", "high": "high" }\n  }\n]'
+      }),
       {
         title: '模型重定向',
         description: '将代理收到的模型名重定向到该渠道的实际模型。',
@@ -568,6 +678,7 @@ const channelPanelFactories = {
       apiKey: '',
       model: '',
       models: [],
+      modelDefinitionsJson: '[]',
       speedTestModel: '',
       modelRedirects: [],
       maxConcurrency: null,
@@ -588,6 +699,7 @@ const channelPanelFactories = {
       models: Array.isArray(channel.models)
         ? channel.models.map(item => typeof item === 'string' ? item : item?.id).filter(Boolean)
         : [],
+      modelDefinitionsJson: formatJson(Array.isArray(channel.models) ? channel.models : [], []),
       speedTestModel: channel.speedTestModel || '',
       modelRedirects: channel.modelRedirects || [],
       maxConcurrency: channel.maxConcurrency ?? null,
@@ -626,7 +738,7 @@ const channelPanelFactories = {
         baseUrl: form.baseUrl,
         apiKey: form.apiKey,
         model: form.model,
-        models: form.models,
+        models: mergeModelDefinitions(parseModelDefinitions(form.modelDefinitionsJson), form.models),
         speedTestModel: form.speedTestModel || null,
         modelRedirects: form.modelRedirects || [],
         maxConcurrency: normalizeConcurrency(form.maxConcurrency),
@@ -639,7 +751,7 @@ const channelPanelFactories = {
         baseUrl: form.baseUrl,
         apiKey: form.apiKey,
         model: form.model,
-        models: form.models,
+        models: mergeModelDefinitions(parseModelDefinitions(form.modelDefinitionsJson), form.models),
         speedTestModel: form.speedTestModel || null,
         modelRedirects: form.modelRedirects || [],
         maxConcurrency: normalizeConcurrency(form.maxConcurrency),
@@ -1567,6 +1679,7 @@ const channelPanelFactories = {
     emptyDescription: '暂无渠道',
     showEmptyAction: true,
     emptyActionText: '添加 OpenCode 渠道',
+    modelMetadataHint: MODEL_METADATA_HINT,
     modalWidth: 600,
     formLabelWidth: 95,
     showApplyButton: false,
@@ -1644,6 +1757,11 @@ const channelPanelFactories = {
           }
         ]
       },
+      buildModelMetadataSection({
+        description: '可覆盖上下文窗口、推理能力（OpenCode 仅支持布尔值）与输入类型（text / image）；保存时写入 opencode.json 的 provider models。',
+        placeholder: '[\n  {\n    "id": "gpt-5.5",\n    "contextWindow": 1050000,\n    "maxTokens": 128000,\n    "reasoning": true,\n    "input": ["text", "image"]\n  }\n]',
+        validate: validateOpenCodeModelDefinitionsJson
+      }),
       {
         title: '模型重定向',
         description: '仅在代理开启时生效，将请求的模型重定向到指定模型',
@@ -1678,6 +1796,7 @@ const channelPanelFactories = {
       websiteUrl: 'https://openrouter.ai',
       model: '',
       gatewaySourceType: 'codex',
+      modelDefinitionsJson: '[]',
       speedTestModel: '',
       modelRedirects: [],
       allowedModels: [],
@@ -1708,6 +1827,7 @@ const channelPanelFactories = {
       websiteUrl: channel.websiteUrl || '',
       model: channel.model || '',
       gatewaySourceType: channel.gatewaySourceType || 'codex',
+      modelDefinitionsJson: formatJson(Array.isArray(channel.models) ? channel.models : [], []),
       speedTestModel: channel.speedTestModel || '',
       modelRedirects: channel.modelRedirects || [],
       allowedModels: channel.allowedModels || [],
@@ -1827,6 +1947,7 @@ const channelPanelFactories = {
             presetId: form.presetId || null,
             websiteUrl: form.websiteUrl || '',
             allowedModels: form.allowedModels || [],
+            models: parseModelDefinitions(form.modelDefinitionsJson),
             ...buildAuthRequestFields(authPayload),
             balanceToken: authPayload.balanceToken,
             balanceUserId: authPayload.balanceUserId
@@ -1850,6 +1971,7 @@ const channelPanelFactories = {
           speedTestModel: form.speedTestModel || null,
           presetId: form.presetId || null,
           allowedModels: form.allowedModels || [],
+          models: parseModelDefinitions(form.modelDefinitionsJson),
           ...buildAuthRequestFields(authPayload),
           balanceToken: authPayload.balanceToken,
           balanceUserId: authPayload.balanceUserId
@@ -2002,21 +2124,10 @@ const channelPanelFactories = {
           }
         ]
       },
-      {
-        title: '模型 Metadata',
+      buildModelMetadataSection({
         description: '自动获取后可直接修改；保存时以当前内容覆盖自动结果',
-        collapsible: true,
-        fields: [
-          {
-            key: 'modelDefinitionsJson',
-            label: '模型定义',
-            type: 'model-definitions',
-            fullWidth: true,
-            placeholder: '[\n  { "id": "gpt-5.5", "reasoning": true, "contextWindow": 1050000 }\n]',
-            validate: validateModelDefinitionsJson
-          }
-        ]
-      },
+        placeholder: '[\n  { "id": "gpt-5.5", "reasoning": true, "contextWindow": 1050000 }\n]'
+      }),
       {
         title: '模型重定向',
         description: '仅在 coding-tool-x 托管 OMP models.yml provider 启用时用于模型选择提示',

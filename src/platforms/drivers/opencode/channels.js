@@ -13,6 +13,7 @@ function createChannelArgs(input, rest) {
     weight: 1,
     maxConcurrency: null,
     model: null,
+    models: [],
     modelRedirects: [],
     speedTestModel: null,
     presetId: null,

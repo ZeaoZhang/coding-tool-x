@@ -14,6 +14,10 @@ const {
   isObject
 } = require('./common');
 const { upsertSyncedChannels } = require('../../../server/services/channel-sync-utils');
+const {
+  normalizeChannelModelDefinitions,
+  resolveChannelModelDefinition
+} = require('../../../shared/channel-model-metadata');
 
 const PROVIDER_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const API_KEY_ENV_PATTERN = /^[A-Z][A-Z0-9_]{0,127}$/;
@@ -60,21 +64,10 @@ function normalizeApiKeyEnv(value, providerKey) {
 }
 
 function normalizeModels(models, fallbackModel) {
-  const values = Array.isArray(models) ? models : [];
-  const normalized = values.map(item => {
-    if (typeof item === 'string') return { id: item.trim() };
-    if (isObject(item)) return { ...item, id: String(item.id || item.name || '').trim() };
-    return null;
-  }).filter(item => item?.id);
+  const normalized = normalizeChannelModelDefinitions(models);
   const fallback = String(fallbackModel || '').trim();
   if (normalized.length === 0 && fallback) normalized.push({ id: fallback });
-  const seen = new Set();
-  return normalized.filter(item => {
-    const key = item.id.toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  }).map(enrichDshModelMetadata);
+  return normalized.map(enrichDshModelMetadata);
 }
 
 function normalizeDshCost(value) {
@@ -127,6 +120,47 @@ function enrichDshModelMetadata(model) {
     enriched.maxTokens = model.limit.output;
   }
   return enriched;
+}
+
+function resolveDshReasoningEfforts(resolved) {
+  if (resolved.reasoningEfforts !== undefined) return resolved.reasoningEfforts;
+  const efforts = Array.isArray(resolved.thinking?.efforts) ? resolved.thinking.efforts : [];
+  if (efforts.length > 0) {
+    const mapped = {};
+    for (const level of efforts) {
+      if (level !== 'off') mapped[level] = level;
+    }
+    // DSH rejects a level set that only offers "off"; fall back to the catalog
+    // capability instead of writing an unusable model entry.
+    if (Object.keys(mapped).length > 0) return mapped;
+  }
+  if (resolved.reasoning === false) return false;
+  return undefined;
+}
+
+/**
+ * Project a channel model definition onto DSH's llm-pi-ai provider model
+ * schema. Channel-only fields (cost, thinking, ...) must not reach
+ * settings.yaml: DSH validates every entry it loads.
+ */
+function toDshNativeModel(model) {
+  const id = String(model?.id || '').trim();
+  if (!id) return null;
+  // Callers pass models already enriched by normalizeModels; resolving again
+  // without catalog metadata keeps one fallback path instead of two.
+  const resolved = resolveChannelModelDefinition(model);
+  if (!resolved) return null;
+  const entry = { id: resolved.id };
+  if (resolved.name) entry.name = resolved.name;
+  if (resolved.contextWindow) entry.contextWindow = resolved.contextWindow;
+  if (resolved.maxTokens) entry.maxTokens = resolved.maxTokens;
+  if (resolved.input?.length) entry.input = [...resolved.input];
+  const reasoningEfforts = resolveDshReasoningEfforts(resolved);
+  if (reasoningEfforts !== undefined) entry.reasoningEfforts = reasoningEfforts;
+  // `compat` is a model-level DSH switch block: pass the author's value through
+  // untouched so syncing native settings does not erase it.
+  if (isObject(model.compat)) entry.compat = { ...model.compat };
+  return entry;
 }
 
 function readActiveMarker() {
@@ -380,7 +414,7 @@ class DshChannelService extends BaseChannelService {
       displayName: channel.name,
       api: channel.providerApi,
       baseURL: baseUrl,
-      models: normalizeModels(models, channel.model)
+      models: normalizeModels(models, channel.model).map(toDshNativeModel).filter(Boolean)
     };
     if (channel.authMode === 'api_key') entry.apiKeyEnv = channel.apiKeyEnv;
     return entry;
@@ -556,7 +590,16 @@ class DshChannelService extends BaseChannelService {
     const settings = this._nativeSettings();
     const llm = isObject(settings['llm-pi-ai']) ? { ...settings['llm-pi-ai'] } : {};
     const providers = isObject(llm.providers) ? { ...llm.providers } : {};
-    const models = channels.flatMap(channel => channel.models.map(model => ({ id: model.id })));
+    const modelEntries = new Map();
+    for (const channel of channels) {
+      for (const model of normalizeModels(channel.models, channel.model)) {
+        const native = toDshNativeModel(model);
+        if (!native) continue;
+        const key = native.id.toLowerCase();
+        if (!modelEntries.has(key)) modelEntries.set(key, native);
+      }
+    }
+    const models = [...modelEntries.values()];
     providers['ctx-dsh-proxy'] = {
       displayName: 'coding-tool-x DSH 动态代理',
       api: 'openai-completions',

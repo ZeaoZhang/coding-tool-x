@@ -767,6 +767,106 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
     expect(fs.readFileSync(paths.settings, 'utf8')).toBe(settingsText);
   });
 
+  test('writes channel model metadata into DSH provider models', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const { readYamlFile } = require('../../../src/platforms/drivers/dsh/common');
+    const channelDriver = createChannelDriver({ paths });
+    const created = channelDriver.create({
+      body: {
+        name: 'Metadata provider',
+        providerKey: 'metadata-provider',
+        providerApi: 'openai-completions',
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'sk-metadata',
+        model: 'deepseek/deepseek-v4-pro',
+        models: [
+          {
+            id: 'deepseek/deepseek-v4-pro',
+            contextWindow: 64000,
+            maxTokens: 8192,
+            reasoning: true,
+            input: ['text', 'image'],
+            thinking: { mode: 'effort', efforts: ['low', 'high'] }
+          },
+          {
+            id: 'explicit-efforts',
+            contextWindow: 32000,
+            maxTokens: 4096,
+            reasoningEfforts: { high: 'high' },
+            compat: { supportsStore: false }
+          }
+        ],
+        enabled: true
+      },
+      route: { capability: 'channels', operation: 'create' }
+    });
+    expect(created.status).toBe('ok');
+
+    const settings = readYamlFile(paths.settings, {});
+    const models = settings['llm-pi-ai'].providers['metadata-provider'].models;
+    expect(models).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'deepseek/deepseek-v4-pro',
+        contextWindow: 64000,
+        maxTokens: 8192,
+        input: ['text', 'image'],
+        reasoningEfforts: { low: 'low', high: 'high' }
+      }),
+      expect.objectContaining({
+        id: 'explicit-efforts',
+        contextWindow: 32000,
+        maxTokens: 4096,
+        reasoningEfforts: { high: 'high' },
+        compat: { supportsStore: false }
+      })
+    ]));
+    expect(models[0]).not.toHaveProperty('thinking');
+    expect(models[0]).not.toHaveProperty('reasoning');
+    expect(models[0]).not.toHaveProperty('cost');
+  });
+
+  test('dynamic proxy provider models carry channel model metadata', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const { readYamlFile } = require('../../../src/platforms/drivers/dsh/common');
+    const implementation = require('../../../src/platforms/drivers/dsh/channels-implementation');
+    const channelDriver = createChannelDriver({ paths });
+    const created = channelDriver.create({
+      body: {
+        name: 'Proxy metadata provider',
+        providerKey: 'proxy-metadata',
+        providerApi: 'openai-completions',
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'sk-proxy-metadata',
+        model: 'deepseek/deepseek-v4-pro',
+        models: [{
+          id: 'deepseek/deepseek-v4-pro',
+          contextWindow: 128000,
+          maxTokens: 16384,
+          reasoning: true,
+          input: ['text']
+        }],
+        enabled: true
+      },
+      route: { capability: 'channels', operation: 'create' }
+    });
+    expect(created.status).toBe('ok');
+
+    implementation.setDshProxyConfig(3456, {});
+
+    const settings = readYamlFile(paths.settings, {});
+    const models = settings['llm-pi-ai'].providers['ctx-dsh-proxy'].models;
+    expect(models).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'deepseek/deepseek-v4-pro',
+        contextWindow: 128000,
+        maxTokens: 16384,
+        input: ['text']
+      })
+    ]));
+  });
+
   test('manages DSH channels and switches native config through the managed proxy', async () => {
     tempHome = makeTempHome();
     const paths = dshPaths(tempHome);

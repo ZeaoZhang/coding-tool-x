@@ -252,6 +252,28 @@ describe('createChannel', () => {
     );
     expect(setChannelConfig).not.toHaveBeenCalled();
   });
+
+  it('persists per-model metadata definitions and forwards them to native config', () => {
+    const definitions = [{
+      id: 'custom-model',
+      contextWindow: 64000,
+      maxTokens: 8192,
+      reasoning: true,
+      input: ['text', 'image']
+    }];
+    const ch = service.createChannel('Metadata', 'https://meta.example', 'key-meta', {
+      model: 'custom-model',
+      models: definitions
+    });
+
+    expect(ch.models).toEqual(definitions);
+    const saved = JSON.parse(fs.readFileSync(channelsFile, 'utf8'));
+    expect(saved.channels[0].models).toEqual(definitions);
+    expect(setChannelsConfig).toHaveBeenCalledWith(
+      [expect.objectContaining({ id: ch.id, models: definitions })],
+      { preferredChannelId: ch.id }
+    );
+  });
 });
 
 // ─── CRUD: updateChannel ──────────────────────────────────────────────────────
@@ -567,6 +589,44 @@ describe('syncCurrentOpenCodeChannel', () => {
       model: 'gpt-4.1',
       allowedModels: ['gpt-4.1', 'gpt-4.1-mini']
     }));
+  });
+
+  it('imports model metadata definitions while dropping unsupported modalities', () => {
+    readConfig.mockReturnValue({
+      model: 'metadata-provider/gpt-4.1',
+      provider: {
+        'metadata-provider': {
+          options: {
+            baseURL: 'https://metadata.example/v1',
+            apiKey: 'metadata-key'
+          },
+          models: {
+            'gpt-4.1': {
+              name: 'GPT-4.1',
+              limit: { context: 100000, output: 8192 },
+              reasoning: true,
+              modalities: { input: ['text', 'audio'] }
+            },
+            'gpt-4.1-mini': {}
+          }
+        }
+      }
+    });
+
+    service.syncCurrentOpenCodeChannel();
+    const saved = JSON.parse(fs.readFileSync(channelsFile, 'utf8'));
+
+    expect(saved.channels[0].models).toEqual([
+      {
+        id: 'gpt-4.1',
+        name: 'GPT-4.1',
+        contextWindow: 100000,
+        maxTokens: 8192,
+        reasoning: true,
+        input: ['text']
+      },
+      { id: 'gpt-4.1-mini' }
+    ]);
   });
 
   it('does not duplicate an already imported provider', () => {
