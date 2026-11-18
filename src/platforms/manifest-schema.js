@@ -161,6 +161,7 @@ const schema = {
       properties: {
         supportsCliCreate: { type: 'boolean' },
         supportsCliToggle: { type: 'boolean' },
+        multiChannelDirect: { type: 'boolean' },
         createUnavailableMessage: { type: 'string' },
         createDefaults: { type: 'object', additionalProperties: true },
         createQuestions: { type: 'array', items: CLI_CHANNEL_QUESTION_SCHEMA, uniqueItems: true }

@@ -24,6 +24,7 @@
   "channelCli": {
     "supportsCliCreate": true,
     "supportsCliToggle": true,
+    "multiChannelDirect": true,
     "createQuestions": [
       { "type": "input", "name": "name", "message": "渠道名称:", "validation": "required", "validationMessage": "渠道名称不能为空" },
       { "type": "input", "name": "baseUrl", "message": "Base URL:", "validation": "http_url", "validationMessage": "Base URL 必须以 http:// 或 https:// 开头" },

@@ -335,11 +335,14 @@ async function handleChannelToggle(channels, services, cliType) {
 
   await handleAdvancedConfig(services, cliType);
 
-  console.log(
-    chalk.cyan(
-      `\n提示: 多个渠道启用后将由调度器根据权重和并发自动分配请求，无需再手动切换默认渠道。\n`
-    )
-  );
+  const proxyRunning = Boolean(services.getProxyStatus?.()?.running);
+  const platformLabel = getPlatformRegistry().resolve(cliType)?.label || cliType;
+  const tip = proxyRunning
+    ? '多个渠道启用后将由调度器根据权重和并发自动分配请求，无需再手动切换默认渠道。'
+    : services.multiChannelDirect === true
+      ? `动态切换关闭时，多个已启用渠道会同时写入原生配置，可直接在 ${platformLabel} 中选择各渠道提供的模型。`
+      : '动态切换关闭时，启用的渠道会写入原生配置；切换渠道后需重启 CLI 生效。';
+  console.log(chalk.cyan(`\n提示: ${tip}\n`));
 
   await inquirer.prompt([{ type: 'input', name: 'continue', message: '按回车返回...' }]);
 }

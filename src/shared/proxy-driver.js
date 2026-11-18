@@ -2,6 +2,20 @@
 
 const { ok, unsupported, failed } = require('./driver-result');
 
+function buildProxyCliMetadata(manifest = {}, cliMetadata = {}) {
+  const labels = manifest.proxyLabels && typeof manifest.proxyLabels === 'object'
+    ? { ...manifest.proxyLabels }
+    : {};
+  const metadata = {
+    managedProviderConfig: manifest.proxyMode === 'managed',
+    proxyLabels: labels
+  };
+  if (manifest.defaultPort !== undefined && manifest.defaultPort !== null) {
+    metadata.defaultPort = manifest.defaultPort;
+  }
+  return { ...metadata, ...cliMetadata };
+}
+
 function createProxyDriver({
   platform,
   servicePath,
@@ -36,7 +50,7 @@ function createProxyDriver({
     }
   };
   const driver = { platform, capability, manifest };
-  driver.getCliMetadata = () => ({ ...cliMetadata });
+  driver.getCliMetadata = () => buildProxyCliMetadata(manifest, cliMetadata);
   for (const operation of ['status', 'start', 'stop']) {
     driver[operation] = (...args) => call(operation, args);
   }
@@ -54,4 +68,4 @@ function createProxyDriver({
   return driver;
 }
 
-module.exports = { createProxyDriver };
+module.exports = { buildProxyCliMetadata, createProxyDriver };

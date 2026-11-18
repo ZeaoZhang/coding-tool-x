@@ -1,5 +1,7 @@
 'use strict';
 
+const { buildProxyCliMetadata } = require('../../shared/proxy-driver');
+
 const MODULE_PATHS = Object.freeze({
   claude: Object.freeze({
     projects: './claude/sessions-implementation',
@@ -338,6 +340,8 @@ function createProxyDriver({ platform, capability, requireImpl, manifest = {} })
     );
   }
 
+  driver.getCliMetadata = () => buildProxyCliMetadata(manifest);
+
   driver.restoreOnBoot = async ({ config = {} } = {}) => {
     const options = platform === 'omp' ? { preserveStartTime: true } : {};
     const started = await driver.start(options);
@@ -608,6 +612,9 @@ function createLegacyDriver({ platform, capability, requireImpl = require, manif
       const builtIn = proxyModule.createDriver({ ...context, platform, capability, manifest, requireImpl });
       const unwrap = value => value && typeof value === 'object' && value.status === 'ok' ? value.data : value;
       const driver = { platform, capability, restoreOnBoot: builtIn.restoreOnBoot };
+      if (typeof builtIn.getCliMetadata === 'function') {
+        driver.getCliMetadata = () => builtIn.getCliMetadata();
+      }
       for (const operation of ['status', 'start', 'stop']) {
         driver[operation] = (...args) => {
           const value = builtIn[operation](...args);

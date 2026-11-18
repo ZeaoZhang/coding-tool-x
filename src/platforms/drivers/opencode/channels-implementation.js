@@ -5,6 +5,7 @@ const { PATHS } = require('../../../config/paths');
 const { resolveChannelWebsiteUrl } = require('../../../config/channel-preset-websites');
 const {
   setChannelConfig,
+  setChannelsConfig,
   clearManagedChannelConfig,
   readConfig,
   selectConfigPath
@@ -133,23 +134,40 @@ function getOpenCodeProxyRunning() {
   return Boolean(getOpenCodeProxyStatus()?.running);
 }
 
-function resolveCurrentManagedChannel(channels = []) {
-  const allChannels = Array.isArray(channels) ? channels : [];
-  return allChannels.find(channel => channel.enabled !== false) || null;
+/**
+ * 判断某个渠道是否是原生配置顶层的默认 model provider。
+ */
+function isChannelCurrentDefault(channel = {}) {
+  try {
+    const config = readConfig(selectConfigPath());
+    const providerId = getCurrentOpenCodeProviderId(config);
+    if (!providerId) return false;
+    return providerId === sanitizeOpenCodeProviderId(channel.providerKey || channel.name || '');
+  } catch (_) {
+    return false;
+  }
 }
 
 function syncManagedChannelConfig(channels = [], preferredChannel = null) {
-  const targetChannel = preferredChannel && preferredChannel.enabled !== false
-    ? preferredChannel
-    : resolveCurrentManagedChannel(channels);
+  const allChannels = Array.isArray(channels) ? channels : [];
+  const enabledChannels = allChannels
+    .filter(channel => channel && channel.enabled !== false)
+    .map(buildNativeConfigChannel);
 
-  if (targetChannel) {
-    setChannelConfig(buildNativeConfigChannel(targetChannel));
-    return targetChannel;
+  if (enabledChannels.length === 0) {
+    clearManagedChannelConfig();
+    return null;
   }
 
-  clearManagedChannelConfig();
-  return null;
+  const preferred = preferredChannel && preferredChannel.enabled !== false
+    ? enabledChannels.find(channel => channel.id === preferredChannel.id) || null
+    : null;
+
+  setChannelsConfig(enabledChannels, {
+    preferredChannelId: preferred?.id || null
+  });
+
+  return preferred || enabledChannels[0];
 }
 
 // 保存渠道数据
@@ -212,15 +230,6 @@ function createChannel(name, baseUrl, apiKey, extraConfig = {}) {
 
   data.channels.push(newChannel);
 
-  if (!isProxyRunning && newChannel.enabled !== false) {
-    data.channels.forEach((channel, index) => {
-      if (index !== data.channels.length - 1 && channel.enabled) {
-        channel.enabled = false;
-      }
-    });
-    console.log(`[OpenCode Single-channel mode] Enabled "${newChannel.name}", disabled all others`);
-  }
-
   saveChannels(data);
 
   if (!isProxyRunning && newChannel.enabled !== false) {
@@ -263,35 +272,16 @@ function updateChannel(channelId, updates) {
   data.channels[index] = merged;
 
   const isProxyRunning = getOpenCodeProxyRunning();
-
-  // Single-channel enforcement when proxy is OFF: enabling a channel disables all others
-  if (!isProxyRunning && merged.enabled && !oldChannel.enabled) {
-    data.channels.forEach((ch, i) => {
-      if (i !== index && ch.enabled) {
-        ch.enabled = false;
-      }
-    });
-    console.log(`[OpenCode Single-channel mode] Enabled "${merged.name}", disabled all others`);
-  }
+  const justEnabled = oldChannel.enabled === false && merged.enabled !== false;
+  const keepsDefault = !justEnabled && isChannelCurrentDefault(oldChannel);
 
   saveChannels(data);
-  if (oldChannel.enabled === false && merged.enabled !== false) {
+  if (justEnabled) {
     clearChannelBalanceCache(merged);
   }
 
   if (!isProxyRunning) {
-    if (oldChannel.enabled === false && merged.enabled !== false) {
-      syncManagedChannelConfig(data.channels, merged);
-    } else if (oldChannel.enabled !== false && merged.enabled === false) {
-      const activeChannel = resolveCurrentManagedChannel(data.channels);
-      if (activeChannel) syncManagedChannelConfig(data.channels, activeChannel);
-      else clearManagedChannelConfig();
-    } else {
-      const activeChannel = resolveCurrentManagedChannel(data.channels);
-      if (merged.enabled !== false && activeChannel?.id === merged.id) {
-        syncManagedChannelConfig(data.channels, merged);
-      }
-    }
+    syncManagedChannelConfig(data.channels, justEnabled || keepsDefault ? merged : null);
   }
 
   return data.channels[index];
@@ -358,16 +348,20 @@ function applyChannelToSettings(channelId) {
   }
 
   const wasEnabled = channel.enabled !== false;
-  // In single-channel mode, only this channel should be enabled
+  // 多渠道直连：保留其他已启用渠道，仅将目标渠道设为默认模型
   data.channels.forEach(ch => {
-    ch.enabled = ch.id === channelId;
+    if (ch.id === channelId) ch.enabled = true;
   });
   saveChannels(data);
   if (!wasEnabled) {
     clearChannelBalanceCache(channel);
   }
 
-  setChannelConfig(buildNativeConfigChannel(channel));
+  if (!getOpenCodeProxyRunning()) {
+    syncManagedChannelConfig(data.channels, channel);
+  } else {
+    setChannelConfig(buildNativeConfigChannel(channel));
+  }
 
   return channel;
 }

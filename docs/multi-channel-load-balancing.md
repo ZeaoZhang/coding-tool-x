@@ -164,6 +164,24 @@
 | `freezeMultiplier` | 2 | 冻结时间倍增系数 |
 | `healthCheckWindow` | 5 | 恢复需要连续成功次数 |
 
+## 多渠道直连（关闭动态切换）
+
+OpenCode、DSH、OMP 的原生配置支持多个 provider，关闭动态切换后可以同时启用多个渠道：
+
+| 平台 | 写入位置 | 默认模型 |
+|------|----------|----------|
+| OpenCode | `opencode.json(c)` 中每个渠道一个 `provider` 条目 | 顶层 `model`（`provider/model`） |
+| DSH | `settings.yaml` 的 `llm-pi-ai.providers`，每个渠道一个 key | `agent-default-model` |
+| OMP | `models.yml` 的 `providers`（`ctx-<providerKey>`）+ `config.yml` 的 `enabledModels` | `modelRoles.default` |
+
+规则：
+
+- **启用**：多选启用时全部保留，所有已启用渠道都会写入原生配置；新启用的渠道成为默认模型。
+- **禁用 / 删除**：OpenCode、DSH 会移除对应 provider（DSH 同时清理 `credentials.yaml` 中的引用）；OMP 会把该渠道的模型移出 `enabledModels` 可见范围（不再出现在 CLI 模型列表）。若默认模型指向该渠道，自动切换到剩余渠道中的第一个。
+- **写入配置（应用）**：只把目标渠道设为默认模型，其他已启用渠道保持可用。
+- **停止动态切换**：DSH / OMP 会把全部已启用渠道重新写入原生配置，并以停止前使用的渠道作为默认模型。
+- **单渠道平台**：Claude、Codex、Gemini 的原生配置只能承载一个 provider，启用其中一个渠道时仍会自动禁用其余渠道。
+
 ## 使用场景
 
 ### 场景1：多渠道负载均衡

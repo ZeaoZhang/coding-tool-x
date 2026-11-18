@@ -3,6 +3,10 @@
  *
  * 为各平台 Driver 实现提供共享 CRUD、启用/禁用、单渠道强制等基础能力。
  *
+ * 单渠道强制仅适用于原生配置只能承载一个 provider 的平台（Claude、Codex、Gemini）。
+ * 原生支持多 provider / 多模型选择的平台（OpenCode、OMP、DSH）通过 allowMultipleEnabled
+ * 关闭强制，关闭动态切换后仍可同时启用多个渠道。
+ *
  * 子类通过覆写钩子方法实现平台差异化行为。
  */
 
@@ -36,12 +40,14 @@ class BaseChannelService {
    * @param {string} config.channelsFilePath - 渠道数据文件路径
    * @param {string} [config.defaultGatewaySource] - 默认网关来源类型
    * @param {Function} [config.isProxyRunning] - 返回代理是否运行中
+   * @param {boolean} [config.allowMultipleEnabled] - 原生配置支持多 provider 时可同时启用多个渠道
    */
   constructor(config) {
     this.platform = config.platform;
     this.channelsFilePath = config.channelsFilePath;
     this.defaultGatewaySource = config.defaultGatewaySource || config.platform;
     this.oauthChannelPolicy = config.oauthChannelPolicy || 'mixed';
+    this.allowMultipleEnabled = config.allowMultipleEnabled === true;
     this._isProxyRunning = config.isProxyRunning || (() => false);
     this._channelCache = { value: null, mtimeMs: 0, invalidated: true };
   }
@@ -143,7 +149,7 @@ class BaseChannelService {
     data.channels.push(channel);
     this._validateOAuthEnabledTransition(data.channels, channel, null);
     this._validateBeforeChannelMutation(channel, data.channels, { operation: 'create' });
-    if (channel.enabled && !this._isProxyRunning()) {
+    if (!this.allowMultipleEnabled && channel.enabled && !this._isProxyRunning()) {
       this._enforceSingleChannel(data.channels, data.channels.length - 1);
     }
 
@@ -169,7 +175,7 @@ class BaseChannelService {
     this._validateBeforeChannelMutation(nextChannel, data.channels, { operation: 'update', oldChannel });
     data.channels[index] = nextChannel;
     const isProxyRunning = this._isProxyRunning();
-    if (!isProxyRunning && nextChannel.enabled && !oldChannel.enabled) {
+    if (!this.allowMultipleEnabled && !isProxyRunning && nextChannel.enabled && !oldChannel.enabled) {
       this._enforceSingleChannel(data.channels, index);
     }
 
@@ -203,6 +209,10 @@ class BaseChannelService {
   }
 
   applyChannelToSettings(channelId) {
+    return this._applyChannelToSettings(channelId);
+  }
+
+  _applyChannelToSettings(channelId, nativeOptions = undefined) {
     const data = this.loadChannels();
     const channel = data.channels.find(ch => ch.id === channelId);
     if (!channel) {
@@ -210,16 +220,39 @@ class BaseChannelService {
     }
     this._validateBeforeChannelMutation(channel, data.channels, { operation: 'apply' });
 
-    // 单渠道模式：只启用目标渠道
+    // 单渠道模式：只启用目标渠道；多渠道路径保留其他已启用渠道
+    const previousEnabled = data.channels.map(ch => ({ id: ch.id, enabled: ch.enabled !== false }));
     const wasEnabled = channel.enabled !== false;
-    data.channels.forEach(ch => {
-      ch.enabled = ch.id === channelId;
-    });
+    if (this.allowMultipleEnabled) {
+      data.channels.forEach(ch => {
+        if (ch.id === channelId) ch.enabled = true;
+      });
+    } else {
+      data.channels.forEach(ch => {
+        ch.enabled = ch.id === channelId;
+      });
+    }
     this.saveChannels(data);
+
+    try {
+      this._applyToNativeSettings(channel, nativeOptions);
+    } catch (error) {
+      try {
+        const rolledBack = this.loadChannels();
+        rolledBack.channels.forEach(ch => {
+          const previous = previousEnabled.find(item => item.id === ch.id);
+          if (previous) ch.enabled = previous.enabled;
+        });
+        this.saveChannels(rolledBack);
+      } catch (rollbackError) {
+        error.rollbackError = rollbackError;
+      }
+      throw error;
+    }
+
     if (!wasEnabled) {
       clearChannelBalanceCache(this.platform, channel);
     }
-    this._applyToNativeSettings(channel);
     return channel;
   }
 
@@ -333,6 +366,17 @@ class BaseChannelService {
     });
     const name = channels[enabledIndex]?.name || channels[enabledIndex]?.id;
     console.log(`[${this.platform}] Single-channel mode: enabled "${name}", disabled all others`);
+  }
+
+  /**
+   * 返回所有已启用渠道；指定 preferredChannelId 时把该渠道排在首位（用于默认模型选择）。
+   */
+  _orderEnabledChannels(channels = [], preferredChannelId = null) {
+    const enabledChannels = (channels || []).filter(channel => channel?.enabled !== false);
+    if (!preferredChannelId) return enabledChannels;
+    const preferred = enabledChannels.find(channel => channel.id === preferredChannelId);
+    if (!preferred) return enabledChannels;
+    return [preferred, ...enabledChannels.filter(channel => channel.id !== preferred.id)];
   }
 
   // ── 子类钩子（默认空实现）──

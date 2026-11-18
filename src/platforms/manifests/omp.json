@@ -26,6 +26,7 @@
   "channelCli": {
     "supportsCliCreate": false,
     "supportsCliToggle": true,
+    "multiChannelDirect": true,
     "createUnavailableMessage": "提示: OMP 渠道请通过 Web UI 或 API 添加后，再在这里启停调度。"
   },
   "proxyLabels": {
@@ -35,9 +36,9 @@
     "stopAction": "停止",
     "restartAction": "重启",
     "startedMessage": "OMP 动态切换已启用",
-    "stoppedMessage": "OMP 已切换为单渠道直连模式",
+    "stoppedMessage": "OMP 已切换为多渠道直连模式",
     "runningText": "运行中",
-    "stoppedText": "单渠道直连",
+    "stoppedText": "多渠道直连",
     "portLabel": "网关端口",
     "addressLabel": "网关地址",
     "startTip": "启动动态切换"

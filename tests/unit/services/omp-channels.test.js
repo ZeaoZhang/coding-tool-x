@@ -377,6 +377,81 @@ describe('managed provider activation lifecycle', () => {
     ], { knownProviderIds: ['ctx-channel-a'] });
     expect(removeManagedOmpProviders).not.toHaveBeenCalled();
   });
+
+  it('writes every enabled direct channel while managed mode is disabled', () => {
+    seedChannels([
+      makeChannel('channel-a'),
+      makeChannel('channel-b'),
+      makeChannel('channel-c', { enabled: false })
+    ]);
+    settingsConfig = { modelRoles: { default: 'ctx-channel-b/channel-b-model' } };
+
+    service.syncManagedProviderExtension();
+
+    expect(writeManagedOmpProviders).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'channel-b' }),
+      expect.objectContaining({ id: 'channel-a' })
+    ], { knownProviderIds: ['ctx-channel-a', 'ctx-channel-b', 'ctx-channel-c'] });
+    expect(removeManagedOmpProviders).not.toHaveBeenCalled();
+  });
+
+  it('keeps other enabled channels when applying a direct channel', () => {
+    seedChannels([
+      makeChannel('channel-a'),
+      makeChannel('channel-b')
+    ]);
+
+    service.applyChannelToSettings('channel-b');
+
+    const saved = JSON.parse(fs.readFileSync(channelsPath, 'utf8'));
+    expect(saved.channels).toEqual([
+      expect.objectContaining({ id: 'channel-a', enabled: true }),
+      expect.objectContaining({ id: 'channel-b', enabled: true })
+    ]);
+    expect(writeManagedOmpProviders).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'channel-b' }),
+      expect.objectContaining({ id: 'channel-a' })
+    ], { knownProviderIds: ['ctx-channel-a', 'ctx-channel-b'] });
+  });
+
+  it('hands back direct providers while the managed mode marker still exists', () => {
+    seedChannels([
+      makeChannel('channel-a'),
+      makeChannel('channel-b')
+    ]);
+    fs.writeFileSync(path.join(testDir, 'active-omp.json'), JSON.stringify({
+      version: 2,
+      activeChannelId: 'channel-a',
+      gateway: { host: '127.0.0.1', port: 20092, secret: 'gateway-secret' }
+    }), 'utf8');
+
+    service.activateStaticOmpChannel('channel-b');
+
+    const saved = JSON.parse(fs.readFileSync(channelsPath, 'utf8'));
+    expect(saved.channels).toEqual([
+      expect.objectContaining({ id: 'channel-a', enabled: true }),
+      expect.objectContaining({ id: 'channel-b', enabled: true })
+    ]);
+    expect(writeManagedOmpProviders).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'channel-b' }),
+      expect.objectContaining({ id: 'channel-a' })
+    ], { knownProviderIds: ['ctx-channel-a', 'ctx-channel-b'] });
+  });
+
+  it('enabling a second direct channel keeps the existing channel enabled', () => {
+    seedChannels([
+      makeChannel('channel-a'),
+      makeChannel('channel-b', { enabled: false })
+    ]);
+
+    service.updateChannel('channel-b', { enabled: true });
+
+    const saved = JSON.parse(fs.readFileSync(channelsPath, 'utf8'));
+    expect(saved.channels).toEqual([
+      expect.objectContaining({ id: 'channel-a', enabled: true }),
+      expect.objectContaining({ id: 'channel-b', enabled: true })
+    ]);
+  });
   it('keeps the persisted gateway secret after managed mode is disabled', () => {
     const first = service.getOrCreateOmpGatewaySecret();
     service.enableManagedOmpMode('channel-a', {

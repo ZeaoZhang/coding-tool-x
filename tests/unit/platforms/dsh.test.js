@@ -679,7 +679,7 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
     expect(synced.data.current).toEqual(expect.objectContaining({ id: 'existing-primary', providerKey: 'primary' }));
     expect(synced.data.channels).toEqual(expect.arrayContaining([
       expect.objectContaining({ providerKey: 'primary', enabled: true, apiKey: '[REDACTED]' }),
-      expect.objectContaining({ providerKey: 'secondary', enabled: false, apiKey: '[REDACTED]' })
+      expect.objectContaining({ providerKey: 'secondary', enabled: true, apiKey: '[REDACTED]' })
     ]));
     expect(JSON.stringify(synced.data)).not.toContain('sk-primary');
     expect(JSON.stringify(synced.data)).not.toContain('sk-secondary');
@@ -831,6 +831,215 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
       params: { channelId: second.data.channel.id },
       route: { capability: 'channels', operation: 'remove' }
     }).status).toBe('ok');
+  });
+
+  test('keeps every enabled channel in native settings for direct mode', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const channelDriver = createChannelDriver({ paths });
+    const createRequest = body => channelDriver.create({
+      body,
+      route: { capability: 'channels', operation: 'create' }
+    });
+
+    const first = createRequest({
+      name: 'Primary',
+      providerKey: 'primary',
+      baseUrl: 'https://api.example.com/v1',
+      model: 'deepseek-chat',
+      apiKey: 'sk-primary'
+    });
+    const second = createRequest({
+      name: 'Backup',
+      providerKey: 'backup',
+      baseUrl: 'https://backup.example.com/v1',
+      model: 'deepseek-reasoner',
+      apiKey: 'sk-backup'
+    });
+
+    expect(first.status).toBe('ok');
+    expect(second.status).toBe('ok');
+
+    const channels = JSON.parse(fs.readFileSync(path.join(tempHome, 'channels.json'), 'utf8')).channels;
+    expect(channels).toEqual([
+      expect.objectContaining({ providerKey: 'primary', enabled: true }),
+      expect.objectContaining({ providerKey: 'backup', enabled: true })
+    ]);
+
+    const settingsText = fs.readFileSync(paths.settings, 'utf8');
+    expect(settingsText).toContain('primary:');
+    expect(settingsText).toContain('backup:');
+    expect(settingsText).toContain('provider: backup');
+    expect(settingsText).toContain('model: deepseek-reasoner');
+
+    const credentialsText = fs.readFileSync(paths.credentials, 'utf8');
+    expect(credentialsText).toContain('sk-primary');
+    expect(credentialsText).toContain('sk-backup');
+
+    const applied = channelDriver.applyToSettings({
+      params: { channelId: first.data.channel.id },
+      route: { capability: 'channels', operation: 'applyToSettings' }
+    });
+    expect(applied.status).toBe('ok');
+    const appliedSettings = fs.readFileSync(paths.settings, 'utf8');
+    expect(appliedSettings).toContain('primary:');
+    expect(appliedSettings).toContain('backup:');
+    expect(appliedSettings).toContain('provider: primary');
+    expect(appliedSettings).toContain('model: deepseek-chat');
+
+    channelDriver.update({
+      params: { channelId: second.data.channel.id },
+      body: { enabled: false, apiKey: '[REDACTED]' },
+      route: { capability: 'channels', operation: 'update' }
+    });
+    const updatedSettings = fs.readFileSync(paths.settings, 'utf8');
+    expect(updatedSettings).toContain('primary:');
+    expect(updatedSettings).not.toContain('backup:');
+    expect(updatedSettings).toContain('provider: primary');
+
+    const updatedCredentials = fs.readFileSync(paths.credentials, 'utf8');
+    expect(updatedCredentials).toContain('sk-primary');
+    expect(updatedCredentials).not.toContain('sk-backup');
+  });
+
+  test('keeps the default model when editing a non-default channel', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const channelDriver = createChannelDriver({ paths });
+    const createRequest = body => channelDriver.create({
+      body,
+      route: { capability: 'channels', operation: 'create' }
+    });
+
+    const first = createRequest({
+      name: 'Primary',
+      providerKey: 'primary',
+      baseUrl: 'https://api.example.com/v1',
+      model: 'deepseek-chat',
+      apiKey: 'sk-primary'
+    });
+    createRequest({
+      name: 'Backup',
+      providerKey: 'backup',
+      baseUrl: 'https://backup.example.com/v1',
+      model: 'deepseek-reasoner',
+      apiKey: 'sk-backup'
+    });
+
+    channelDriver.update({
+      params: { channelId: first.data.channel.id },
+      body: { weight: 3, apiKey: '[REDACTED]' },
+      route: { capability: 'channels', operation: 'update' }
+    });
+
+    const settingsText = fs.readFileSync(paths.settings, 'utf8');
+    expect(settingsText).toContain('provider: backup');
+    expect(settingsText).toContain('model: deepseek-reasoner');
+    expect(settingsText).toContain('primary:');
+    expect(settingsText).toContain('backup:');
+  });
+
+  test('restores every enabled channel when stopping the managed proxy', async () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const state = {
+      channels: path.join(tempHome, 'channels.json'),
+      activeChannel: path.join(tempHome, 'active-channel.json'),
+      proxyRuntime: path.join(tempHome, 'dsh-proxy.json')
+    };
+    const channelDriver = createChannelDriver({ paths });
+    const createRequest = body => channelDriver.create({
+      body,
+      route: { capability: 'channels', operation: 'create' }
+    });
+    createRequest({
+      name: 'Primary',
+      providerKey: 'primary',
+      baseUrl: 'https://api.example.com/v1',
+      model: 'deepseek-chat',
+      apiKey: 'sk-primary'
+    });
+    createRequest({
+      name: 'Backup',
+      providerKey: 'backup',
+      baseUrl: 'https://backup.example.com/v1',
+      model: 'deepseek-reasoner',
+      apiKey: 'sk-backup'
+    });
+
+    const proxyDriver = createProxyDriver({
+      paths,
+      pathContext: { native: paths, customized: true, state }
+    });
+    const started = await proxyDriver.start({ port: 0 });
+    expect(started.status).toBe('ok');
+    expect(fs.readFileSync(paths.settings, 'utf8')).toContain('ctx-dsh-proxy');
+
+    const stopped = await proxyDriver.stop();
+    expect(stopped.status).toBe('ok');
+    expect(fs.existsSync(state.activeChannel)).toBe(false);
+
+    const settingsText = fs.readFileSync(paths.settings, 'utf8');
+    expect(settingsText).not.toContain('ctx-dsh-proxy');
+    expect(settingsText).toContain('primary:');
+    expect(settingsText).toContain('backup:');
+    expect(settingsText).toContain('provider: primary');
+
+    const channels = JSON.parse(fs.readFileSync(state.channels, 'utf8')).channels;
+    expect(channels).toEqual([
+      expect.objectContaining({ providerKey: 'primary', enabled: true }),
+      expect.objectContaining({ providerKey: 'backup', enabled: true })
+    ]);
+  });
+
+  test('removes a deleted channel provider while the managed proxy is active', async () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const state = {
+      channels: path.join(tempHome, 'channels.json'),
+      activeChannel: path.join(tempHome, 'active-channel.json'),
+      proxyRuntime: path.join(tempHome, 'dsh-proxy.json')
+    };
+    const channelDriver = createChannelDriver({ paths });
+    const createRequest = body => channelDriver.create({
+      body,
+      route: { capability: 'channels', operation: 'create' }
+    });
+    createRequest({
+      name: 'Primary',
+      providerKey: 'primary',
+      baseUrl: 'https://api.example.com/v1',
+      model: 'deepseek-chat',
+      apiKey: 'sk-primary'
+    });
+    const backup = createRequest({
+      name: 'Backup',
+      providerKey: 'backup',
+      baseUrl: 'https://backup.example.com/v1',
+      model: 'deepseek-reasoner',
+      apiKey: 'sk-backup'
+    });
+
+    const proxyDriver = createProxyDriver({
+      paths,
+      pathContext: { native: paths, customized: true, state }
+    });
+    await proxyDriver.start({ port: 0 });
+    expect(fs.readFileSync(paths.settings, 'utf8')).toContain('backup:');
+
+    const removed = channelDriver.remove({
+      params: { channelId: backup.data.channel.id },
+      route: { capability: 'channels', operation: 'remove' }
+    });
+    expect(removed.status).toBe('ok');
+
+    const settingsText = fs.readFileSync(paths.settings, 'utf8');
+    expect(settingsText).toContain('ctx-dsh-proxy');
+    expect(settingsText).toContain('primary:');
+    expect(settingsText).not.toContain('backup:');
+
+    const stopped = await proxyDriver.stop();
+    expect(stopped.status).toBe('ok');
   });
 
   test('rejects starting the managed proxy with enabled non-completions providers', async () => {

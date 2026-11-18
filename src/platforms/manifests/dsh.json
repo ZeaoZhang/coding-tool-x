@@ -18,6 +18,7 @@
   "channelCli": {
     "supportsCliCreate": false,
     "supportsCliToggle": true,
+    "multiChannelDirect": true,
     "createUnavailableMessage": "提示: DSH 渠道请通过 Web UI 或 API 添加。"
   },
   "proxyLabels": {
