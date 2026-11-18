@@ -72,7 +72,9 @@ jobs:
           else
             version=$(node scripts/next-model-catalog-version.js)
           fi
-          npm version "$version" --no-git-tag-version
+          if [ "$current_version" != "$version" ]; then
+            npm version "$version" --no-git-tag-version
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Check whether this package version already exists
