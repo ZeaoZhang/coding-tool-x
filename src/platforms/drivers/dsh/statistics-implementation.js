@@ -7,7 +7,7 @@ const {
   getTodayStatistics: getSharedTodayStatistics
 } = require('../../../server/services/statistics-service');
 const { normalizeUsageTokens, toNumber } = require('../../../server/services/usage-log-utils');
-const { listArtifacts } = require('./sessions');
+const { decodeArtifact, listArtifacts } = require('./sessions');
 const { normalizeDshEvent } = require('./native-logs');
 
 const TOOL_TYPE = 'dsh';
@@ -128,16 +128,9 @@ function resolveDate(value) {
   return value || eventDateKey(Date.now());
 }
 
-function readSessionUsage() {
-  try {
-    const artifacts = listArtifacts(configuredContext, { includeEvents: true });
-    return artifacts.flatMap(artifact => (artifact.events || [])
-      .map((event, index) => normalizeDshEvent(event, artifact.filePath, index))
-      .filter(Boolean)
-      .map(event => ({ ...event, sessionId: artifact.header?.id || event.sessionId })));
-  } catch (_) {
-    return [];
-  }
+function dateStartTimestamp(dateKey) {
+  const parsed = Date.parse(`${dateKey}T00:00:00+08:00`);
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function addUsage(entry, event) {
@@ -156,19 +149,51 @@ function addUsage(entry, event) {
   return true;
 }
 
-function buildSessionDerivedStatistics(events = readSessionUsage()) {
-  const global = initAggregateEntry('DSH Sessions');
-  const byChannel = {};
-  const byModel = {};
-  events.forEach(event => {
-    if (!addUsage(global, event)) return;
+function aggregateArtifactUsage(artifact, date, global, byChannel, byModel) {
+  let parsed;
+  try {
+    parsed = decodeArtifact(artifact.filePath);
+  } catch (_) {
+    return;
+  }
+  const sessionId = parsed.header?.id || artifact.header?.id;
+  for (let index = 0; index < parsed.events.length; index += 1) {
+    const normalized = normalizeDshEvent(parsed.events[index], artifact.filePath, index);
+    if (!normalized) continue;
+    if (date && eventDateKey(normalized.timestamp) !== date) continue;
+    const event = sessionId ? { ...normalized, sessionId } : normalized;
+    if (!addUsage(global, event)) continue;
     const channel = event.channel || event.provider || 'dsh-session';
     const model = event.model || 'unknown';
     byChannel[channel] ||= initAggregateEntry(channel || 'DSH Session');
     byModel[model] ||= initAggregateEntry(model);
     addUsage(byChannel[channel], event);
     addUsage(byModel[model], event);
-  });
+  }
+}
+
+function aggregateSessionUsage({ date = null } = {}) {
+  const global = initAggregateEntry('DSH Sessions');
+  const byChannel = {};
+  const byModel = {};
+  let artifacts = [];
+  try {
+    artifacts = listArtifacts(configuredContext, {
+      includeEvents: false,
+      includeFirstMessage: false,
+      minMtimeMs: date ? dateStartTimestamp(date) : 0
+    });
+  } catch (_) {
+    return { global, byChannel, byModel };
+  }
+  for (const artifact of artifacts) {
+    if (artifact.projectName === '__invalid__') continue;
+    aggregateArtifactUsage(artifact, date, global, byChannel, byModel);
+  }
+  return { global, byChannel, byModel };
+}
+
+function buildSummaryFromAggregate({ global, byChannel, byModel }) {
   return {
     version: '1.0',
     source: global.requests ? 'sessions' : 'empty',
@@ -179,8 +204,8 @@ function buildSessionDerivedStatistics(events = readSessionUsage()) {
   };
 }
 
-function buildSessionDerivedDailyStatistics(date, events = readSessionUsage()) {
-  const daily = buildSessionDerivedStatistics(events.filter(event => eventDateKey(event.timestamp) === date));
+function buildDailyFromAggregate(date, aggregate) {
+  const daily = buildSummaryFromAggregate(aggregate);
   return {
     date,
     source: daily.source,
@@ -192,6 +217,14 @@ function buildSessionDerivedDailyStatistics(date, events = readSessionUsage()) {
     byChannel: daily.byChannel,
     byModel: daily.byModel
   };
+}
+
+function buildSessionDerivedStatistics() {
+  return buildSummaryFromAggregate(aggregateSessionUsage());
+}
+
+function buildSessionDerivedDailyStatistics(date) {
+  return buildDailyFromAggregate(date, aggregateSessionUsage({ date }));
 }
 
 function recordRequest(requestData = {}) {

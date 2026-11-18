@@ -182,12 +182,13 @@ function decodeArtifact(filePath) {
   return { header, events: records.slice(1) };
 }
 
-function decodeArtifactHeaderBytes(bytes) {
+function decodeArtifactHeaderBytes(bytes, { includeFirstMessage = true } = {}) {
   const lines = bytes.toString('utf8').split(/\r?\n/);
   const header = JSON.parse(lines.shift() || '');
   if (!header || header.type !== 'session' || typeof header.id !== 'string') {
     throw new Error('DSH session log missing a valid header');
   }
+  if (!includeFirstMessage) return { header, events: [], firstMessage: null };
   let firstMessage = null;
   for (const line of lines) {
     if (!line.trim()) continue;
@@ -204,16 +205,19 @@ function decodeArtifactHeaderBytes(bytes) {
   return { header, events: [], firstMessage };
 }
 
-function decodeArtifactHeader(filePath) {
+function decodeArtifactHeader(filePath, { includeFirstMessage = true } = {}) {
   if (filePath.endsWith('.zstd')) {
-    return decodeArtifactHeaderBytes(readZstdPrefix(filePath));
+    return decodeArtifactHeaderBytes(
+      readZstdPrefix(filePath, includeFirstMessage ? 64 * 1024 : 16 * 1024, includeFirstMessage ? 4 * 1024 * 1024 : 512 * 1024),
+      { includeFirstMessage }
+    );
   }
   let fd;
   try {
     fd = fs.openSync(filePath, 'r');
-    const buffer = Buffer.alloc(64 * 1024);
+    const buffer = Buffer.alloc(includeFirstMessage ? 64 * 1024 : 16 * 1024);
     const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
-    return decodeArtifactHeaderBytes(buffer.subarray(0, bytesRead));
+    return decodeArtifactHeaderBytes(buffer.subarray(0, bytesRead), { includeFirstMessage });
   } finally {
     if (fd !== undefined) {
       try { fs.closeSync(fd); } catch (_) {}
@@ -242,7 +246,7 @@ function selectArtifact(sessionDir) {
   return candidates[0] || null;
 }
 
-function listArtifacts(context = {}, { includeEvents = true } = {}) {
+function listArtifacts(context = {}, { includeEvents = true, includeFirstMessage = true, minMtimeMs = 0 } = {}) {
   const root = resolvePaths(context).sessions;
   if (!fs.existsSync(root)) return [];
   const artifacts = [];
@@ -256,12 +260,15 @@ function listArtifacts(context = {}, { includeEvents = true } = {}) {
       if (!artifact) continue;
       try {
         const stat = fs.statSync(artifact.path);
+        if (minMtimeMs && stat.mtimeMs < minMtimeMs) continue;
         const parsed = includeEvents
           ? decodeArtifact(artifact.path)
-          : decodeArtifactHeader(artifact.path);
+          : decodeArtifactHeader(artifact.path, { includeFirstMessage });
         const cwd = typeof parsed.header.cwd === 'string' ? parsed.header.cwd : null;
         const events = parsed.events;
-        const user = events.find(event => event.type === 'user/message' && event.data?.content);
+        const user = includeFirstMessage
+          ? events.find(event => event.type === 'user/message' && event.data?.content)
+          : null;
         artifacts.push({
           ...artifact,
           projectDir: projectEntry.name,
@@ -362,11 +369,14 @@ function normalizeMessage(event, sessionId, index, userMessageNumber) {
 }
 
 function createDriver(context = {}) {
-  const read = () => listArtifacts(context, { includeEvents: false }).filter(artifact => artifact.projectName !== '__invalid__');
+  const readHeaders = ({ includeFirstMessage = true } = {}) => listArtifacts(context, { includeEvents: false, includeFirstMessage })
+    .filter(artifact => artifact.projectName !== '__invalid__');
+  const read = () => readHeaders({ includeFirstMessage: true });
+  const readProjectHeaders = () => readHeaders({ includeFirstMessage: false });
   const readFull = () => listArtifacts(context, { includeEvents: true }).filter(artifact => artifact.projectName !== '__invalid__');
   const fullSessionCache = new Map();
   const getById = sessionId => {
-    const summaryArtifact = read().find(artifact => artifact.header?.id === sessionId);
+    const summaryArtifact = readProjectHeaders().find(artifact => artifact.header?.id === sessionId);
     if (!summaryArtifact) {
       fullSessionCache.delete(sessionId);
       return null;
@@ -391,7 +401,7 @@ function createDriver(context = {}) {
   const readFullProject = projectName => readFull().filter(artifact => artifact.projectName === projectName);
   const listProjects = () => {
     const map = new Map();
-    for (const artifact of read()) {
+    for (const artifact of readProjectHeaders()) {
       const current = map.get(artifact.projectName) || {
         name: artifact.projectName,
         displayName: displayName(artifact.cwd),

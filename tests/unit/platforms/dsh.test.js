@@ -16,6 +16,7 @@ const { createDriver: createApiDriver } = require('../../../src/platforms/driver
 const { createDriver: createChannelDriver } = require('../../../src/platforms/drivers/dsh/channels');
 const { createDriver: createProxyDriver } = require('../../../src/platforms/drivers/dsh/proxy');
 const { createDriver: createNativeLogDriver } = require('../../../src/platforms/drivers/dsh/native-logs');
+const { createDriver: createStatisticsDriver } = require('../../../src/platforms/drivers/dsh/statistics');
 const { listSkills } = require('../../../src/platforms/drivers/dsh/resources');
 const { createPlatformRouter } = require('../../../src/server/api/platforms');
 const { SkillService } = require('../../../src/server/services/skill-service');
@@ -77,6 +78,34 @@ describe('DSH platform integration', () => {
     tempHome = makeTempHome();
     const dshHome = path.join(tempHome, 'dsh-home');
     expect(registry.resolvePaths('dsh', { homeDir: tempHome, env: { DSH_HOME: dshHome } }).home).toBe(dshHome);
+  });
+
+  test('daily statistics skip logs untouched since before the requested day', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const sessionFile = path.join(paths.sessions, 'project', 'session-stale', 'session.v3.jsonl.zstd');
+    writeZstdLog(sessionFile, {
+      type: 'session', version: 3, id: 'session-stale', cwd: tempHome
+    }, [{
+      type: 'assistant/message',
+      seq: 1,
+      time: Date.now(),
+      data: {
+        message: {
+          id: 'assistant-stale',
+          source: { provider: 'deepseek', model: 'deepseek-chat' },
+          usage: { prompt_tokens: 4, completion_tokens: 3, total_tokens: 7 }
+        }
+      }
+    }]);
+    const stale = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    fs.utimesSync(sessionFile, stale, stale);
+
+    const stats = createStatisticsDriver({ paths });
+    const today = stats.getTodayStatistics();
+
+    expect(today.status).toBe('ok');
+    expect(today.data.summary).toEqual({ requests: 0, tokens: 0, cost: 0 });
   });
 
   test('streams DSH usage events from appended compressed session records', () => {
