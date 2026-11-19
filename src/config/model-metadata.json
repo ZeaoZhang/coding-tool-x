@@ -1,7 +1,7 @@
 {
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
-  "lastUpdated": "2026-11-18",
+  "lastUpdated": "2026-11-19",
   "defaultModels": {
     "claude": [
       "claude-opus-4-7",
@@ -90,7 +90,8 @@
       "gemini-4-argon",
       "gemini-pro-latest",
       "gemini-4-carbon",
-      "gemini-4-hydrogen"
+      "gemini-4-hydrogen",
+      "gemini-4-neon"
     ]
   },
   "defaultSpeedTestModels": {
@@ -2510,6 +2511,32 @@
       "provider": "google",
       "reasoning": true,
       "sourceId": "google/gemini-4-hydrogen",
+      "supportsTools": true,
+      "toolTypes": [
+        "gemini",
+        "opencode",
+        "omp"
+      ]
+    },
+    "gemini-4-neon": {
+      "id": "gemini-4-neon",
+      "input": [
+        "text",
+        "image"
+      ],
+      "limit": {
+        "context": 1048576,
+        "output": 65536
+      },
+      "name": "Gemini 4 Neon",
+      "pricing": {
+        "cacheRead": 0.15,
+        "input": 3,
+        "output": 15
+      },
+      "provider": "google",
+      "reasoning": true,
+      "sourceId": "google/gemini-4-neon",
       "supportsTools": true,
       "toolTypes": [
         "gemini",
