@@ -5,7 +5,7 @@ const mockRecordRequest = vi.fn();
 const mockGetStatistics = vi.fn();
 const mockGetDailyStatistics = vi.fn();
 const mockGetTodayStatistics = vi.fn();
-const mockGetAllSessions = vi.fn();
+const mockGetOmpUsageEvents = vi.fn();
 const mockNormalizeUsageTokens = vi.fn((type, tokens = {}) => ({
   input: tokens.input || 0,
   output: tokens.output || 0,
@@ -16,6 +16,7 @@ const mockNormalizeUsageTokens = vi.fn((type, tokens = {}) => ({
   total: tokens.total || tokens.input + tokens.output + (tokens.reasoning || 0) + (tokens.cached || tokens.cacheRead || 0)
 }));
 const mockToNumber = vi.fn((value) => Number(value) || 0);
+const mockCalculateUsageCost = vi.fn();
 
 function loadService() {
   delete require.cache[require.resolve(MODULE_PATH)];
@@ -42,7 +43,7 @@ beforeEach(() => {
     filename: sessionsPath,
     loaded: true,
     exports: {
-      getAllSessions: mockGetAllSessions
+      getOmpUsageEvents: mockGetOmpUsageEvents
     }
   };
 
@@ -53,7 +54,8 @@ beforeEach(() => {
     loaded: true,
     exports: {
       normalizeUsageTokens: mockNormalizeUsageTokens,
-      toNumber: mockToNumber
+      toNumber: mockToNumber,
+      calculateUsageCost: mockCalculateUsageCost
     }
   };
 
@@ -61,7 +63,7 @@ beforeEach(() => {
   mockGetStatistics.mockReturnValue({ lastUpdated: '2026-07-08T00:00:00.000Z', byToolType: {} });
   mockGetDailyStatistics.mockReturnValue({ date: '2026-07-08', byToolType: {} });
   mockGetTodayStatistics.mockReturnValue({ date: '2026-07-08', byToolType: {} });
-  mockGetAllSessions.mockResolvedValue([]);
+  mockGetOmpUsageEvents.mockReturnValue([]);
   mockNormalizeUsageTokens.mockImplementation((type, tokens = {}) => ({
     input: tokens.input || 0,
     output: tokens.output || 0,
@@ -72,6 +74,7 @@ beforeEach(() => {
     total: tokens.total || tokens.input + tokens.output + (tokens.reasoning || 0) + (tokens.cached || tokens.cacheRead || 0)
   }));
   mockToNumber.mockImplementation((value) => Number(value) || 0);
+  mockCalculateUsageCost.mockImplementation((_source, _model, tokens = {}) => Number(tokens.cost) || 0);
 });
 
 afterEach(() => {
@@ -108,23 +111,23 @@ describe('omp-statistics-service', () => {
     expect(result.source).toBe('shared-stats');
     expect(result.global.totalRequests).toBe(2);
     expect(result.global.totalTokens).toBe(15);
-    expect(mockGetAllSessions).not.toHaveBeenCalled();
+    expect(mockGetOmpUsageEvents).not.toHaveBeenCalled();
   });
 
-  test('falls back to OMP session-derived summary statistics', async () => {
-    mockGetAllSessions.mockResolvedValue([
+  test('falls back to OMP usage-event-derived summary statistics', async () => {
+    mockGetOmpUsageEvents.mockReturnValue([
       {
         sessionId: 's1',
         provider: 'openai',
         model: 'gpt-5',
-        mtime: '2026-07-08T02:00:00.000Z',
-        tokens: { input: 100, output: 50, cached: 10, reasoning: 5, total: 165, cost: 0.5 }
+        timestamp: '2026-07-08T02:00:00.000Z',
+        usage: { input: 100, output: 50, cached: 10, reasoning: 5, total: 165, cost: 0.5 }
       },
       {
         sessionId: 's2',
         provider: 'openai',
         model: 'gpt-5-mini',
-        mtime: '2026-07-09T02:00:00.000Z',
+        timestamp: '2026-07-09T02:00:00.000Z',
         usage: { input: 20, output: 10, total: 30 }
       }
     ]);
@@ -145,20 +148,20 @@ describe('omp-statistics-service', () => {
     expect(result.byModel['gpt-5-mini'].tokens.total).toBe(30);
   });
 
-  test('falls back to OMP session-derived daily statistics', async () => {
-    mockGetAllSessions.mockResolvedValue([
+  test('falls back to OMP usage-event-derived daily statistics', async () => {
+    mockGetOmpUsageEvents.mockReturnValue([
       {
         sessionId: 's1',
         provider: 'openai',
         model: 'gpt-5',
-        mtime: '2026-07-08T02:00:00.000Z',
+        timestamp: '2026-07-08T02:00:00.000Z',
         usage: { input: 100, output: 50, total: 150 }
       },
       {
         sessionId: 's2',
         provider: 'openai',
         model: 'gpt-5',
-        mtime: '2026-07-09T02:00:00.000Z',
+        timestamp: '2026-07-09T02:00:00.000Z',
         usage: { input: 20, output: 10, total: 30 }
       }
     ]);

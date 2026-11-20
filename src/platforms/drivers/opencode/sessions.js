@@ -14,6 +14,7 @@ function createDriver(context = {}) {
       getProjects: 'getProjects',
       recent: 'getRecentSessions',
       getSessionById: 'getSessionById',
+      launchCommand: 'getSessionLaunchCommand',
       delete: 'deleteSession',
       fork: 'forkSession',
       saveSessionOrder: 'saveSessionOrder',

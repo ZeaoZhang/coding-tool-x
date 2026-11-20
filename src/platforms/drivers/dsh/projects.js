@@ -15,6 +15,7 @@ function createDriver(context = {}) {
     capability: 'projects',
     listProjects: sessions.listProjects,
     listProjectsPage: sessions.listProjectsPage,
+    getProjectAndSessionCounts: sessions.getProjectAndSessionCounts,
     saveProjectOrder: unsupported('saveProjectOrder'),
     deleteProject: unsupported('deleteProject')
   };

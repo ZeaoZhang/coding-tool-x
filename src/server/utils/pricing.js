@@ -67,17 +67,24 @@ function getRate(pricing, key) {
 function calculateTokenCost(pricing = {}, tokens = {}, options = {}) {
   const inputRate = getRate(pricing, 'input');
   const outputRate = getRate(pricing, 'output');
+  const reasoningRate = getRate(pricing, 'reasoning');
   const cacheCreationRate = getRate(pricing, 'cacheCreation');
   const cacheReadRate = getRate(pricing, 'cacheRead');
   const inputTokens = Number(tokens.input || 0);
-  const outputTokens = Number(tokens.output || 0)
-    + (options.reasoningBilledAsOutput ? Number(tokens.reasoning || 0) : 0);
+  const outputTokens = Number(tokens.output || 0);
+  const reasoningTokens = Number(tokens.reasoning || 0);
   const cacheCreationTokens = Number(tokens.cacheCreation || 0);
   const cacheReadTokens = Number(tokens.cacheRead || tokens.cached || 0);
+
+  // Reasoning is billed as its own category when a rate is configured, or
+  // explicitly as output for providers whose output counter excludes it.
+  const billReasoning = reasoningRate > 0 || options.reasoningBilledAsOutput === true;
+  const effectiveReasoningRate = reasoningRate > 0 ? reasoningRate : outputRate;
 
   return (
     inputTokens * inputRate / 1000000 +
     outputTokens * outputRate / 1000000 +
+    (billReasoning ? reasoningTokens * effectiveReasoningRate / 1000000 : 0) +
     cacheCreationTokens * cacheCreationRate / 1000000 +
     cacheReadTokens * cacheReadRate / 1000000
   );

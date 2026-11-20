@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const { resolvePaths } = require('./common');
+const { quoteShellArgument } = require('../../../shared/shell-quote');
 
 const GENERATION_PATTERN = /^session(?:\.v(\d+))?\.jsonl(\.zstd)?$/;
 const ZSTD_MAGIC = 0xFD2FB528;
@@ -323,6 +324,7 @@ function summary(artifact) {
     filePath: artifact.filePath,
     firstMessage: artifact.firstMessage,
     readOnly: true,
+    launchable: true,
     running: null,
     error: artifact.error || null,
     errorCode: artifact.errorCode || null
@@ -417,6 +419,29 @@ function createDriver(context = {}) {
     }
     return [...map.values()].sort((left, right) => right.lastModified - left.lastModified || left.displayName.localeCompare(right.displayName));
   };
+  const getProjectAndSessionCounts = () => {
+    const projects = listProjects();
+    return {
+      projectCount: projects.length,
+      sessionCount: projects.reduce((sum, project) => sum + (Number(project.sessionCount) || 0), 0)
+    };
+  };
+  const buildLaunch = (value) => {
+    const sessionId = value && typeof value === 'object'
+      ? value.params?.sessionId || value.sessionId
+      : value;
+    const normalizedSessionId = String(sessionId || '').trim();
+    if (!normalizedSessionId) throw new Error('Session id is required');
+    const artifact = readProjectHeaders().find(item => item.header?.id === normalizedSessionId);
+    if (!artifact) throw new Error('Session not found');
+    const args = ['dsh', 'tui', '--resume', normalizedSessionId];
+    return {
+      command: args.map(quoteShellArgument).join(' '),
+      args,
+      cwd: artifact.cwd || process.cwd()
+    };
+  };
+  const supportsCopyLaunch = context.apiRoute === true || context.context?.apiRoute === true;
   const listProjectsPage = (options = {}) => {
     const page = Math.max(1, Number.parseInt(options.page, 10) || 1);
     const limit = Math.max(1, Math.min(100, Number.parseInt(options.limit, 10) || 20));
@@ -590,11 +615,13 @@ function createDriver(context = {}) {
     },
     listProjects,
     listProjectsPage,
+    getProjectAndSessionCounts,
+    launchCommand: buildLaunch,
+    launch: supportsCopyLaunch ? buildLaunch : unsupported('launch'),
     delete: unsupported('delete'),
     batchDelete: unsupported('batchDelete'),
     fork: unsupported('fork'),
-    saveSessionOrder: unsupported('saveSessionOrder'),
-    launch: unsupported('launch')
+    saveSessionOrder: unsupported('saveSessionOrder')
   };
 }
 

@@ -247,7 +247,7 @@
       <div class="help-content">
         <div class="help-section">
           <h4>[START] 快速开始</h4>
-          <p>{{ APP_NAME }} 是面向 Claude Code、Codex、Gemini 和 OpenCode 的统一 AI 编程工作台，提供会话管理、动态渠道切换、全局搜索与实时监控能力。</p>
+          <p>{{ APP_NAME }} 是面向 Claude Code、Codex、Gemini、OpenCode、OMP 和 DSH 的统一 AI 编程工作台，提供会话管理、动态渠道切换、全局搜索与实时监控能力。</p>
 
           <h5 style="margin: 12px 0 8px 0; font-size: 13px; color: #18a058;">[STAR] 最简单的启动方式：</h5>
           <div style="background: var(--bg-primary); padding: 12px; border-radius: 6px; margin: 8px 0; border-left: 3px solid #18a058;">
@@ -265,11 +265,113 @@
         </div>
 
         <div class="help-section">
+          <h4>[NET] 网络访问：Host、端口与 HTTPS</h4>
+          <p>服务默认只监听本机回环地址 <code>127.0.0.1</code>，Web UI 与 WebSocket 共用同一个端口，默认 <code>19999</code>：</p>
+          <div style="background: var(--bg-primary); padding: 12px; border-radius: 6px; margin: 8px 0; border-left: 3px solid #18a058;">
+            <p style="margin: 0; font-family: 'Courier New', monospace; font-size: 13px; font-weight: 600; color: var(--primary-color);">http://localhost:19999</p>
+          </div>
+
+          <h5 style="margin: 16px 0 8px 0; font-size: 14px; color: var(--primary-color);">[HOST] 监听地址与局域网访问</h5>
+          <div class="command-list">
+            <div class="command-item">
+              <code>ctx ui</code>
+              <span>前台启动 Web UI，仅本机访问</span>
+            </div>
+            <div class="command-item">
+              <code>ctx ui start</code>
+              <span>后台启动 Web UI（PM2），仅本机访问</span>
+            </div>
+            <div class="command-item">
+              <code>ctx ui --host</code>
+              <span>前台启动，监听 0.0.0.0</span>
+            </div>
+            <div class="command-item">
+              <code>ctx ui start --host</code>
+              <span>后台启动，监听 0.0.0.0</span>
+            </div>
+            <div class="command-item">
+              <code>ctx start --host</code>
+              <span>后台启动全部服务并开放局域网</span>
+            </div>
+          </div>
+          <p style="font-size: 12px; line-height: 1.8;"><code>--hosts</code> 是 <code>--host</code> 的别名。开启后局域网内可通过 <code>http://&lt;本机IP&gt;:19999</code> 访问（HTTPS 模式为 <code>https://&lt;本机IP&gt;:19999</code>）。</p>
+          <p style="font-size: 12px; line-height: 1.8;">安全限制：LAN 模式下远程写操作默认被拒绝（返回 <code>403 LAN_REMOTE_WRITE_BLOCKED</code>），只读接口仍可访问。确需远程修改配置时显式授权：</p>
+          <div style="background: var(--bg-primary); padding: 12px; border-radius: 6px; margin: 8px 0; border-left: 3px solid #d03050; font-family: 'Courier New', monospace; font-size: 12px; color: var(--primary-color);">
+            CC_TOOL_ALLOW_REMOTE_WRITE=true ctx ui --host
+          </div>
+          <p style="font-size: 12px; line-height: 1.8;">建议同时在「设置 → 安全」启用访问密码；忘记密码可运行 <code>ctx security reset</code> 关闭密码。不要把面板直接暴露到公网。</p>
+          <p style="font-size: 12px; line-height: 1.8; color: #d03050;">注意：后台（PM2）模式不会自动转发任意环境变量（仅显式透传 <code>HOME</code>、<code>PATH</code>、<code>CODEX_HOME</code>、<code>OMP_*</code> 等固定运行时变量）。如需远程写授权，请使用前台 <code>ctx ui --host</code>；后台模式建议保持远程写关闭。</p>
+
+          <h5 style="margin: 16px 0 8px 0; font-size: 14px; color: var(--primary-color);">[LOCK] HTTPS</h5>
+          <div class="command-list">
+            <div class="command-item">
+              <code>ctx ui --https</code>
+              <span>前台启动本地 HTTPS</span>
+            </div>
+            <div class="command-item">
+              <code>ctx ui start --https</code>
+              <span>后台启动本地 HTTPS</span>
+            </div>
+            <div class="command-item">
+              <code>ctx ui --host --https</code>
+              <span>HTTPS + 局域网访问</span>
+            </div>
+          </div>
+          <ul>
+            <li>首次启用自动生成自签名证书，保存在 <code>~/.cc-tool/config/https/</code>：macOS/Linux 为 <code>localhost-key.pem</code>、<code>localhost-cert.pem</code>，Windows 为 <code>localhost.pfx</code>。</li>
+            <li>证书生成依赖 <code>openssl</code>（Windows 使用 PowerShell 兜底）；缺失时启动会报「无法生成 HTTPS 本地证书」。</li>
+            <li>证书只签发给 <code>localhost</code>、<code>127.0.0.1</code>、<code>::1</code>；通过局域网 IP 访问会提示证书不匹配，需要手动信任或改用 HTTP。</li>
+            <li>浏览器通知等安全上下文 API 仅在 <code>localhost</code> 或 HTTPS 页面可用；WebSocket 会自动跟随页面协议切换 <code>ws</code>/<code>wss</code>。</li>
+          </ul>
+
+          <h5 style="margin: 16px 0 8px 0; font-size: 14px; color: var(--primary-color);">[CONFIG] 端口配置</h5>
+          <ul>
+            <li>Web UI 端口默认 <code>19999</code>，范围 1024-65535。</li>
+            <li>修改方式：运行 <code>ctx port</code>，或在 Web UI「设置 → 高级 → 端口配置」中修改。</li>
+            <li>保存后需运行 <code>ctx restart</code> 重启服务才会生效；端口被占用时启动会提示清理或改用其他端口。</li>
+          </ul>
+        </div>
+
+        <div class="help-section">
+          <h4>[CFG] 环境变量</h4>
+          <div class="command-list">
+            <div class="command-item">
+              <code>CC_TOOL_ALLOW_REMOTE_WRITE=true</code>
+              <span>允许 LAN 远程写操作；默认关闭</span>
+            </div>
+            <div class="command-item">
+              <code>CC_TOOL_LOG_REQUESTS=true</code>
+              <span>记录代理请求快照到 ~/.cc-tool/&lt;platform&gt;-requests.jsonl，供网关协议转换调试</span>
+            </div>
+            <div class="command-item">
+              <code>CC_TOOL_LOG_API_REQUESTS=true</code>
+              <span>记录 Web UI REST API 请求到 ~/.cc-tool/logs/api-requests.jsonl</span>
+            </div>
+            <div class="command-item">
+              <code>CC_TOOL_MEMORY_TRACE=1</code>
+              <span>输出启动与日志轮询阶段的内存占用追踪</span>
+            </div>
+            <div class="command-item">
+              <code>CC_TOOL_PROJECT_PATH_ALLOWLIST</code>
+              <span>额外项目路径白名单，多个绝对路径用系统路径分隔符连接</span>
+            </div>
+            <div class="command-item">
+              <code>CLAUDE_CONFIG_DIR / CODEX_HOME</code>
+              <span>覆盖 Claude / Codex 原生配置目录</span>
+            </div>
+          </div>
+          <p style="font-size: 12px; color: var(--text-secondary); margin: 8px 0 0 0; line-height: 1.8;">环境变量需在启动进程的环境中设置，修改后重启服务生效。日志类变量会把请求内容写入磁盘，排障完成后建议关闭。</p>
+        </div>
+
+        <div class="help-section">
           <h4>[AI] 支持的 AI 工具</h4>
           <ul>
             <li><strong>Claude Code</strong>：Anthropic 官方命令行工具，支持 Claude 系列模型</li>
             <li><strong>Codex</strong>：支持 OpenAI GPT 系列和 Claude 模型（通过 OpenAI 兼容格式）</li>
             <li><strong>Gemini</strong>：支持 Google Gemini 系列模型</li>
+            <li><strong>OpenCode</strong>：支持 OpenCode 原生配置、渠道和会话管理</li>
+            <li><strong>OMP</strong>：OMP 专用动态网关，统一管理 OMP 渠道与原生配置</li>
+            <li><strong>DSH</strong>：DSH 服务、渠道和统计管理</li>
           </ul>
         </div>
 
@@ -293,6 +395,18 @@
             <div class="command-item">
               <code>ctx status</code>
               <span>查看服务状态</span>
+            </div>
+            <div class="command-item">
+              <code>ctx ui</code>
+              <span>前台启动 Web UI（仅本机）</span>
+            </div>
+            <div class="command-item">
+              <code>ctx ui start</code>
+              <span>后台启动 Web UI（支持 --host / --https）</span>
+            </div>
+            <div class="command-item">
+              <code>ctx ui stop</code>
+              <span>停止 Web UI（支持 restart/status）</span>
             </div>
           </div>
 
@@ -373,7 +487,11 @@
             <li><strong>Claude 代理</strong>：端口 20088，支持 Anthropic API 格式</li>
             <li><strong>Codex 代理</strong>：端口 20089，支持 OpenAI API 格式（兼容 Claude）</li>
             <li><strong>Gemini 代理</strong>：端口 20090，支持 Gemini API 格式</li>
+            <li><strong>OpenCode 代理</strong>：端口 20091</li>
+            <li><strong>OMP 代理</strong>：端口 20092，OMP 专用动态网关</li>
+            <li><strong>DSH 代理</strong>：端口 20093</li>
           </ul>
+          <p>以上端口均可在 <code>ctx port</code> 或「设置 → 高级 → 端口配置」中修改，重启后生效。</p>
           <p>在 Dashboard 或各工具详情页，可以添加多个渠道并快速切换，无需修改配置文件或重启工具。</p>
         </div>
 
@@ -410,8 +528,8 @@
         <div class="help-section">
           <h4>[LINK] 相关链接</h4>
           <div class="link-list">
-            <a href="https://github.com/ZeaoZhang/coding-tool" target="_blank">GitHub 仓库</a>
-            <a href="https://github.com/ZeaoZhang/coding-tool/issues" target="_blank">问题反馈</a>
+            <a href="https://github.com/ZeaoZhang/coding-tool-x" target="_blank">GitHub 仓库</a>
+            <a href="https://github.com/ZeaoZhang/coding-tool-x/issues" target="_blank">问题反馈</a>
           </div>
         </div>
       </div>
@@ -698,7 +816,7 @@ function toggleLogs() {
 }
 
 function openGithub() {
-  window.open('https://github.com/ZeaoZhang/coding-tool', '_blank')
+  window.open('https://github.com/ZeaoZhang/coding-tool-x', '_blank')
 }
 function openDrawer(name, visibleRef) {
   markDrawerLoaded(name)

@@ -213,12 +213,22 @@ describe('DSH platform integration', () => {
       sessionCount: 1,
       readOnly: true
     })]);
+    expect(driver.getProjectAndSessionCounts()).toEqual({
+      projectCount: 1,
+      sessionCount: 1
+    });
     expect(driver.listSessions({ params: { projectName } })).toEqual([expect.objectContaining({
       sessionId,
       firstMessage: '检查插件配置',
       readOnly: true,
+      launchable: true,
       running: null
     })]);
+    expect(driver.launchCommand(sessionId)).toEqual({
+      command: `dsh tui --resume ${sessionId}`,
+      args: ['dsh', 'tui', '--resume', sessionId],
+      cwd
+    });
     expect(driver.messages({ params: { sessionId }, query: { order: 'asc' } })).toEqual(expect.objectContaining({
       messages: [
         expect.objectContaining({ type: 'user', content: [{ type: 'text', text: '检查插件配置' }] }),
@@ -799,7 +809,7 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
     expect(result.data.source).toEqual(expect.objectContaining({ name: 'models.dev' }));
   });
 
-  function writeProfileFixture(home, profileName, providers, selected) {
+  function writeProfileFixture(home, profileName, providers, selected, options = {}) {
     const profileDir = path.join(home, 'profiles', profileName);
     fs.mkdirSync(profileDir, { recursive: true });
     writeJson(path.join(profileDir, 'package.json'), {
@@ -810,6 +820,7 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
       {
         id: 'llm-pi-ai',
         name: '@deepseek-ai/dsh-llm-pi-ai',
+        ...(options.disabled === true ? { disabled: true } : {}),
         config: { providers }
       },
       {
@@ -894,6 +905,159 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
       model: 'foo-model'
     }));
     expect(fs.existsSync(paths.settings)).toBe(false);
+  });
+
+  test('reports a disabled llm-pi-ai module instead of claiming providers are absent', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const { patchPath } = writeProfileFixture(tempHome, 'desktop', {
+      foo: {
+        displayName: 'Foo Provider',
+        api: 'openai-completions',
+        baseURL: 'https://foo.example/v1',
+        apiKeyEnv: 'FOO_KEY',
+        models: [{ id: 'foo-model' }]
+      }
+    }, { provider: 'foo', model: 'foo-model' }, { disabled: true });
+    writeJson(paths.credentials, {
+      version: 1,
+      refs: { FOO_KEY: 'sk-foo' },
+      records: {}
+    });
+
+    const result = createChannelDriver({ paths }).sync({
+      route: { capability: 'channels', operation: 'sync' }
+    });
+
+    expect(result.status).toBe('ok');
+    expect(result.data.source).toEqual(expect.objectContaining({
+      type: 'profile',
+      profile: 'desktop',
+      path: patchPath,
+      missing: false,
+      disabled: true
+    }));
+    expect(result.data.added).toBe(0);
+    expect(result.data.channels).toEqual([]);
+    expect(result.data.warnings).toHaveLength(1);
+    expect(result.data.warnings[0]).toContain('llm-pi-ai 已被禁用');
+    expect(result.data.warnings[0]).toContain(patchPath);
+    expect(result.data.warnings[0]).not.toContain('没有可同步');
+  });
+
+  test('refuses channel writes while llm-pi-ai is disabled', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const { readYamlFile } = require('../../../src/platforms/drivers/dsh/common');
+    const { patchPath } = writeProfileFixture(tempHome, 'desktop', {
+      foo: {
+        displayName: 'Foo Provider',
+        api: 'openai-completions',
+        baseURL: 'https://foo.example/v1',
+        apiKeyEnv: 'FOO_KEY',
+        models: [{ id: 'foo-model' }]
+      }
+    }, { provider: 'foo', model: 'foo-model' }, { disabled: true });
+    const before = fs.readFileSync(patchPath, 'utf8');
+
+    const result = createChannelDriver({ paths }).create({
+      body: {
+        name: 'New Provider',
+        providerKey: 'new-provider',
+        providerApi: 'openai-completions',
+        baseUrl: 'https://new.example/v1',
+        apiKey: 'sk-new',
+        model: 'new-model',
+        models: ['new-model']
+      },
+      route: { capability: 'channels', operation: 'create' }
+    });
+
+    expect(result.status).toBe('conflict');
+    expect(result.code).toBe('dsh_profile_module_disabled');
+    expect(result.error).toContain('disabled: true');
+    expect(fs.readFileSync(patchPath, 'utf8')).toBe(before);
+    expect(findPatchEntry(readYamlFile(patchPath, []), 'llm-pi-ai').disabled).toBe(true);
+    expect(fs.existsSync(path.join(tempHome, 'channels.json'))).toBe(false);
+  });
+
+  test('allows deleting a local channel while llm-pi-ai is disabled without re-enabling it', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const { patchPath } = writeProfileFixture(tempHome, 'desktop', {
+      foo: {
+        displayName: 'Foo Provider',
+        api: 'openai-completions',
+        baseURL: 'https://foo.example/v1',
+        apiKeyEnv: 'FOO_KEY',
+        models: [{ id: 'foo-model' }]
+      }
+    }, { provider: 'foo', model: 'foo-model' }, { disabled: true });
+    const before = fs.readFileSync(patchPath, 'utf8');
+    const channelsPath = path.join(tempHome, 'channels.json');
+    fs.writeFileSync(channelsPath, `${JSON.stringify({
+      channels: [{
+        id: 'channel-a',
+        name: 'Foo',
+        providerKey: 'foo',
+        providerApi: 'openai-completions',
+        baseUrl: 'https://foo.example/v1',
+        authMode: 'none',
+        model: 'foo-model',
+        models: [{ id: 'foo-model' }],
+        enabled: true
+      }]
+    }, null, 2)}\n`);
+
+    const result = createChannelDriver({ paths }).remove({
+      params: { channelId: 'channel-a' },
+      route: { capability: 'channels', operation: 'remove' }
+    });
+
+    expect(result.status).toBe('ok');
+    expect(JSON.parse(fs.readFileSync(channelsPath, 'utf8')).channels).toEqual([]);
+    expect(fs.readFileSync(patchPath, 'utf8')).toBe(before);
+  });
+
+  test('refuses proxy config writes while llm-pi-ai is disabled', () => {
+    tempHome = makeTempHome();
+    const paths = dshPaths(tempHome);
+    const { patchPath } = writeProfileFixture(tempHome, 'desktop', {
+      foo: {
+        displayName: 'Foo Provider',
+        api: 'openai-completions',
+        baseURL: 'https://foo.example/v1',
+        apiKeyEnv: 'FOO_KEY',
+        models: [{ id: 'foo-model' }]
+      }
+    }, { provider: 'foo', model: 'foo-model' }, { disabled: true });
+    const before = fs.readFileSync(patchPath, 'utf8');
+    fs.writeFileSync(path.join(tempHome, 'channels.json'), `${JSON.stringify({
+      channels: [{
+        id: 'channel-a',
+        name: 'Foo',
+        providerKey: 'foo',
+        providerApi: 'openai-completions',
+        baseUrl: 'https://foo.example/v1',
+        authMode: 'none',
+        model: 'foo-model',
+        models: [{ id: 'foo-model' }],
+        enabled: true
+      }]
+    }, null, 2)}\n`);
+    const implementation = require('../../../src/platforms/drivers/dsh/channels-implementation');
+    createChannelDriver({ paths });
+
+    expect(() => implementation.setDshProxyConfig(3456, {})).toThrow(/llm-pi-ai 已被禁用/);
+    expect(fs.readFileSync(patchPath, 'utf8')).toBe(before);
+    expect(fs.existsSync(paths.settings)).toBe(false);
+
+    const markerPath = path.join(tempHome, 'active-channel.json');
+    fs.writeFileSync(markerPath, JSON.stringify({ activeChannelId: 'channel-a' }));
+    const restored = implementation.restoreDshNativeConfig();
+    expect(restored).toEqual(expect.objectContaining({ id: 'channel-a' }));
+    expect(fs.existsSync(markerPath)).toBe(false);
+    expect(fs.readFileSync(patchPath, 'utf8')).toBe(before);
   });
 
   test('writes channel changes back into the active DSH profile patch', () => {

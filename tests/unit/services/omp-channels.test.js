@@ -524,6 +524,32 @@ describe('syncCurrentOmpChannel', () => {
     }));
   });
 
+  it('reports a current provider disabled in config.yml disabledProviders', () => {
+    modelsConfig = {
+      providers: {
+        openai: {
+          baseUrl: 'https://omp-current.example/v1',
+          apiKey: 'omp-current-key',
+          api: 'openai-completions',
+          models: ['gpt-4.1']
+        }
+      }
+    };
+    settingsConfig = {
+      modelRoles: {
+        default: 'openai/gpt-4.1'
+      },
+      disabledProviders: ['openai']
+    };
+
+    const result = service.syncCurrentOmpChannel();
+
+    expect(result.added).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.warnings[0]).toContain('disabledProviders');
+    expect(fs.existsSync(channelsPath)).toBe(false);
+  });
+
   it('imports all providers referenced by enabledModels and modelRoles', () => {
     modelsConfig = {
       providers: {

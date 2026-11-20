@@ -599,6 +599,26 @@ function buildOpenCodeSyncCandidate(config, channels) {
     };
   }
 
+  const normalizedProviderId = String(providerId).trim().toLowerCase();
+  const disabledProviders = (Array.isArray(config?.disabled_providers) ? config.disabled_providers : [])
+    .map(value => String(value || '').trim().toLowerCase())
+    .filter(Boolean);
+  const enabledProviders = (Array.isArray(config?.enabled_providers) ? config.enabled_providers : [])
+    .map(value => String(value || '').trim().toLowerCase())
+    .filter(Boolean);
+  if (disabledProviders.includes(normalizedProviderId)) {
+    return {
+      skip: true,
+      warning: `OpenCode 当前 provider "${providerId}" 已在 disabled_providers 中禁用，无法同步当前渠道；请先移除该禁用项。`
+    };
+  }
+  if (enabledProviders.length > 0 && !enabledProviders.includes(normalizedProviderId)) {
+    return {
+      skip: true,
+      warning: `OpenCode 当前 provider "${providerId}" 不在 enabled_providers 白名单中，无法同步当前渠道；请先调整该白名单。`
+    };
+  }
+
   const provider = config?.provider?.[providerId] || null;
   if (!provider || typeof provider !== 'object') {
     return {

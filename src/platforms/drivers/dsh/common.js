@@ -763,9 +763,16 @@ function effectiveRawPatchEntry(context = {}, profileName, entryId) {
       }
       const current = byId.get(id);
       if (operation === 'insert' || !current) {
-        byId.set(id, { ...entry, source: filePath });
+        byId.set(id, {
+          ...entry,
+          source: filePath,
+          disabledSource: entry.disabled === true ? filePath : null
+        });
       } else {
-        byId.set(id, { ...current, ...entry, id, source: filePath });
+        const disabledSource = Object.prototype.hasOwnProperty.call(entry, 'disabled')
+          ? (entry.disabled === true ? filePath : null)
+          : (current.disabledSource || (current.disabled === true ? current.source : null));
+        byId.set(id, { ...current, ...entry, id, source: filePath, disabledSource });
       }
     }
   }
@@ -784,6 +791,7 @@ function readProfileChannelConfig(context = {}, profileName) {
     profile,
     patchPath: defaultPatchPath,
     disabled: entry?.disabled === true,
+    disabledSource: entry?.disabled === true ? (entry.disabledSource || entry.source || null) : null,
     config,
     providers: isObject(config.providers) ? config.providers : {},
     selected: isObject(defaultEntry?.config) && defaultEntry.disabled !== true ? defaultEntry.config : {}

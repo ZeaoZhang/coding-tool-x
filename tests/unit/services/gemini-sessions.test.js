@@ -194,6 +194,11 @@ describe('gemini-sessions project discovery and querying', () => {
     );
 
     expect(await geminiSessions.getProjectAndSessionCounts()).toEqual({ projectCount: 1, sessionCount: 1 });
+    expect(await geminiSessions.getSessionLaunchCommand('jsonl-session', { projectName: projectHash })).toEqual({
+      command: 'gemini --resume jsonl-session',
+      args: ['gemini', '--resume', 'jsonl-session'],
+      cwd: projectPath
+    });
     expect(geminiSessions.getProjectPath(projectHash)).toBe(projectPath);
     expect(await geminiSessions.getProjects()).toEqual([
       expect.objectContaining({

@@ -27,6 +27,17 @@
 - **Dependabot 依赖清账** - adm-zip 升至 0.6.1、toml 升至 5.0.1；根目录与 Web 统一 override minimatch 11.0.9、glob 14.0.6、editorconfig 4.0.1，清理 `@vue/test-utils` 开发链上的传递漏洞；根目录与 `src/web` 的 `npm audit` 均为 0
 
 ### Fixed
+- **DSH 禁用模块误报无 providers** - 当 profile 的 `llm-pi-ai` 标记 `disabled: true` 时，“同步当前”不再提示“没有可同步的 llm-pi-ai.providers”，而是返回 `source.disabled` 并明确指出被禁用的配置文件与 `disabled: true`，避免把配置开关误判为 profile 缺失或需要更换 profile。
+- **DSH 写路径静默解除禁用** - `llm-pi-ai` 被 `disabled: true` 禁用时，新增/更新/应用渠道与写入代理配置现在返回 409 `dsh_profile_module_disabled`，不再通过 upsert 重建条目时丢掉 `disabled: true`；删除本地渠道与停止动态代理会跳过原生写入并保留禁用状态。
+- **OpenCode / OMP 禁用 provider 仍被同步** - “同步当前”现在会检查 OpenCode `disabled_providers` / `enabled_providers` 与 OMP `config.yml` 的 `disabledProviders`；当前 provider 被禁用时直接跳过并给出明确原因，不再把它当作可用渠道导入。
+- **成本按 token 类别独立计价** - 成本现在按输入（请求）、输出（回复）、推理、缓存读取/写入分别使用对应单价计算；OMP 与 Gemini 的推理 token 按输出单价计入成本。历史 daily 统计在读取时会从各模型的 token 明细重新计算成本，不再沿用旧的提供商总计，修正推理 token 未计入导致的成本偏低。
+- **实时日志驱动数据刷新** - 捕获到新的实时日志（含原生 CLI 日志）后，Dashboard 的今日请求、Token、成本与渠道指标会在约 1.2 秒内自动重新聚合，不再依赖固定的 30 秒轮询；历史回放日志不会触发刷新。
+- **DSH 默认测速模型 nodata** - 模型设置改为在静态模型目录为空时回退读取平台已配置渠道的模型列表；DSH 默认测速模型现在会填充为渠道中的可用模型（并作为默认值），不再显示 nodata。
+- **OMP 最新对话为空** - OMP 会话归一化补回 `projectName` / `projectDisplayName` / `projectFullPath`，最新对话抽屉不再被 `filterDisplayableSessions` 全部过滤，同时恢复启动命令所需的项目名。
+- **OMP 今日请求数错误** - 共享统计的按工具聚合缺少 `omp` / `dsh` 键，OMP 今日数据因此回退到按会话计数（把 2 个会话当成 2 次请求）。补齐聚合键后 OMP 直接使用实时请求日志；会话回退也改为按 assistant 消息计请求，并按北京时间过滤当天事件。
+- **DSH 会话启动命令** - DSH 虽然只读，但会话摘要现在标记 `launchable` 并提供 `dsh tui --resume <session>` 复制命令；只读会话的「使用对话」按钮在保留 Fork/删除隐藏的前提下显示。
+- **非 Claude 平台「使用对话」404** - Manifest 为 Codex / Gemini / OpenCode / OMP 声明了 `sessions/:projectName/:sessionId/launch`，但只有 Claude 的 sessions driver 实现了 `launchCommand`，其余平台回退到未实现的 `launch` 并返回 HTTP 404。四个平台现在分别返回可复制的原生恢复命令（`codex resume`、`gemini --resume`、`opencode --session`、`omp --resume`）及会话工作目录，Web UI 点击后直接复制启动命令。
+- **首页 DSH 项目/会话数为 0** - DSH 未声明 `counts` capability，Dashboard 回退到 projects driver 时又未转发计数方法，快速访问始终显示 0 并带 `dashboard capability failed`。DSH sessions/projects driver 现在提供 `getProjectAndSessionCounts`，按已索引的项目与会话汇总真实数量。
 - **Gemini 项目名可读** - Gemini 0.23+ 只持久化 `sha256(projectRoot)` 作为项目目录名；会话 adapter 现在会用 ctx 工作区与 `~/.claude.json` 中已知的项目路径反查 hash，项目列表恢复真实目录名与完整路径，不再显示 `Project c39553d8`。
 - **会话目录与批量删除** - Manifest 迁移后，`outline`、`batch-delete` 路由已声明但驱动未实现：共享会话索引现在为 Claude/Codex/Gemini/OpenCode/OMP 提供 `outline`，批量删除逐条执行并返回 `deletedSessionIds`/`failed`；移除从未实现的 `/sessions/:projectName/create` 路由及前端调用；DSH 补齐 `/channels/enabled`。API 一致性脚本改为按 HTTP 实际使用的 capability driver 校验全部 Manifest 路由。
 - **Codex 项目列表为空** - 会话摘要解析调用了未定义的 `extractCodexProjectName`，异常被静默吞掉后所有 Codex 会话都被写成 `projectName=unknown`，前端因此显示 0 个项目（接口只返回一个 `unknown` 汇总项）。项目名提取已移入 `parser.js` 并从会话 `cwd` 正确得出；摘要版本升至 2，升级后会自动重建已有摘要。摘要解析现在会重新抛出非文件类错误，会话适配器加载失败会记录告警，避免同类问题再次静默退化为空列表。

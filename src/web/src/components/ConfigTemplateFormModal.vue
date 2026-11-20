@@ -189,7 +189,9 @@
           </n-card>
           <!-- MCP Servers -->
           <n-card title="MCP Servers" size="small">
-            <n-tag size="small" type="default">{{ projectResourcePath('plugins') || 'packages/extensions' }}</n-tag>
+            <template #header-extra><n-tag size="small">已选 {{ formData.mcpServers.length }}</n-tag></template>
+            <n-transfer v-model:value="formData.mcpServers" :options="mcpOptions" source-title="可用 MCP Servers" target-title="已选 MCP Servers" />
+            <n-tag size="small" type="default" style="margin-top: 8px;">{{ projectResourcePath('mcp') || '.omp/mcp.json' }}</n-tag>
           </n-card>
         </template>
 

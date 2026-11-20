@@ -297,6 +297,33 @@ describe('getDailyStatistics', () => {
     expect(stats.summary.tokens).toBe(150);
   });
 
+  test('aggregates OMP and DSH tool types in daily statistics', () => {
+    const mod = loadService();
+    const ts = new Date('2025-06-16T04:00:00.000Z').toISOString();
+    mod.recordRequest(makeRequest({
+      toolType: 'omp',
+      timestamp: ts,
+      tokens: { input: 10, output: 5, total: 15 }
+    }));
+    mod.recordRequest(makeRequest({
+      toolType: 'dsh',
+      timestamp: ts,
+      tokens: { input: 20, output: 5, total: 25 }
+    }));
+
+    const stats = mod.getDailyStatistics('2025-06-16');
+    expect(stats.byToolType.omp).toMatchObject({
+      requests: 1,
+      tokens: expect.objectContaining({ total: 15 })
+    });
+    expect(stats.byToolType.dsh).toMatchObject({
+      requests: 1,
+      tokens: expect.objectContaining({ total: 25 })
+    });
+    expect(stats.byToolType.omp.channels['ch-1']).toMatchObject({ requests: 1 });
+    expect(stats.byToolType.omp.models['claude-3-5-sonnet']).toMatchObject({ requests: 1 });
+  });
+
   test('handles a date with no data gracefully (no throws)', () => {
     const mod = loadService();
     expect(() => mod.getDailyStatistics('9999-12-31')).not.toThrow();

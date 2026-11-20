@@ -5,6 +5,7 @@ const { HOME_DIR } = require('../../../config/paths');
 const { getGeminiDir } = require('./config');
 const { normalizeUsageTokens } = require('../../../server/services/usage-log-utils');
 const { resolveModelPricing, calculateTokenCost } = require('../../../server/utils/pricing');
+const { quoteShellArgument } = require('../../../shared/shell-quote');
 let sessionHistoryIndex = null;
 let geminiDirOverride = null;
 
@@ -975,6 +976,28 @@ async function getProjectAndSessionCounts(options = {}) {
   };
 }
 
+async function getSessionLaunchCommand(sessionId, { projectName, cwd } = {}) {
+  const normalizedSessionId = String(sessionId || '').trim();
+  if (!normalizedSessionId) throw new Error('Session id is required');
+  const status = await getSessionHistoryIndex().getSessionStatus('gemini', normalizedSessionId);
+  let nativeSessionId = normalizedSessionId;
+  if (status?.filePath) {
+    const header = readSessionHeader(status.filePath);
+    if (header && typeof header.sessionId === 'string' && header.sessionId.trim()) {
+      nativeSessionId = header.sessionId.trim();
+    }
+  }
+  const launchCwd = (typeof cwd === 'string' && cwd.trim())
+    || getProjectPath(projectName)
+    || process.cwd();
+  const args = ['gemini', '--resume', nativeSessionId];
+  return {
+    command: args.map(quoteShellArgument).join(' '),
+    args,
+    cwd: launchCwd
+  };
+}
+
 module.exports = {
   configure,
   getAllSessions,
@@ -984,6 +1007,7 @@ module.exports = {
   getProjectSessionsPage,
   getSession,
   getSessionById,
+  getSessionLaunchCommand,
   deleteSession,
   deleteProject,
   normalizeSession,

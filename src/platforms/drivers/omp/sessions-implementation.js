@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { PATHS, HOME_DIR } = require('../../../config/paths');
+const { quoteShellArgument } = require('../../../shared/shell-quote');
 const ompConfig = require('./config');
 const {
   normalizeUsage: normalizeNativeUsage,
@@ -342,8 +343,19 @@ async function getAllSessions(options = {}) {
   }));
 }
 
-function getOmpUsageEvents(rootDir = getOmpSessionPaths().sessions) {
+function getOmpUsageEvents(rootDir = getOmpSessionPaths().sessions, options = {}) {
+  const sinceMs = Number(options.sinceMs) || 0;
+  const untilMs = Number(options.untilMs) || 0;
   return scanSessionFiles(rootDir).flatMap((filePath) => {
+    if (sinceMs || untilMs) {
+      try {
+        const stat = fs.statSync(filePath);
+        if (sinceMs && stat.mtimeMs < sinceMs) return [];
+        if (untilMs && stat.mtimeMs > untilMs) return [];
+      } catch (_) {
+        return [];
+      }
+    }
     try {
       return parseSessionUsageEvents(filePath);
     } catch (error) {
@@ -449,6 +461,9 @@ async function getSessionsByProject(projectName, options = {}) {
     mtimeMs: s.mtime,
     directory: s.projectFullPath,
     cwd: s.projectFullPath,
+    projectName,
+    projectDisplayName: s.projectDisplayName || projectName,
+    projectFullPath: s.projectFullPath || null,
     messageCount: s.messageCount,
     usage: s.tokens
   }));
@@ -483,6 +498,9 @@ async function getSessionsPage(projectName, options = {}) {
       mtimeMs: s.mtime,
       directory: s.projectFullPath,
       cwd: s.projectFullPath,
+      projectName,
+      projectDisplayName: s.projectDisplayName || projectName,
+      projectFullPath: s.projectFullPath || null,
       messageCount: s.messageCount,
       usage: s.tokens
     }))
@@ -504,6 +522,9 @@ function normalizeSession(session) {
     mtime: session.mtime,
     mtimeMs: session.mtimeMs,
     directory: session.directory || session.cwd || null,
+    projectName: session.projectName || null,
+    projectDisplayName: session.projectDisplayName || null,
+    projectFullPath: session.projectFullPath || session.directory || session.cwd || null,
     messageCount: session.messageCount || 0,
     tokens: session.usage || { input: 0, output: 0, cached: 0, reasoning: 0, total: 0 }
   };
@@ -617,6 +638,52 @@ function buildLaunchCommand(sessionId, cwd, options = {}) {
   return `${getOmpCommand()} ${args.join(' ')}`;
 }
 
+function readSessionHeaderCwd(filePath) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    const buffer = Buffer.alloc(64 * 1024);
+    const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
+    for (const line of buffer.subarray(0, bytesRead).toString('utf8').split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try {
+        const entry = JSON.parse(line);
+        if (entry?.type === 'session' && typeof entry.cwd === 'string' && entry.cwd.trim()) {
+          return entry.cwd.trim();
+        }
+      } catch (_) {
+        // 忽略不完整的 JSONL 行
+      }
+    }
+  } catch (_) {
+    return null;
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch (_) {}
+    }
+  }
+  return null;
+}
+
+async function getSessionLaunchCommand(sessionId, { cwd, projectName } = {}) {
+  const normalizedSessionId = String(sessionId || '').trim();
+  if (!normalizedSessionId) throw new Error('Session id is required');
+  const status = await getSessionHistoryIndex().getSessionStatus('omp', normalizedSessionId);
+  let launchCwd = typeof cwd === 'string' && cwd.trim() ? cwd : null;
+  if (!launchCwd && status?.filePath) {
+    launchCwd = readSessionHeaderCwd(status.filePath);
+  }
+  if (!launchCwd && projectName) {
+    launchCwd = decodeProjectName(projectName);
+  }
+  const args = [getOmpCommand(), '--resume', normalizedSessionId];
+  return {
+    command: args.map(quoteShellArgument).join(' '),
+    args,
+    cwd: launchCwd || process.cwd()
+  };
+}
+
 function shellQuote(value) {
   return `"${String(value).replace(/"/g, '\\"')}"`;
 }
@@ -660,6 +727,7 @@ module.exports = {
   getProjectsPage,
   getRecentSessions,
   getSessionById,
+  getSessionLaunchCommand,
   getSessionMessages,
   getSessionsByProject,
   getSessionsPage,

@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { PATHS } = require('../../config/paths');
-const { normalizeUsageTokens, resolveActualModel } = require('./usage-log-utils');
+const { normalizeUsageTokens, resolveActualModel, calculateUsageCost } = require('./usage-log-utils');
 
 // 北京时间辅助（UTC+8），统一所有时间计算
 const CST_OFFSET_MS = 8 * 60 * 60 * 1000;
@@ -782,7 +782,9 @@ const TOOL_PREFIXES = {
   'claude-code': '',
   'codex': 'codex-',
   'gemini': 'gemini-',
-  'opencode': 'opencode-'
+  'opencode': 'opencode-',
+  'omp': 'omp-',
+  'dsh': 'dsh-'
 };
 
 function getTokenTotal(tokens) {
@@ -926,13 +928,62 @@ function aggregateDailyStatistics(dateStr, sharedStatsOverride = null) {
   mergeHourlyStats(aggregated.hourly, sharedStats.hourly);
 
   for (const toolType of Object.keys(TOOL_PREFIXES)) {
-    const toolStats = sharedStats.byToolType?.[toolType];
+    const sharedToolStats = sharedStats.byToolType?.[toolType];
     if (!aggregated.byToolType[toolType]) {
       aggregated.byToolType[toolType] = createEmptyEntry();
     }
-    if (!toolStats) continue;
+    if (!sharedToolStats) continue;
+
+    // Recompute per-model cost from token categories so historical entries and
+    // provider-reported totals follow the same input/output/reasoning/cache
+    // pricing contract.
+    const effectiveModels = {};
+    let recalculatedToolCost = 0;
+    let hasRecalculatedCost = false;
+    for (const [modelName, modelStats] of Object.entries(sharedToolStats.models || {})) {
+      if (!modelStats || typeof modelStats !== 'object') continue;
+      const computedCost = calculateUsageCost(toolType, modelName, modelStats.tokens || {});
+      if (computedCost > 0) {
+        effectiveModels[modelName] = { ...modelStats, cost: computedCost };
+        recalculatedToolCost += computedCost;
+        hasRecalculatedCost = true;
+      } else {
+        effectiveModels[modelName] = modelStats;
+        recalculatedToolCost += Number(modelStats.cost) || 0;
+      }
+    }
+    const toolStats = hasRecalculatedCost
+      ? { ...sharedToolStats, cost: recalculatedToolCost }
+      : sharedToolStats;
+    if (hasRecalculatedCost) {
+      aggregated.summary.cost += recalculatedToolCost - (Number(sharedToolStats.cost) || 0);
+    }
 
     mergeStatsEntry(aggregated.byToolType[toolType], toolStats);
+
+    if (toolStats.channels && typeof toolStats.channels === 'object') {
+      if (!aggregated.byToolType[toolType].channels) aggregated.byToolType[toolType].channels = {};
+      for (const [channelId, channelStats] of Object.entries(toolStats.channels)) {
+        if (!channelStats || typeof channelStats !== 'object') continue;
+        if (!aggregated.byToolType[toolType].channels[channelId]) {
+          aggregated.byToolType[toolType].channels[channelId] = {
+            name: channelStats.name || channelId,
+            ...createEmptyEntry()
+          };
+        }
+        mergeStatsEntry(aggregated.byToolType[toolType].channels[channelId], channelStats);
+      }
+    }
+
+    if (Object.keys(effectiveModels).length > 0) {
+      if (!aggregated.byToolType[toolType].models) aggregated.byToolType[toolType].models = {};
+      for (const [modelName, modelStats] of Object.entries(effectiveModels)) {
+        if (!aggregated.byToolType[toolType].models[modelName]) {
+          aggregated.byToolType[toolType].models[modelName] = createEmptyEntry();
+        }
+        mergeStatsEntry(aggregated.byToolType[toolType].models[modelName], modelStats);
+      }
+    }
 
     for (const [channelId, channelStats] of Object.entries(toolStats.channels || {})) {
       const key = getScopedKey(aggregated.byChannel, channelId, toolType);
@@ -942,7 +993,7 @@ function aggregateDailyStatistics(dateStr, sharedStatsOverride = null) {
       mergeStatsEntry(aggregated.byChannel[key], channelStats);
     }
 
-    for (const [modelName, modelStats] of Object.entries(toolStats.models || {})) {
+    for (const [modelName, modelStats] of Object.entries(effectiveModels)) {
       const key = modelName || 'unknown';
       if (!aggregated.byModel[key]) {
         aggregated.byModel[key] = createEmptyEntry(toolType);

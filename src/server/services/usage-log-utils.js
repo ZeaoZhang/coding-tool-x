@@ -65,7 +65,7 @@ function calculateUsageCost(source, model, tokens = {}) {
   const normalizedSource = normalizeToolSource(source);
   const pricing = resolveModelPricing(normalizedSource, model);
   return calculateTokenCost(pricing, normalizeUsageTokens(normalizedSource, tokens), {
-    reasoningBilledAsOutput: normalizedSource === 'gemini'
+    reasoningBilledAsOutput: normalizedSource === 'gemini' || normalizedSource === 'omp'
   });
 }
 

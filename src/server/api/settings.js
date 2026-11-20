@@ -8,6 +8,7 @@ const {
   getDefaultSpeedTestModels
 } = require('../../config/model-metadata');
 const { getPlatformCatalog } = require('../services/platform-catalog');
+const { getPlatformContext } = require('../platform-context');
 const { loadConfig, saveConfig } = require('../../config/loader');
 const {
   readOmpModelRoleSettings,
@@ -49,24 +50,53 @@ function normalizeSpeedTestModels(value) {
   );
 }
 
-function getModelPlatformEntries(catalog = getPlatformCatalog()) {
-  return catalog.list({ capability: 'channels', enabledOnly: false }).map(manifest => ({
-    key: manifest.key,
-    label: manifest.label || manifest.title || manifest.key,
-    catalogKey: manifest.modelConfig?.catalogKey || manifest.key,
-    models: getModelIdsByToolType(manifest.modelConfig?.catalogKey || manifest.key)
-  }));
+function getConfiguredChannelModels(platform) {
+  try {
+    const driver = getPlatformContext().runtime?.getDriver?.(platform, 'channels');
+    const value = typeof driver?.list === 'function' ? driver.list({}) : null;
+    if (!value || typeof value.then === 'function') return [];
+    const data = value.status === 'ok' ? value.data : value;
+    const channels = Array.isArray(data) ? data : (data?.channels || []);
+    const models = new Set();
+    for (const channel of channels) {
+      if (typeof channel?.model === 'string' && channel.model.trim()) {
+        models.add(channel.model.trim());
+      }
+      for (const item of Array.isArray(channel?.models) ? channel.models : []) {
+        const modelId = typeof item === 'string' ? item : item?.id;
+        if (typeof modelId === 'string' && modelId.trim()) models.add(modelId.trim());
+      }
+    }
+    return [...models];
+  } catch {
+    return [];
+  }
 }
 
-function resolveDefaultSpeedTestModels(config = {}, catalog = getPlatformCatalog()) {
+function getModelPlatformEntries(catalog = getPlatformCatalog()) {
+  return catalog.list({ capability: 'channels', enabledOnly: false }).map(manifest => {
+    const catalogKey = manifest.modelConfig?.catalogKey || manifest.key;
+    const staticModels = getModelIdsByToolType(catalogKey);
+    return {
+      key: manifest.key,
+      label: manifest.label || manifest.title || manifest.key,
+      catalogKey,
+      models: staticModels.length > 0 ? staticModels : getConfiguredChannelModels(manifest.key)
+    };
+  });
+}
+
+function resolveDefaultSpeedTestModels(config = {}, catalog = getPlatformCatalog(), platformEntries = null) {
   const configured = normalizeSpeedTestModels(config.defaultSpeedTestModels);
   const staticDefaults = normalizeSpeedTestModels(getDefaultSpeedTestModels());
-  return Object.fromEntries(getModelPlatformEntries(catalog).map(({ key, catalogKey }) => [
+  const entries = platformEntries || getModelPlatformEntries(catalog);
+  return Object.fromEntries(entries.map(({ key, catalogKey, models }) => [
     key,
     configured[key]
       || configured[catalogKey]
       || staticDefaults[catalogKey]
       || staticDefaults[key]
+      || models[0]
       || null
   ]));
 }
@@ -101,7 +131,7 @@ function handleGetModelSettings(req, res) {
     const definitions = normalizeDefinitions(config.modelDefinitions);
     const catalog = getPlatformCatalog();
     const platformEntries = getModelPlatformEntries(catalog);
-    const defaultSpeedTestModels = resolveDefaultSpeedTestModels(config, catalog);
+    const defaultSpeedTestModels = resolveDefaultSpeedTestModels(config, catalog, platformEntries);
     const toolModels = Object.fromEntries(platformEntries.map(({ key, models }) => [key, models]));
 
     // Build merged table: built-in + user overrides

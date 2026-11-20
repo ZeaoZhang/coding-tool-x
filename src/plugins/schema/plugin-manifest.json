@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/zhangzeao/coding-tool/blob/main/src/plugins/schema/plugin-manifest.json",
+  "$id": "https://github.com/ZeaoZhang/coding-tool-x/blob/main/src/plugins/schema/plugin-manifest.json",
   "title": "CTX Plugin Manifest",
   "description": "Schema for Coding-Tool-X (ctx) plugin manifest file",
   "type": "object",

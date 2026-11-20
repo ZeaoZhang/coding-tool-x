@@ -78,7 +78,7 @@
       </n-button>
 
       <!-- Launch Button with Dropdown -->
-      <n-button v-if="!session.readOnly" type="primary" size="small" @click="$emit('launch', session)">
+      <n-button v-if="!session.readOnly || session.launchable" type="primary" size="small" @click="$emit('launch', session)">
         <template #icon>
           <n-icon><TerminalOutline /></n-icon>
         </template>

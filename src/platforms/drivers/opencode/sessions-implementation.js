@@ -3,6 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { DatabaseSync } = require('node:sqlite');
 const { NATIVE_PATHS, PATHS } = require('../../../config/paths');
+const { quoteShellArgument } = require('../../../shared/shell-quote');
 
 /**
  * OpenCode 会话服务
@@ -980,6 +981,22 @@ function getProjectAndSessionCounts(options = {}) {
   };
 }
 
+function getSessionLaunchCommand(sessionId, { fork = false, cwd } = {}) {
+  const normalizedSessionId = String(sessionId || '').trim();
+  if (!normalizedSessionId) throw new Error('Session id is required');
+  const session = getSessionById(normalizedSessionId);
+  const launchCwd = (typeof cwd === 'string' && cwd.trim())
+    || session?.directory
+    || process.cwd();
+  const args = ['opencode', '--session', normalizedSessionId];
+  if (fork) args.push('--fork');
+  return {
+    command: args.map(quoteShellArgument).join(' '),
+    args,
+    cwd: launchCwd
+  };
+}
+
 module.exports = {
   configure,
   getOpenCodeDbPath,
@@ -992,6 +1009,7 @@ module.exports = {
   getSessionStatus,
   getSessionMessages,
   getSessionOutline,
+  getSessionLaunchCommand,
   searchSessions,
   getRecentSessions,
   deleteSession,

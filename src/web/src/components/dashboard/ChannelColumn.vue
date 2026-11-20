@@ -829,10 +829,16 @@ function debouncedRefreshDashboardStats() {
   if (statsDebounceTimer) {
     clearTimeout(statsDebounceTimer)
   }
-  // 5秒内的多次调用只执行最后一次
+  // 新日志到达后尽快刷新一次；连续日志只保留最后一次。
   statsDebounceTimer = setTimeout(() => {
+    statsDebounceTimer = null
     scheduleRefresh({ fresh: true }).then(() => loadStats()).catch(() => {})
-  }, 5000)
+  }, 1200)
+}
+
+function handleNativeLogReceived(event) {
+  if (event?.detail?.source !== props.channelType) return
+  debouncedRefreshDashboardStats()
 }
 
 watch(logsToDisplay, (newLogs) => {
@@ -1097,6 +1103,7 @@ onMounted(async () => {
   loadShowLogs()
   loadLockState()
   window.addEventListener('panel-visibility-change', handleVisibilityChange)
+  window.addEventListener('native-log-received', handleNativeLogReceived)
 
   // 初始化动画数值
   animatedStats.value = { ...todayStats.value }
@@ -1113,6 +1120,7 @@ onUnmounted(() => {
   if (timeIntervalId) clearInterval(timeIntervalId)
   if (statsDebounceTimer) clearTimeout(statsDebounceTimer)
   window.removeEventListener('panel-visibility-change', handleVisibilityChange)
+  window.removeEventListener('native-log-received', handleNativeLogReceived)
 
   // 清理动画计时器
   Object.values(animationFrameIds).forEach(id => {

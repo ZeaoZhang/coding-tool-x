@@ -342,6 +342,9 @@ class DshChannelService extends BaseChannelService {
   }
 
   _validateBeforeChannelMutation(channel, _allChannels, { operation }) {
+    if (['create', 'update', 'apply'].includes(operation) && !isProxyModeEnabled()) {
+      this._assertNativeChannelWriteAllowed(this._resolveNativeChannelState());
+    }
     if (operation === 'apply' && isProxyModeEnabled()) {
       const error = new Error('请先停止 DSH 动态代理，再写入渠道配置');
       error.statusCode = 409;
@@ -403,6 +406,7 @@ class DshChannelService extends BaseChannelService {
     this._removeNativeProvider(channel.providerKey);
     this._removeCredentialsForChannels([channel]);
     if (isProxyModeEnabled()) return;
+    if (this._resolveNativeChannelState().disabled === true) return;
     this._syncNativeSettingsForChannels(allChannels);
   }
 
@@ -427,6 +431,8 @@ class DshChannelService extends BaseChannelService {
       providers: { ...profileSource.providers },
       selected: { ...profileSource.selected },
       missing: profileSource.missing === true,
+      disabled: profileSource.disabled === true,
+      disabledSource: profileSource.disabledSource || null,
       settings: null
     };
   }
@@ -449,6 +455,17 @@ class DshChannelService extends BaseChannelService {
     };
   }
 
+  _assertNativeChannelWriteAllowed(state) {
+    if (!state || state.kind !== 'profile' || state.disabled !== true) return;
+    const source = state.disabledSource || state.patchPath;
+    const error = new Error(
+      `DSH profile "${state.profile}" 的 llm-pi-ai 已被禁用（${source} 中的 disabled: true），无法写入渠道配置；请先移除该禁用项或重新启用该模块`
+    );
+    error.statusCode = 409;
+    error.code = 'dsh_profile_module_disabled';
+    throw error;
+  }
+
   _writeNativeChannelState(state, { providers = {}, selected = {} } = {}) {
     if (!state) throw new Error('DSH native channel state is required');
     if (state.missing) {
@@ -457,6 +474,7 @@ class DshChannelService extends BaseChannelService {
       error.code = 'dsh_profile_missing';
       throw error;
     }
+    this._assertNativeChannelWriteAllowed(state);
     const nextSelected = isObject(selected) ? { ...selected } : {};
     if (state.kind === 'profile') {
       const context = { paths: this.nativePaths };
@@ -551,6 +569,7 @@ class DshChannelService extends BaseChannelService {
     const allChannels = (channels || []).filter(channel => channel && channel.providerKey);
     const enabledChannels = this._orderEnabledChannels(allChannels, preferredChannelId);
     const state = this._resolveNativeChannelState();
+    this._assertNativeChannelWriteAllowed(state);
     const providers = { ...state.providers };
 
     delete providers['ctx-dsh-proxy'];
@@ -621,11 +640,24 @@ class DshChannelService extends BaseChannelService {
     const selectedProviderKey = String(selected.provider || '').trim();
     const providers = state.providers;
     const source = state.kind === 'profile'
-      ? { type: 'profile', profile: state.profile, path: state.patchPath, missing: state.missing === true }
+      ? {
+        type: 'profile',
+        profile: state.profile,
+        path: state.patchPath,
+        missing: state.missing === true,
+        disabled: state.disabled === true
+      }
       : { type: 'settings', path: state.patchPath };
     const configuredProviders = Object.entries(providers)
       .filter(([providerKey, provider]) => providerKey !== 'ctx-dsh-proxy' && isObject(provider));
     if (configuredProviders.length === 0) {
+      let warning = 'DSH 设置和 profiles 中没有可同步的 llm-pi-ai.providers';
+      if (state.missing) {
+        warning = `DSH profile "${state.profile}" 未安装或未初始化`;
+      } else if (state.disabled) {
+        const disabledPath = state.disabledSource || state.patchPath;
+        warning = `DSH profile "${state.profile}" 的 llm-pi-ai 已被禁用（${disabledPath} 中的 disabled: true），其 providers 不会生效；请移除该禁用项或重新启用后再同步`;
+      }
       return {
         added: 0,
         updated: 0,
@@ -633,9 +665,7 @@ class DshChannelService extends BaseChannelService {
         channels: [],
         current: null,
         source,
-        warnings: [state.missing
-          ? `DSH profile "${state.profile}" 未安装或未初始化`
-          : 'DSH 设置和 profiles 中没有可同步的 llm-pi-ai.providers']
+        warnings: [warning]
       };
     }
 
@@ -753,6 +783,7 @@ class DshChannelService extends BaseChannelService {
       || enabledChannels[0]
       || null;
     clearActiveMarker();
+    if (this._resolveNativeChannelState().disabled === true) return selected;
     this._syncNativeSettingsForChannels(channels, selected?.id || null);
     return selected;
   }

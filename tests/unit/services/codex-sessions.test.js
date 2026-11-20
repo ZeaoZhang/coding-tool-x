@@ -29,7 +29,8 @@ function injectStubs() {
       parseSession:      vi.fn(() => null),
       parseSessionMeta:  vi.fn(() => null),
       extractSessionMeta: vi.fn(() => null),
-      readJSONL:         vi.fn(() => [])
+      readJSONL:         vi.fn(() => []),
+      parseSessionSummary: vi.fn(() => ({ session: { projectFullPath: '/repo/demo' } }))
     }
   };
 
@@ -268,6 +269,32 @@ describe('codex-sessions', () => {
       expect(typeof result.sessionCount).toBe('number');
       // At least the 3 files are scanned
       expect(result.sessionCount).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // getSessionLaunchCommand
+  // -------------------------------------------------------------------------
+
+  describe('getSessionLaunchCommand', () => {
+    it('builds resume and fork commands with the session cwd', async () => {
+      const moduleUnderTest = require(MODULE_PATH);
+      moduleUnderTest.configure({
+        sessionHistoryIndex: {
+          getSessionStatus: vi.fn(async () => ({ filePath: '/tmp/rollout.jsonl' }))
+        }
+      });
+
+      await expect(moduleUnderTest.getSessionLaunchCommand('session-1')).resolves.toEqual({
+        command: 'codex resume session-1',
+        args: ['codex', 'resume', 'session-1'],
+        cwd: '/repo/demo'
+      });
+      await expect(moduleUnderTest.getSessionLaunchCommand('session-1', { fork: true })).resolves.toEqual({
+        command: 'codex fork session-1',
+        args: ['codex', 'fork', 'session-1'],
+        cwd: '/repo/demo'
+      });
     });
   });
 

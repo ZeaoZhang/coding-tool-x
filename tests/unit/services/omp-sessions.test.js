@@ -113,6 +113,20 @@ describe('OMP session parser', () => {
       .toBe('omp --fork "omp-session-1"');
   });
 
+  test('builds a copyable resume command from the session header', async () => {
+    const sessionFile = path.join(sessionDir, 'session-launch.jsonl');
+    writeJsonl(sessionFile, [
+      { type: 'session', version: 3, id: 'omp-session-launch', cwd: '/repo/launch-demo' }
+    ]);
+
+    const { getSessionLaunchCommand } = loadModule();
+    expect(await getSessionLaunchCommand('omp-session-launch')).toEqual({
+      command: 'omp --resume omp-session-launch',
+      args: ['omp', '--resume', 'omp-session-launch'],
+      cwd: '/repo/launch-demo'
+    });
+  });
+
   test('parses v3 JSONL header, roles, usage, and latest model change', async () => {
     const sessionFile = path.join(sessionDir, 'session-1.jsonl');
     writeJsonl(sessionFile, [
@@ -174,6 +188,8 @@ describe('OMP session parser', () => {
         sessionId: 'omp-session-1',
         provider: 'openai',
         model: 'gpt-omp',
+        projectName: '----repo--demo--',
+        projectFullPath: '/repo/demo',
         tokens: expect.objectContaining({ total: 37 })
       })
     ]);

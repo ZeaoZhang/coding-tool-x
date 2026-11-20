@@ -40,8 +40,9 @@ function createDriver({ pathContext } = {}) {
             provider: event.provider,
             model: event.model,
             tokens: normalizeUsage(event.usage),
-            cost: normalizeCost(event.usage?.cost)
-              || calculateUsageCost('omp', event.model || '', normalizeUsage(event.usage)),
+            cost: calculateUsageCost('omp', event.model || '', event.usage)
+              || normalizeCost(event.usage?.cost)
+              || 0,
             ...resolveChannel(event.provider)
           }));
         },

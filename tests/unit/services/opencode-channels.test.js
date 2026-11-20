@@ -591,6 +591,52 @@ describe('syncCurrentOpenCodeChannel', () => {
     }));
   });
 
+  it('reports a current provider disabled by disabled_providers', () => {
+    readConfig.mockReturnValue({
+      model: 'current-provider/gpt-4.1',
+      disabled_providers: ['current-provider'],
+      provider: {
+        'current-provider': {
+          options: {
+            baseURL: 'https://opencode-current.example/v1',
+            apiKey: 'opencode-current-key'
+          },
+          models: { 'gpt-4.1': {} }
+        }
+      }
+    });
+
+    const result = service.syncCurrentOpenCodeChannel();
+
+    expect(result.added).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.warnings[0]).toContain('disabled_providers');
+    expect(fs.existsSync(channelsFile)).toBe(false);
+  });
+
+  it('reports a current provider excluded by enabled_providers', () => {
+    readConfig.mockReturnValue({
+      model: 'current-provider/gpt-4.1',
+      enabled_providers: ['other-provider'],
+      provider: {
+        'current-provider': {
+          options: {
+            baseURL: 'https://opencode-current.example/v1',
+            apiKey: 'opencode-current-key'
+          },
+          models: { 'gpt-4.1': {} }
+        }
+      }
+    });
+
+    const result = service.syncCurrentOpenCodeChannel();
+
+    expect(result.added).toBe(0);
+    expect(result.skipped).toBe(1);
+    expect(result.warnings[0]).toContain('enabled_providers');
+    expect(fs.existsSync(channelsFile)).toBe(false);
+  });
+
   it('imports model metadata definitions while dropping unsupported modalities', () => {
     readConfig.mockReturnValue({
       model: 'metadata-provider/gpt-4.1',

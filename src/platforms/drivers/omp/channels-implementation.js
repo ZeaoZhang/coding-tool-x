@@ -618,6 +618,12 @@ function buildOmpSyncCandidate(modelsConfig, selection, channels, options = {}) 
       warning: `OMP 当前 provider "${providerId}" 未在 models.yml 中定义。`
     };
   }
+  if (options.disabledProviderIds?.has(normalizeProviderId(providerId))) {
+    return {
+      skip: true,
+      warning: `OMP 当前 provider "${providerId}" 已在 config.yml 的 disabledProviders 中禁用，无法同步当前渠道；请先移除该禁用项。`
+    };
+  }
 
   const managedProvider = isManagedOmpProviderId(providerId);
   const originalProviderEntry = managedProvider
@@ -731,8 +737,14 @@ function syncCurrentOmpChannel(options = {}) {
   const channels = Array.isArray(data.channels) ? data.channels : [];
   const selections = collectOmpSyncSelections(modelsConfig, settings);
   if (selections.length === 0) return createSkippedResult('omp', 'OMP 当前配置未明确 provider，无法同步当前渠道。');
+  const disabledProviderIds = new Set(
+    (Array.isArray(settings.disabledProviders) ? settings.disabledProviders : [])
+      .map(providerId => String(providerId || '').trim())
+      .filter(Boolean)
+      .map(providerId => normalizeProviderId(providerId))
+  );
   const candidates = selections
-    .map(selection => buildOmpSyncCandidate(modelsConfig, selection, channels, { authMode }))
+    .map(selection => buildOmpSyncCandidate(modelsConfig, selection, channels, { authMode, disabledProviderIds }))
     .filter(candidate => authMode === 'all'
       || candidate.authMode === authMode
       || (authMode === 'api_key' && candidate.authMode === 'none')

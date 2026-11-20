@@ -5,6 +5,7 @@ const { spawnSync } = require('child_process');
 const { getAllSessions, parseSessionInfoFast } = require('../../../utils/session');
 const { loadAliases, setAlias } = require('../../../server/services/alias');
 const { globalCache, CacheKeys } = require('../../../server/services/enhanced-cache');
+const { quoteShellArgument } = require('../../../shared/shell-quote');
 let sessionHistoryIndex = null;
 
 function getSessionHistoryIndex(config = {}) {
@@ -93,13 +94,6 @@ function resolveLaunchCwd(config, sessionId, cwd) {
     }
   }
   return process.cwd();
-}
-
-function quoteShellArgument(value) {
-  const text = String(value);
-  return /^[A-Za-z0-9_@%+=:,./-]+$/.test(text)
-    ? text
-    : `"${text.replace(/(["\\$`])/g, '\\$1')}"`;
 }
 
 function getSessionLaunchCommand(sessionId, {

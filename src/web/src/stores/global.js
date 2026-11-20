@@ -336,6 +336,11 @@ export const useGlobalStore = defineStore('global', () => {
       setTimeout(() => {
         entry.isNew = false
       }, 4500)
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('native-log-received', {
+          detail: { source, entry }
+        }))
+      }
     }
   }
 

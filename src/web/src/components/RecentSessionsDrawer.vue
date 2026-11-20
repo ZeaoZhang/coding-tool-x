@@ -78,6 +78,7 @@ function getChannelTitle() {
   if (props.channel === 'gemini') return 'Gemini 最新对话'
   if (props.channel === 'opencode') return 'OpenCode 最新对话'
   if (props.channel === 'omp') return 'OMP 最新对话'
+  if (props.channel === 'dsh') return 'DSH 最新对话'
   return '最新对话'
 }
 

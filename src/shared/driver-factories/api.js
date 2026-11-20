@@ -60,7 +60,9 @@ function argsFor(capability, operation, context) {
         ? [projectName, params.sessionId, mutationOptions]
         : [params.sessionId, mutationOptions];
     }
-    if (operation === 'launch') return [params.sessionId, { ...options, ...(context.body || {}) }];
+    if (operation === 'launch') {
+      return [params.sessionId, { ...options, ...(context.body || {}), projectName }];
+    }
     if (operation === 'batchDelete') return [projectName, context.body?.sessionIds || context.body?.ids || [], options];
     if (operation === 'createSession') return [projectName, context.body || {}, options];
     if (operation === 'saveSessionOrder') return [projectName, context.body?.order || context.body, options];

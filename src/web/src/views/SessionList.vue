@@ -230,7 +230,7 @@
                   </template>
                   Fork
                 </n-button>
-                <n-button v-if="!session.readOnly" size="small" type="primary" @click.stop="handleLaunchTerminal(session.sessionId)">
+                <n-button v-if="!session.readOnly || session.launchable" size="small" type="primary" @click.stop="handleLaunchTerminal(session.sessionId)">
                   <template #icon>
                     <n-icon><TerminalOutline /></n-icon>
                   </template>
@@ -323,7 +323,7 @@
               </n-text>
               <n-tag size="small" :bordered="false">{{ session.matchCount }} 个匹配</n-tag>
             </div>
-            <n-button v-if="!session.readOnly" size="small" type="primary" @click="handleLaunchTerminal(session.sessionId)">
+            <n-button v-if="!session.readOnly || session.launchable" size="small" type="primary" @click="handleLaunchTerminal(session.sessionId)">
               <template #icon>
                 <n-icon><TerminalOutline /></n-icon>
               </template>
@@ -750,7 +750,8 @@ function syncDeletedSessionState(sessionIds) {
 
 async function handleLaunchTerminal(sessionId) {
   const session = orderedSessions.value.find(item => item.sessionId === sessionId)
-  if (projectReadOnly.value || session?.readOnly) return
+  if (session?.readOnly && !session?.launchable) return
+  if (projectReadOnly.value && !session?.launchable) return
   try {
     const { copyResult } = await copySessionLaunchCommand(effectiveProjectName.value, sessionId, currentChannel.value)
     if (copyResult?.method === 'manual') {

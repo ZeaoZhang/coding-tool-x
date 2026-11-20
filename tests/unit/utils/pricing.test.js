@@ -68,6 +68,14 @@ describe('calculateTokenCost', () => {
     expect(cost).toBeCloseTo(22.05, 8);
   });
 
+  it('prices a configured reasoning rate separately from output', () => {
+    const cost = calculateTokenCost(
+      { input: 1, output: 10, reasoning: 4 },
+      { input: 1000000, output: 1000000, reasoning: 1000000 }
+    );
+    expect(cost).toBeCloseTo(15, 8);
+  });
+
   it('can bill provider thinking tokens as output without changing the default contract', () => {
     const cost = calculateTokenCost(
       { input: 1, output: 10 },

@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const { getCodexDir } = require('./config');
-const { parseSession, parseSessionMeta, extractSessionMeta, readJSONL } = require('./parser');
+const { parseSession, parseSessionMeta, extractSessionMeta, readJSONL, parseSessionSummary } = require('./parser');
+const { quoteShellArgument } = require('../../../shared/shell-quote');
 const { globalCache, CacheKeys } = require('../../../server/services/enhanced-cache');
 let sessionHistoryIndex = null;
 let codexDirOverride = null;
@@ -839,6 +840,25 @@ async function getProjectAndSessionCounts(options = {}) {
   };
 }
 
+async function getSessionLaunchCommand(sessionId, { fork = false, cwd } = {}) {
+  const normalizedSessionId = String(sessionId || '').trim();
+  if (!normalizedSessionId) throw new Error('Session id is required');
+  const status = await getSessionHistoryIndex().getSessionStatus('codex', normalizedSessionId);
+  let launchCwd = typeof cwd === 'string' && cwd.trim() ? cwd : null;
+  if (!launchCwd && status?.filePath) {
+    const summary = parseSessionSummary(status.filePath, { sessionId: normalizedSessionId });
+    launchCwd = summary?.session?.projectFullPath || null;
+  }
+  const args = fork
+    ? ['codex', 'fork', normalizedSessionId]
+    : ['codex', 'resume', normalizedSessionId];
+  return {
+    command: args.map(quoteShellArgument).join(' '),
+    args,
+    cwd: launchCwd || process.cwd()
+  };
+}
+
 module.exports = {
   configure,
   getSessionsDir,
@@ -849,6 +869,7 @@ module.exports = {
   getSessionsByProject,
   getSessionsPage,
   getSessionById,
+  getSessionLaunchCommand,
   searchSessions,
   normalizeSession,
   forkSession,

@@ -5,6 +5,7 @@ const { calculateUsageCost } = require('../../../src/server/services/usage-log-u
 const calculateCodexCost = (model, tokens) => calculateUsageCost('codex', model, tokens);
 const calculateOpenCodeCost = (model, tokens) => calculateUsageCost('opencode', model, tokens);
 const calculateGeminiCost = (model, tokens) => calculateUsageCost('gemini', model, tokens);
+const calculateOmpCost = (model, tokens) => calculateUsageCost('omp', model, tokens);
 
 describe('proxy cost calculation', () => {
   test('Codex uses GPT-5.5 API pricing including cached input', () => {
@@ -29,6 +30,23 @@ describe('proxy cost calculation', () => {
       output: 1000000,
       cacheRead: 1000000
     })).toBeCloseTo(11.375, 8);
+  });
+
+  test('OMP prices input, output, reasoning and cached tokens separately', () => {
+    expect(calculateOmpCost('deepseek-flash', {
+      input: 1000000,
+      output: 1000000,
+      reasoning: 1000000,
+      cacheRead: 1000000
+    })).toBeCloseTo(1.353, 8);
+  });
+
+  test('OMP usage without cached tokens still bills reasoning at output rate', () => {
+    expect(calculateOmpCost('deepseek-flash', {
+      input: 1000000,
+      output: 1000000,
+      reasoning: 1000000
+    })).toBeCloseTo(1.35, 8);
   });
 
   test('unknown model without an override has no cost', () => {

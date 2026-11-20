@@ -217,6 +217,21 @@ describe('opencode-sessions', () => {
     });
   });
 
+  describe('getSessionLaunchCommand', () => {
+    test('builds a resume command in the session directory', () => {
+      expect(opencodeSessions.getSessionLaunchCommand('ses-1')).toEqual({
+        command: 'opencode --session ses-1',
+        args: ['opencode', '--session', 'ses-1'],
+        cwd: '/workspace/app-a'
+      });
+      expect(opencodeSessions.getSessionLaunchCommand('ses-1', { fork: true })).toEqual({
+        command: 'opencode --session ses-1 --fork',
+        args: ['opencode', '--session', 'ses-1', '--fork'],
+        cwd: '/workspace/app-a'
+      });
+    });
+  });
+
   describe('getProjects', () => {
     test('returns project list with display names', () => {
       const projects = opencodeSessions.getProjects();

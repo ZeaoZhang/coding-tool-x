@@ -4,7 +4,7 @@ const {
   getDailyStatistics: getSharedDailyStatistics,
   getTodayStatistics: getSharedTodayStatistics
 } = require('../../../server/services/statistics-service');
-const { normalizeUsageTokens, toNumber } = require('../../../server/services/usage-log-utils');
+const { normalizeUsageTokens, toNumber, calculateUsageCost } = require('../../../server/services/usage-log-utils');
 
 const TOOL_TYPE = 'omp';
 
@@ -133,23 +133,25 @@ function hasDailyData(daily = {}) {
   );
 }
 
-function getSessionTimestamp(session = {}) {
-  const value = session.timestamp || session.mtime || session.mtimeMs || null;
-  const date = value ? new Date(value) : null;
-  return date && !Number.isNaN(date.getTime()) ? date : null;
+const CST_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+function getEventDateKey(timestamp) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Date(date.getTime() + CST_OFFSET_MS).toISOString().slice(0, 10);
 }
 
-function getSessionDateKey(session = {}) {
-  const date = getSessionTimestamp(session);
-  return date ? date.toISOString().slice(0, 10) : null;
+function dateWindow(date) {
+  const start = Date.parse(`${date}T00:00:00+08:00`);
+  return Number.isNaN(start) ? {} : { sinceMs: start };
 }
 
-function getSessionUsage(session = {}) {
-  return normalizeUsageTokens(TOOL_TYPE, session.usage || session.tokens || {});
+function getEventUsage(event = {}) {
+  return normalizeUsageTokens(TOOL_TYPE, event.usage || event.tokens || {});
 }
 
-function addSessionUsage(entry, session) {
-  const tokens = getSessionUsage(session);
+function addEventUsage(entry, event) {
+  const tokens = getEventUsage(event);
   if (!tokens.total && !tokens.input && !tokens.output && !tokens.reasoning && !tokens.cached) {
     return false;
   }
@@ -160,11 +162,11 @@ function addSessionUsage(entry, session) {
   entry.tokens.reasoning += tokens.reasoning;
   entry.tokens.cached += tokens.cached;
   entry.tokens.total += tokens.total;
-  entry.cost += toNumber(session.cost || session.usage?.cost || 0);
+  entry.cost += calculateUsageCost(TOOL_TYPE, event.model, event.usage)
+    || toNumber(event.cost || event.usage?.cost || 0);
 
-  const timestamp = getSessionTimestamp(session);
-  if (timestamp) {
-    const iso = timestamp.toISOString();
+  if (event.timestamp) {
+    const iso = new Date(event.timestamp).toISOString();
     if (!entry.firstUsed || iso < entry.firstUsed) entry.firstUsed = iso;
     if (!entry.lastUsed || iso > entry.lastUsed) entry.lastUsed = iso;
   }
@@ -172,51 +174,35 @@ function addSessionUsage(entry, session) {
   return true;
 }
 
-async function readSessionUsage() {
+function readSessionUsageEvents(options = {}) {
   try {
-    const { getAllSessions } = require('./sessions-implementation');
-    const sessions = await getAllSessions();
-    return Array.isArray(sessions)
-      ? sessions.map(session => ({
-        provider: session.provider,
-        model: session.model,
-        timestamp: session.timestamp,
-        mtime: session.mtime,
-        mtimeMs: session.mtimeMs,
-        usage: session.usage || session.tokens,
-        tokens: session.tokens,
-        cost: session.cost || session.usage?.cost || session.tokens?.cost
-      }))
-      : [];
+    const { getOmpUsageEvents } = require('./sessions-implementation');
+    const events = getOmpUsageEvents(undefined, options);
+    return Array.isArray(events) ? events : [];
   } catch {
     return [];
   }
 }
 
-function buildSessionDerivedStatistics(sessions = []) {
+function buildSessionDerivedStatistics(events = []) {
   const globalEntry = initAggregateEntry('OMP Sessions');
   const byChannel = {};
   const byModel = {};
 
-  sessions.forEach((session) => {
-    const tokens = getSessionUsage(session);
-    if (!tokens.total && !tokens.input && !tokens.output && !tokens.reasoning && !tokens.cached) {
-      return;
-    }
+  events.forEach((event) => {
+    if (!addEventUsage(globalEntry, event)) return;
 
-    addSessionUsage(globalEntry, session);
-
-    const channelKey = session.provider || 'omp-session';
+    const channelKey = event.provider || 'omp-session';
     if (!byChannel[channelKey]) {
-      byChannel[channelKey] = initAggregateEntry(session.provider || 'OMP Session');
+      byChannel[channelKey] = initAggregateEntry(event.provider || 'OMP Session');
     }
-    addSessionUsage(byChannel[channelKey], session);
+    addEventUsage(byChannel[channelKey], event);
 
-    const modelKey = session.model || 'unknown';
+    const modelKey = event.model || 'unknown';
     if (!byModel[modelKey]) {
       byModel[modelKey] = initAggregateEntry(modelKey);
     }
-    addSessionUsage(byModel[modelKey], session);
+    addEventUsage(byModel[modelKey], event);
   });
 
   return {
@@ -237,32 +223,27 @@ function buildSessionDerivedStatistics(sessions = []) {
   };
 }
 
-function buildSessionDerivedDailyStatistics(date, sessions = []) {
+function buildSessionDerivedDailyStatistics(date, events = []) {
   const globalEntry = initAggregateEntry('OMP Sessions');
   const byChannel = {};
   const byModel = {};
 
-  sessions
-    .filter(session => getSessionDateKey(session) === date)
-    .forEach((session) => {
-      const tokens = getSessionUsage(session);
-      if (!tokens.total && !tokens.input && !tokens.output && !tokens.reasoning && !tokens.cached) {
-        return;
-      }
+  events
+    .filter(event => getEventDateKey(event.timestamp) === date)
+    .forEach((event) => {
+      if (!addEventUsage(globalEntry, event)) return;
 
-      addSessionUsage(globalEntry, session);
-
-      const channelKey = session.provider || 'omp-session';
+      const channelKey = event.provider || 'omp-session';
       if (!byChannel[channelKey]) {
-        byChannel[channelKey] = initAggregateEntry(session.provider || 'OMP Session');
+        byChannel[channelKey] = initAggregateEntry(event.provider || 'OMP Session');
       }
-      addSessionUsage(byChannel[channelKey], session);
+      addEventUsage(byChannel[channelKey], event);
 
-      const modelKey = session.model || 'unknown';
+      const modelKey = event.model || 'unknown';
       if (!byModel[modelKey]) {
         byModel[modelKey] = initAggregateEntry(modelKey);
       }
-      addSessionUsage(byModel[modelKey], session);
+      addEventUsage(byModel[modelKey], event);
     });
 
   return {
@@ -301,22 +282,21 @@ function recordRequest(requestData = {}) {
 
 async function getStatistics() {
   const shared = buildSummaryStatistics(getSharedStatistics());
-  return hasSummaryData(shared) ? shared : buildSessionDerivedStatistics(await readSessionUsage());
+  return hasSummaryData(shared) ? shared : buildSessionDerivedStatistics(readSessionUsageEvents());
 }
 
 async function getDailyStatistics(date) {
   const shared = buildDailyStatistics(getSharedDailyStatistics(date), date);
-  return hasDailyData(shared) ? shared : buildSessionDerivedDailyStatistics(date, await readSessionUsage());
+  if (hasDailyData(shared)) return shared;
+  const targetDate = shared.date || date || getEventDateKey(Date.now());
+  return buildSessionDerivedDailyStatistics(targetDate, readSessionUsageEvents(dateWindow(targetDate)));
 }
 
 async function getTodayStatistics() {
   const shared = buildDailyStatistics(getSharedTodayStatistics());
-  return hasDailyData(shared)
-    ? shared
-    : buildSessionDerivedDailyStatistics(
-      shared.date || new Date().toISOString().slice(0, 10),
-      await readSessionUsage()
-    );
+  if (hasDailyData(shared)) return shared;
+  const targetDate = shared.date || getEventDateKey(Date.now());
+  return buildSessionDerivedDailyStatistics(targetDate, readSessionUsageEvents(dateWindow(targetDate)));
 }
 
 module.exports = {

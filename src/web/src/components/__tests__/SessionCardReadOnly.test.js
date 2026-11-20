@@ -22,3 +22,25 @@ it('hides unsupported actions on read-only sessions', () => {
   expect(wrapper.find('.session-actions button[type="error"]').exists()).toBe(false)
   wrapper.unmount()
 })
+
+it('keeps the copyable launch action for launchable read-only sessions', () => {
+  const wrapper = mount(SessionCard, {
+    props: {
+      channel: 'dsh',
+      session: {
+        sessionId: 'launchable-session',
+        readOnly: true,
+        launchable: true,
+        projectName: 'dsh-project',
+        mtime: Date.now(),
+        size: 128
+      }
+    }
+  })
+
+  const actions = wrapper.find('.session-actions').text()
+  expect(actions).toContain('使用对话')
+  expect(actions).not.toContain('Fork')
+  expect(wrapper.find('.session-actions button[type="error"]').exists()).toBe(false)
+  wrapper.unmount()
+})
