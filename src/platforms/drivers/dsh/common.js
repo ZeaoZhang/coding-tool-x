@@ -350,6 +350,9 @@ function listProfilePlugins(context = {}, profileName) {
       patchPaths,
       patchExists,
       description: packageJson.description || '',
+      // Absolute package root so README/detail lookups do not have to resolve
+      // node_modules themselves.
+      installPath: packageDir || null,
       inBundleList: bundleNames.includes(name),
       builtIn: isBuiltInProfilePackage(packageDir, name, profile.profileDir, paths),
       management: 'ctx+dsh-plugin'

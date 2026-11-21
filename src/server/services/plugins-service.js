@@ -50,6 +50,9 @@ const CODEX_PLUGINS_CACHE_DIR = path.join(CODEX_PLUGINS_DIR, 'cache');
 const OPENCODE_CONFIG_DIR = NATIVE_PATHS.opencode.config;
 const REPO_SOURCE_META_FILE = '.cc-tool-plugin-source.json';
 const SUPPORTED_REPO_PROVIDERS = ['github', 'gitlab', 'local'];
+// Native marketplaces are owned by the CLI and carry no GitHub/GitLab shape.
+// They are serialized unchanged instead of being normalized.
+const NATIVE_REPO_PROVIDERS = new Set(['omp-marketplace']);
 // Plugin mutations invalidate this cache explicitly; a longer TTL keeps the
 // plugin panel from re-walking native directories on every open.
 const PLUGIN_LIST_TTL_MS = 30 * 1000;
@@ -745,6 +748,16 @@ class PluginsService {
   }
 
   toClientRepo(repo = {}) {
+    if (NATIVE_REPO_PROVIDERS.has(repo?.provider)) {
+      const token = normalizeRepoToken(repo.token);
+      const clientRepo = {
+        ...repo,
+        hasToken: Boolean(token),
+        tokenPreview: token ? maskToken(token) : ''
+      };
+      delete clientRepo.token;
+      return clientRepo;
+    }
     const normalizedRepo = this.normalizeRepoConfig(repo);
     const token = normalizeRepoToken(normalizedRepo.token);
     const clientRepo = {
@@ -758,7 +771,16 @@ class PluginsService {
 
   getReposForClient(repos = null) {
     const sourceRepos = Array.isArray(repos) ? repos : this.getRepos();
-    return sourceRepos.map(repo => this.toClientRepo(repo));
+    return sourceRepos.map(repo => {
+      try {
+        return this.toClientRepo(repo);
+      } catch {
+        // One unparsable legacy entry must not blank the whole list.
+        const fallback = { ...repo };
+        delete fallback.token;
+        return fallback;
+      }
+    });
   }
 
   findStoredRepo(repo = {}) {
@@ -2048,7 +2070,13 @@ class PluginsService {
     }
 
     // Fallback to original git clone method
-    return await installPluginCore(source);
+    const legacyResult = await installPluginCore(source);
+    // The registry now lists the plugin; drop the cached list so the panel
+    // shows it on the next read instead of after the cache TTL.
+    if (legacyResult?.success !== false) {
+      this._invalidatePluginList(options);
+    }
+    return legacyResult;
   }
 
   /**
@@ -2244,14 +2272,14 @@ class PluginsService {
         this.writeRepoSourceMeta(pluginDir, repoSourceMeta);
       }
 
-      return {
+      return this._finalizePluginMutation({
         success: true,
         plugin: {
           name: manifest.name || pluginName,
           version: manifest.version || '1.0.0',
           description: manifest.description || ''
         }
-      };
+      }, options);
     } catch (err) {
       return {
         success: false,

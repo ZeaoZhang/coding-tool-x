@@ -88,9 +88,36 @@ async function validateKnownProjectCwd(rawCwd) {
   return resolved;
 }
 
+/**
+ * Validate a directory that a configuration template may write into.
+ *
+ * Templates are not limited to registered workspaces: writing to any existing
+ * absolute directory is allowed (the write path still resolves symlink
+ * components). Only the filesystem root is rejected.
+ *
+ * @param {string} rawPath
+ * @returns {string|null} realpath of the directory, or null for an empty input
+ */
+function validateProjectApplyTarget(rawPath) {
+  if (rawPath == null || String(rawPath).trim() === '') return null;
+  const input = String(rawPath).trim();
+  if (!path.isAbsolute(input)) {
+    throw new Error('目标路径必须是绝对路径');
+  }
+  const resolved = realDirectory(input);
+  if (!resolved) {
+    throw new Error('目标路径不存在或不是目录');
+  }
+  if (resolved === path.parse(resolved).root) {
+    throw new Error('不能把模板应用到文件系统根目录');
+  }
+  return resolved;
+}
+
 module.exports = {
   getKnownProjectPaths,
   resolveKnownProjectPath,
   isKnownProjectPath,
-  validateKnownProjectCwd
+  validateKnownProjectCwd,
+  validateProjectApplyTarget
 };

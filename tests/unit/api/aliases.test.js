@@ -22,12 +22,13 @@ const mockRes = () => {
 const aliasModPath = require.resolve('../../../src/server/services/alias');
 const mockSetAlias = vi.fn(() => ({ 'session-1': 'My Session' }));
 const mockDeleteAlias = vi.fn(() => ({}));
+const mockLoadAliases = vi.fn(() => ({ 'session-1': 'My Session' }));
 
 require.cache[aliasModPath] = {
   id: aliasModPath,
   filename: aliasModPath,
   loaded: true,
-  exports: { setAlias: mockSetAlias, deleteAlias: mockDeleteAlias }
+  exports: { setAlias: mockSetAlias, deleteAlias: mockDeleteAlias, loadAliases: mockLoadAliases }
 };
 
 // Load the router factory after stubbing
@@ -40,7 +41,31 @@ describe('aliases API', () => {
     vi.clearAllMocks();
     mockSetAlias.mockReturnValue({ 'session-1': 'My Session' });
     mockDeleteAlias.mockReturnValue({});
+    mockLoadAliases.mockReturnValue({ 'session-1': 'My Session' });
     router = routerFactory();
+  });
+
+  describe('GET /', () => {
+    it('returns all aliases', () => {
+      const handler = findHandler(router, 'get', '/');
+      const res = mockRes();
+
+      handler(mockReq(), res);
+
+      expect(mockLoadAliases).toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalledWith({ success: true, aliases: { 'session-1': 'My Session' } });
+    });
+
+    it('returns 500 when loading fails', () => {
+      const handler = findHandler(router, 'get', '/');
+      mockLoadAliases.mockImplementation(() => { throw new Error('read failed'); });
+      const res = mockRes();
+
+      handler(mockReq(), res);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith({ error: 'read failed' });
+    });
   });
 
   describe('POST /', () => {

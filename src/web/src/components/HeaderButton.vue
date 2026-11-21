@@ -2,12 +2,14 @@
   <n-tooltip :placement="tooltipPlacement">
     <template #trigger>
       <button
+        type="button"
         class="header-button"
         :class="{
           active: active,
           disabled: disabled
         }"
         :disabled="disabled"
+        :aria-label="tooltip || '工具栏按钮'"
         @click="handleClick"
       >
         <n-icon :size="iconSize" :color="iconColor">

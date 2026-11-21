@@ -44,3 +44,28 @@ describe('proxy driver CLI metadata', () => {
     });
   });
 });
+
+describe('proxy log clearing', () => {
+  it('clears logs for the driver platform through the websocket service', async () => {
+    const wsPath = require.resolve('../../../src/server/websocket-server');
+    const clearLogsBySource = vi.fn(async () => {});
+    const previous = require.cache[wsPath];
+    require.cache[wsPath] = {
+      id: wsPath,
+      filename: wsPath,
+      loaded: true,
+      exports: { clearLogsBySource }
+    };
+
+    try {
+      const driver = createDriver({ key: 'omp' });
+      const result = await driver.clearLogs();
+
+      expect(clearLogsBySource).toHaveBeenCalledWith('omp');
+      expect(result).toMatchObject({ status: 'ok', data: { source: 'omp' } });
+    } finally {
+      if (previous) require.cache[wsPath] = previous;
+      else delete require.cache[wsPath];
+    }
+  });
+});

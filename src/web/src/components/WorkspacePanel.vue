@@ -123,17 +123,26 @@ const filteredWorkspaces = computed(() => {
   )
 })
 
+// An older GET that resolves after a create/delete would restore the list from
+// before the mutation, so every read carries a request id.
+let loadRequestId = 0
+
 async function loadData() {
+  const requestId = ++loadRequestId
   loading.value = true
   try {
     const res = await getWorkspaces()
+    if (requestId !== loadRequestId) return
     if (res.success) {
       workspaces.value = res.data || []
     }
   } catch (err) {
+    if (requestId !== loadRequestId) return
     message.error('加载工作区失败: ' + err.message)
   } finally {
-    loading.value = false
+    if (requestId === loadRequestId) {
+      loading.value = false
+    }
   }
 }
 
@@ -153,7 +162,7 @@ function handleDelete(ws) {
         const res = await deleteWorkspace(ws.id, false)
         if (res.success) {
           message.success('删除成功')
-          loadData()
+          await loadData()
           emit('updated')
         } else {
           message.error(res.message || '删除失败')
@@ -165,9 +174,10 @@ function handleDelete(ws) {
   })
 }
 
-function handleCreateSuccess() {
+async function handleCreateSuccess() {
   showCreateModal.value = false
-  loadData()
+  // Refresh before notifying listeners so they never read the pre-create list.
+  await loadData()
   emit('updated')
 }
 

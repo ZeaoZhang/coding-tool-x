@@ -74,7 +74,7 @@
               <div v-else-if="readmeContent" class="asset-detail-content" v-html="renderedReadme"></div>
               <div v-else class="asset-detail-empty">
                 <n-icon :size="44" class="asset-detail-empty-icon"><DocumentTextOutline /></n-icon>
-                <p>暂无 README 文档</p>
+                <p>{{ emptyReadmeText }}</p>
               </div>
             </div>
           </n-tab-pane>
@@ -137,6 +137,15 @@ const loadingReadme = ref(false)
 const readmeRequestId = ref(0)
 const activeTab = ref('overview')
 const readmeLoadedKey = ref('')
+const readmeFailed = ref(false)
+
+const emptyReadmeText = computed(() => {
+  if (readmeFailed.value) return 'README 未缓存'
+  // DSH plugins ship as npm packages without a README inside the package
+  // directory, so say so instead of implying a cached document is missing.
+  if (props.platform === 'dsh') return '该 DSH 插件未提供 README'
+  return '暂无 README 文档'
+})
 
 const isRemoteRepoLink = computed(() => /^(https?:)?\/\//.test(props.plugin?.repoUrl || props.plugin?.gitUrl || ''))
 const pluginPath = computed(() => props.plugin?.installPath || props.plugin?.fullPath || props.plugin?.path || props.plugin?.directory || '')
@@ -167,6 +176,7 @@ async function loadReadme() {
 
   const requestId = ++readmeRequestId.value
   loadingReadme.value = true
+  readmeFailed.value = false
   try {
     const repoInfo = {
       repoId: plugin.repoId,
@@ -193,6 +203,7 @@ async function loadReadme() {
     if (requestId !== readmeRequestId.value) return
     console.error('Failed to fetch README:', error)
     readmeContent.value = ''
+    readmeFailed.value = true
     readmeLoadedKey.value = key
   } finally {
     if (requestId === readmeRequestId.value) {
@@ -206,6 +217,7 @@ watch(() => [props.visible, props.plugin, props.platform], ([newVisible]) => {
   activeTab.value = 'overview'
   readmeLoadedKey.value = ''
   loadingReadme.value = false
+  readmeFailed.value = false
   readmeContent.value = ''
   if (!newVisible) return
   // The overview is intentionally cheap; README is fetched only after the

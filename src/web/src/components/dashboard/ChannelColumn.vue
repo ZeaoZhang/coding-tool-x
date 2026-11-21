@@ -118,7 +118,7 @@
               <n-text :type="proxyState.running ? 'success' : 'default'" style="font-size: 12px;">
                 {{ proxyState.running ? '运行中' : '已停止' }}
               </n-text>
-              <span v-if="channelType !== 'omp'" class="proxy-port">端口: {{ proxyState.port }}</span>
+              <span v-if="channelType !== 'omp'" class="proxy-port">端口: {{ proxyState.port || proxyState.defaultPort || '-' }}</span>
             </div>
             <n-popover v-if="supportsCapability('channels')" trigger="click" placement="bottom" :width="320" class="channel-popover">
               <template #trigger>
@@ -935,12 +935,12 @@ async function handleProxyToggle(value) {
         message.success(value ? `${channelTitle.value} 代理已启动` : `${channelTitle.value} 代理已停止`)
       }
     } else {
-      message.error(result.error || '操作失败')
+      message.error(formatErrorMessage(result.error))
       // 回滚状态
       proxyStateRef.value.running = !value
     }
   } catch (error) {
-    message.error(error.response?.data?.error || error.message || '操作失败')
+    message.error(formatErrorMessage(error.response?.data?.error || error))
     // 回滚状态
     proxyStateRef.value.running = !value
   } finally {

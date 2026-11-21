@@ -16,12 +16,12 @@
           <div class="custom-range-wrapper">
             <n-date-picker
               v-if="timeRange === 'custom'"
-              v-model:value="customRange"
+              :value="customRange"
               type="daterange"
               size="small"
               clearable
               :is-date-disabled="isDateDisabled"
-              :on-update:value="onCustomRangeChange"
+              @update:value="onCustomRangeChange"
               style="width: 220px"
             />
           </div>
@@ -160,6 +160,7 @@ import { DownloadOutline, ExpandOutline, ContractOutline } from '@vicons/ionicon
 import '../plugins/echarts'
 import VChart from 'vue-echarts'
 import { getTrendStatistics, getTrendExportUrl, getAvailableFilters } from '../api/statistics'
+import { downloadUrl } from '../utils/open-url'
 
 const COLORS = ['#3b82f6','#10b981','#a855f7','#f59e0b','#ef4444','#06b6d4','#ec4899','#8b5cf6','#14b8a6','#94a3b8']
 
@@ -180,6 +181,12 @@ const filterToolType = ref(null)
 const filterChannel = ref(null)
 const filterModel = ref(null)
 const availableFilters = ref({ toolTypes: [], channels: [], models: [] })
+
+// Each fetch belongs to one selection of range/filters/metric. A slower older
+// response must never overwrite the newer chart.
+let fetchGeneration = 0
+let activeController = null
+let filtersGeneration = 0
 
 // Auto-infer groupBy from active filters:
 // - filtering by channel → show model breakdown
@@ -208,8 +215,11 @@ const filterModelOptions = computed(() =>
 
 async function loadFilters() {
   const { startDate, endDate } = getDateRange()
+  const generation = ++filtersGeneration
   try {
     const result = await getAvailableFilters({ startDate, endDate })
+    // A stale filter response must not reset the user's current selection.
+    if (generation !== filtersGeneration) return
     availableFilters.value = result
     const toolTypes = new Set(result?.toolTypes || [])
     const channels = new Set(result?.channels || [])
@@ -224,6 +234,7 @@ async function loadFilters() {
       filterModel.value = null
     }
   } catch (err) {
+    if (isCanceledRequest(err)) return
     console.error('Failed to load available filters:', err)
   }
 }
@@ -311,9 +322,20 @@ function getGranularity(startDate, endDate) {
   return { granularity: 'day', step: 1 }
 }
 
+function isCanceledRequest(error) {
+  return error?.code === 'ERR_CANCELED'
+    || error?.name === 'CanceledError'
+    || error?.name === 'AbortError'
+}
+
 async function fetchData() {
   const { startDate, endDate } = getDateRange()
   const { granularity, step } = getGranularity(startDate, endDate)
+  const generation = ++fetchGeneration
+  activeController?.abort()
+  const controller = new AbortController()
+  activeController = controller
+  const { signal } = controller
   loading.value = true
   try {
     const filterParams = {}
@@ -327,11 +349,12 @@ async function fetchData() {
     const needCost = metric.value !== 'cost'
     const needRequests = metric.value !== 'requests'
     const [mainResult, tokensResult, costResult, requestsResult] = await Promise.all([
-      getTrendStatistics({ ...params, metric: metric.value }),
-      needTokens ? getTrendStatistics({ ...params, metric: 'tokens' }) : Promise.resolve(null),
-      needCost ? getTrendStatistics({ ...params, metric: 'cost' }) : Promise.resolve(null),
-      needRequests ? getTrendStatistics({ ...params, metric: 'requests' }) : Promise.resolve(null),
+      getTrendStatistics({ ...params, metric: metric.value }, { signal }),
+      needTokens ? getTrendStatistics({ ...params, metric: 'tokens' }, { signal }) : Promise.resolve(null),
+      needCost ? getTrendStatistics({ ...params, metric: 'cost' }, { signal }) : Promise.resolve(null),
+      needRequests ? getTrendStatistics({ ...params, metric: 'requests' }, { signal }) : Promise.resolve(null),
     ])
+    if (generation !== fetchGeneration) return
     const normalizeTrendResult = (result) => {
       const labels = Array.isArray(result?.labels) ? result.labels : []
       const labelCount = labels.length
@@ -360,11 +383,18 @@ async function fetchData() {
       requests: sumSeries(metric.value === 'requests' ? normalizedMain : normalizedRequests),
     }
   } catch (err) {
+    // A canceled request belongs to a superseded selection; stay silent.
+    if (isCanceledRequest(err) || generation !== fetchGeneration) return
     console.error('Failed to fetch trend statistics:', err)
     message.error('加载统计数据失败，请稍后重试')
     trendData.value = { labels: [], series: [], totals: {} }
   } finally {
-    loading.value = false
+    if (generation === fetchGeneration) {
+      loading.value = false
+    }
+    if (activeController === controller) {
+      activeController = null
+    }
   }
 }
 
@@ -551,7 +581,9 @@ function handleExport(key) {
   const { startDate, endDate } = getDateRange()
   const { granularity, step } = getGranularity(startDate, endDate)
   const url = getTrendExportUrl({ startDate, endDate, granularity, step, groupBy: groupBy.value, metric: metric.value, format: key })
-  window.open(url, '_blank')
+  if (!downloadUrl(url)) {
+    message.warning('无法下载导出文件，请检查浏览器下载拦截')
+  }
 }
 </script>
 

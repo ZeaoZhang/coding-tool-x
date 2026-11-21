@@ -343,6 +343,14 @@
         "response": "default"
       },
       {
+        "method": "POST",
+        "path": "/proxy/logs/clear",
+        "capability": "proxy",
+        "operation": "clearLogs",
+        "request": "default",
+        "response": "default"
+      },
+      {
         "method": "GET",
         "path": "/statistics/summary",
         "capability": "statistics",

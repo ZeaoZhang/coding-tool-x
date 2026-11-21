@@ -532,4 +532,134 @@ describe('trend statistics', () => {
       data: [150]
     });
   });
+
+  test('deduplicates repeated JSONL rows and keeps day/hour totals consistent', async () => {
+    const mod = loadService();
+    const date = '2025-06-16';
+    const logDir = path.join(requestLogsDir, '2025-06');
+    fs.mkdirSync(logDir, { recursive: true });
+
+    const ompEntry = makeRequest({
+      id: 'dup-omp',
+      timestamp: '2025-06-16T04:00:00.000Z',
+      toolType: 'omp',
+      channel: 'sang for',
+      model: 'deepseek-flash',
+      tokens: { input: 70, output: 30, total: 100 }
+    });
+    const codexEntry = makeRequest({
+      id: 'dup-codex',
+      timestamp: '2025-06-16T13:00:00.000Z',
+      toolType: 'codex',
+      channel: 'me',
+      model: 'gpt-5',
+      tokens: { input: 40, output: 10, total: 50 }
+    });
+    // 历史 flush 重试产生的重复行
+    fs.writeFileSync(
+      path.join(logDir, '16.jsonl'),
+      [ompEntry, ompEntry, codexEntry, ompEntry].map(entry => JSON.stringify(entry)).join('\n') + '\n',
+      'utf8'
+    );
+
+    const day = await mod.getTrendStatistics({
+      startDate: date, endDate: date, granularity: 'day', groupBy: 'toolType', metric: 'tokens'
+    });
+    const hour = await mod.getTrendStatistics({
+      startDate: date, endDate: date, granularity: 'hour', step: 24, groupBy: 'toolType', metric: 'tokens'
+    });
+    const filtered = await mod.getTrendStatistics({
+      startDate: date, endDate: date, granularity: 'day', groupBy: 'toolType', metric: 'tokens',
+      filters: { toolType: 'omp' }
+    });
+
+    const sum = series => series.series.reduce(
+      (total, item) => total + item.data.reduce((acc, value) => acc + value, 0), 0
+    );
+
+    expect(sum(day)).toBe(150);
+    expect(sum(hour)).toBe(150);
+    expect(sum(filtered)).toBe(100);
+    expect(sum(filtered)).toBeLessThanOrEqual(sum(day));
+  });
+
+  test('reuses deduped JSONL entries across metric queries and invalidates on file change', async () => {
+    const mod = loadService();
+    const date = '2025-06-18';
+    const logDir = path.join(requestLogsDir, '2025-06');
+    fs.mkdirSync(logDir, { recursive: true });
+    const filePath = path.join(logDir, '18.jsonl');
+    const entry = makeRequest({
+      id: 'cache-entry',
+      timestamp: '2025-06-18T04:00:00.000Z',
+      toolType: 'omp',
+      model: 'deepseek-flash',
+      tokens: { input: 60, output: 40, total: 100 },
+      cost: 0.01
+    });
+    fs.writeFileSync(filePath, JSON.stringify(entry) + '\n', 'utf8');
+
+    const query = metric => mod.getTrendStatistics({
+      startDate: date, endDate: date, granularity: 'day', groupBy: 'model', metric
+    });
+
+    expect((await query('tokens')).series[0].data[0]).toBe(100);
+    const readSpy = vi.spyOn(fs, 'readFileSync');
+    expect((await query('cost')).series[0].data[0]).toBeCloseTo(0.01);
+    expect(readSpy.mock.calls.some(([file]) => file === filePath)).toBe(false);
+
+    fs.appendFileSync(filePath, JSON.stringify({
+      ...entry,
+      id: 'cache-entry-2',
+      tokens: { input: 30, output: 20, total: 50 }
+    }) + '\n', 'utf8');
+    expect((await query('requests')).series[0].data[0]).toBe(2);
+    expect(readSpy.mock.calls.some(([file]) => file === filePath)).toBe(true);
+    readSpy.mockRestore();
+  });
+
+  test('does not fall back to unfiltered data when combined filters are empty', async () => {
+    const mod = loadService();
+    const date = '2025-06-19';
+    const logDir = path.join(requestLogsDir, '2025-06');
+    fs.mkdirSync(logDir, { recursive: true });
+    fs.writeFileSync(path.join(logDir, '19.jsonl'), [
+      makeRequest({ id: 'f-1', timestamp: '2025-06-19T04:00:00.000Z', toolType: 'omp', channel: 'alpha', model: 'm1', tokens: { total: 100 } }),
+      makeRequest({ id: 'f-2', timestamp: '2025-06-19T05:00:00.000Z', toolType: 'codex', channel: 'beta', model: 'm1', tokens: { total: 40 } })
+    ].map(entry => JSON.stringify(entry)).join('\n') + '\n', 'utf8');
+
+    const total = async filters => {
+      const result = await mod.getTrendStatistics({
+        startDate: date, endDate: date, granularity: 'day', groupBy: 'model', metric: 'tokens', filters
+      });
+      return result.series.reduce((sum, item) => sum + item.data.reduce((acc, v) => acc + v, 0), 0);
+    };
+
+    expect(await total({ toolType: 'omp' })).toBe(100);
+    expect(await total({ channel: 'beta' })).toBe(40);
+    expect(await total({ toolType: 'omp', channel: 'beta' })).toBe(0);
+  });
+
+  test('falls back to proxy logs when a day has no request log', async () => {
+    const mod = loadService();
+    const date = '2025-06-17';
+    fs.writeFileSync(proxyLogsFile, JSON.stringify([{
+      type: 'log',
+      source: 'codex',
+      timestamp: '2025-06-17T04:00:00.000Z',
+      channel: 'me',
+      model: 'gpt-5',
+      totalTokens: 80,
+      cost: 0.02
+    }]), 'utf8');
+
+    const hour = await mod.getTrendStatistics({
+      startDate: date, endDate: date, granularity: 'hour', step: 24, groupBy: 'toolType', metric: 'tokens'
+    });
+
+    const total = hour.series.reduce(
+      (acc, item) => acc + item.data.reduce((sum, value) => sum + value, 0), 0
+    );
+    expect(total).toBe(80);
+  });
 });

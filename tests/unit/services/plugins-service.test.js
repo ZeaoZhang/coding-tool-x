@@ -423,6 +423,58 @@ describe('cloneRepos (via PluginsService internals)', () => {
   });
 });
 
+describe('PluginsService install visibility', () => {
+  it('drops the cached list after the legacy installer succeeds', async () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('claude');
+    listPluginsMock.mockReturnValue([]);
+
+    svc.listPlugins();
+    const callsAfterPrime = listPluginsMock.mock.calls.length;
+
+    installPluginCoreMock.mockResolvedValue({ success: true, plugin: { name: 'legacy-plugin' } });
+    const installed = await svc.installPlugin('legacy-plugin-source');
+
+    expect(installed).toMatchObject({ success: true });
+    svc.listPlugins();
+    expect(listPluginsMock.mock.calls.length).toBeGreaterThan(callsAfterPrime);
+  });
+});
+
+describe('PluginsService native marketplace serialization', () => {
+  it('serializes an OMP marketplace without normalizing it', () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('omp');
+    const repo = {
+      id: 'team',
+      name: 'team',
+      label: 'team',
+      source: 'acme/team-market',
+      sourceUri: 'acme/team-market',
+      provider: 'omp-marketplace',
+      enabled: true,
+      mutable: { toggle: false, auth: false, remove: true, update: true }
+    };
+
+    expect(svc.getReposForClient([repo])).toEqual([
+      { ...repo, hasToken: false, tokenPreview: '' }
+    ]);
+  });
+
+  it('keeps the OMP marketplace list readable when one entry is malformed', () => {
+    const { PluginsService } = loadModule();
+    const svc = new PluginsService('omp');
+    const malformed = { provider: 'github', name: 'missing-owner' };
+    const native = { id: 'team', name: 'team', provider: 'omp-marketplace', source: 'acme/team-market' };
+
+    const result = svc.getReposForClient([malformed, native]);
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual(malformed);
+    expect(result[1]).toMatchObject({ id: 'team', provider: 'omp-marketplace', hasToken: false });
+  });
+});
+
 describe('PluginsService market cache and repository management', () => {
   test('saveMarketCacheToFile and loadMarketCacheFromFile round-trip plugins', () => {
     const { PluginsService } = loadModule();

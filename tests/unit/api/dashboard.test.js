@@ -370,6 +370,26 @@ describe('GET /api/dashboard/init', () => {
     expect(res._body.data.proxyStatus.codex).toEqual({ running: false });
     expect(res._body.data.proxyStatus.omp).toEqual({ running: true, port: 20092 });
   });
+  it('proxyStatus unwraps a driver envelope into the proxy state', async () => {
+    getOmpProxyStatus.mockResolvedValue({
+      status: 'ok',
+      platform: 'omp',
+      capability: 'proxy',
+      operation: 'status',
+      data: { running: true, port: 20093, defaultPort: 20093, mode: 'managed-provider' }
+    });
+
+    const res = await callInit();
+
+    expect(res._status).toBe(200);
+    expect(res._body.data.proxyStatus.omp).toEqual({
+      running: true,
+      port: 20093,
+      defaultPort: 20093,
+      mode: 'managed-provider'
+    });
+  });
+
   it('proxyStatus omits non-finite retryAfter values from typed failures', async () => {
     const proxyError = new Error('proxy unavailable');
     proxyError.status = 'failed';

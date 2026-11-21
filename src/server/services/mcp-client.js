@@ -21,6 +21,10 @@ const https = require('https');
 const { EventEmitter } = require('events');
 
 const DEFAULT_TIMEOUT = 10000; // 10 seconds
+// `npx -y <package>` may need to download and install on first run, so the
+// handshake budget is larger than a plain request budget.
+const DEFAULT_CONNECT_TIMEOUT = 30000;
+const DEFAULT_REQUEST_TIMEOUT = 30000;
 const JSONRPC_VERSION = '2.0';
 const MCP_PROTOCOL_VERSION = '2024-11-05';
 
@@ -231,6 +235,10 @@ class McpClient extends EventEmitter {
     this._spec = serverSpec;
     this._type = serverSpec.type || 'stdio';
     this._timeout = options.timeout || DEFAULT_TIMEOUT;
+    // `timeout` stays the legacy alias: callers that set it get the same
+    // budget for connect and request instead of the larger defaults.
+    this._connectTimeout = options.connectTimeout || options.timeout || DEFAULT_CONNECT_TIMEOUT;
+    this._requestTimeout = options.requestTimeout || options.timeout || DEFAULT_REQUEST_TIMEOUT;
 
     // Internal state
     this._nextId = 1;
@@ -428,8 +436,8 @@ class McpClient extends EventEmitter {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this._killChild();
-        reject(new McpClientError(`Connection timeout after ${this._timeout}ms`));
-      }, this._timeout);
+        reject(new McpClientError(`Connection timeout after ${this._connectTimeout}ms`));
+      }, this._connectTimeout);
 
       const finalCwd = cwd || process.cwd();
       const mergedEnv = mergeSpawnEnv(env || {});
@@ -647,8 +655,8 @@ class McpClient extends EventEmitter {
       let settled = false;
       const timer = setTimeout(() => {
         cleanup();
-        reject(new McpClientError(`SSE connection timeout after ${this._timeout}ms`));
-      }, this._timeout);
+        reject(new McpClientError(`SSE connection timeout after ${this._connectTimeout}ms`));
+      }, this._connectTimeout);
 
       const cleanup = () => {
         clearTimeout(timer);
@@ -683,7 +691,7 @@ class McpClient extends EventEmitter {
           port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
           path: parsedUrl.pathname + parsedUrl.search,
           method: 'GET',
-          timeout: this._timeout,
+          timeout: this._connectTimeout,
           headers: {
             'Accept': 'text/event-stream',
             ...this._spec.headers
@@ -749,7 +757,7 @@ class McpClient extends EventEmitter {
 
         req.on('timeout', () => {
           req.destroy();
-          settle(new McpClientError(`SSE connection timeout after ${this._timeout}ms`));
+          settle(new McpClientError(`SSE connection timeout after ${this._connectTimeout}ms`));
         });
 
         req.end();
@@ -763,8 +771,8 @@ class McpClient extends EventEmitter {
   _sendHttp(msg) {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        reject(new McpClientError(`HTTP send timeout after ${this._timeout}ms`));
-      }, this._timeout);
+        reject(new McpClientError(`HTTP send timeout after ${this._requestTimeout}ms`));
+      }, this._requestTimeout);
 
       try {
         const parsedUrl = new URL(this._httpSessionUrl);
@@ -777,7 +785,7 @@ class McpClient extends EventEmitter {
           port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
           path: parsedUrl.pathname + parsedUrl.search,
           method: 'POST',
-          timeout: this._timeout,
+          timeout: this._requestTimeout,
           headers: {
             'Content-Type': 'application/json',
             'Content-Length': Buffer.byteLength(body),
@@ -979,8 +987,8 @@ class McpClient extends EventEmitter {
 
       const timer = setTimeout(() => {
         this._pending.delete(id);
-        reject(new McpClientError(`Request "${method}" timed out after ${this._timeout}ms`));
-      }, this._timeout);
+        reject(new McpClientError(`Request "${method}" timed out after ${this._requestTimeout}ms`));
+      }, this._requestTimeout);
 
       this._pending.set(id, { resolve, reject, timer, method });
 

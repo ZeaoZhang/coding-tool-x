@@ -22,6 +22,7 @@ function getSessionHistoryIndex(config = {}) {
   return sessionHistoryIndex;
 }
 const { PATHS, NATIVE_PATHS } = require('../../../config/paths');
+const { removeRegisteredProject, unregisterProject } = require('./project-registry');
 
 const DEFAULT_CLAUDE_PROJECTS_DIR = NATIVE_PATHS.claude.projects;
 const CODEX_PROJECTS_DIR = path.join(path.dirname(NATIVE_PATHS.codex.config), 'projects');
@@ -464,11 +465,19 @@ function saveSessionOrder(projectName, order) {
 function deleteProject(config, projectName) {
   const resolvedConfig = withResolvedProjectsDir(config);
   const projectDir = path.join(resolvedConfig.projectsDir, projectName);
-  if (!fs.existsSync(projectDir)) throw new Error('Project not found');
+  if (!fs.existsSync(projectDir)) {
+    // Projects initialized by createProject live in their own projectPath and
+    // have no session directory yet; use the registry to remove the `.claude`
+    // directory created by that API.
+    const removed = removeRegisteredProject(projectName);
+    if (!removed) throw new Error('Project not found');
+    return { success: true, initializedProject: true, projectPath: removed.projectPath };
+  }
   fs.rmSync(projectDir, { recursive: true, force: true });
   const order = getProjectOrder(resolvedConfig);
   const newOrder = order.filter(name => name !== projectName);
   if (newOrder.length !== order.length) saveProjectOrder(resolvedConfig, newOrder);
+  unregisterProject(projectName);
   return { success: true };
 }
 

@@ -334,12 +334,24 @@ function deleteCustomTemplate(id) {
 
 const projectConfigServiceCache = new Map();
 
-function getProjectConfigService() {
-  if (!projectConfigServiceCache.has('default')) {
+/**
+ * Project config service for template application.
+ *
+ * A template may target any existing absolute directory (the API validates the
+ * target with `validateProjectApplyTarget`), so the writer must accept the same
+ * directories instead of rejecting everything outside the registered
+ * workspaces. Symlink and containment checks still run in the adapters.
+ */
+function getTemplateProjectConfigService() {
+  const key = 'template-apply';
+  if (!projectConfigServiceCache.has(key)) {
     const { ProjectConfigService } = require('./project-config-service');
-    projectConfigServiceCache.set('default', new ProjectConfigService());
+    const { validateProjectApplyTarget } = require('./project-path-validation');
+    projectConfigServiceCache.set(key, new ProjectConfigService({
+      validateProjectPath: targetPath => validateProjectApplyTarget(targetPath)
+    }));
   }
-  return projectConfigServiceCache.get('default');
+  return projectConfigServiceCache.get(key);
 }
 
 /**
@@ -657,10 +669,10 @@ async function applyTemplateToProject(targetDir, templateId, options = {}) {
     throw new Error('模板不存在');
   }
 
-  const projectConfigService = getProjectConfigService();
+  const projectConfigService = getTemplateProjectConfigService();
   const results = {
     aiConfigs: [],
-    skills: { applied: 0, items: [] },
+    skills: { applied: 0, items: [], files: [], pending: 0, pendingItems: [] },
     agents: { applied: 0, files: [] },
     commands: { applied: 0, files: [] },
     plugins: { applied: 0, items: [] },
@@ -743,17 +755,66 @@ async function applyTemplateToProject(targetDir, templateId, options = {}) {
       const registration = skillService.registerTemplateSkill({
         ...skillInput,
         scope: 'project',
-        cwd: targetDir
+        cwd: targetDir,
+        // A local template skill is installed into the CLI's skill root, not
+        // the storage root the registry reads from.
+        sourceRoot: 'install'
       });
       if (registration?.status === 'pending_refresh') {
+        // A remote skill is only registered; its content arrives on refresh.
+        // Never report that as applied.
         results.skills.pending = (results.skills.pending || 0) + 1;
         results.skills.pendingItems = [...(results.skills.pendingItems || []), skillName];
-      } else if (registration?.status === 'failed') {
-        pushSkipped(results.skipped, 'skill', skillName, '项目级 Skill 注册失败，已跳过');
-      } else {
-        results.skills.applied++;
+        results.skills.items.push(skillName);
+        continue;
       }
-      results.skills.items.push(skillName);
+      if (registration?.status === 'failed') {
+        pushSkipped(results.skipped, 'skill', skillName, '项目级 Skill 注册失败，已跳过');
+        continue;
+      }
+
+      // Registration alone writes nothing into the project: approve, enable,
+      // and let the projection service copy the files. Count what landed.
+      const control = skillService.controlService;
+      if (!control || typeof control.setSkillEnabled !== 'function') {
+        pushSkipped(results.skipped, 'skill', skillName, 'Skill 投影不可用，已跳过');
+        continue;
+      }
+      if (typeof control.setSkillTrust === 'function') {
+        control.setSkillTrust({
+          platform: skillPlatform,
+          controlKey: registration.controlKey,
+          scope: 'project',
+          projectPath: targetDir,
+          trust: 'approved'
+        });
+      }
+      const enabled = control.setSkillEnabled({
+        platform: skillPlatform,
+        controlKey: registration.controlKey,
+        scope: 'project',
+        projectPath: targetDir,
+        enabled: true
+      });
+      const projectionState = enabled?.projection?.state || enabled?.status || '';
+      if (projectionState === 'enabled') {
+        results.skills.applied++;
+        results.skills.files = [...(results.skills.files || []), {
+          name: skillName,
+          path: enabled.projection?.path || null,
+          status: 'applied'
+        }];
+        results.skills.items.push(skillName);
+      } else {
+        const state = projectionState || 'unknown';
+        pushSkipped(results.skipped, 'skill', skillName, `Skill 投影失败: ${state}`);
+        results.skills.files = [...(results.skills.files || []), {
+          name: skillName,
+          path: enabled?.projection?.path || null,
+          status: 'skipped',
+          reason: `Skill 投影失败: ${state}`
+        }];
+      }
     } catch (error) {
       pushSkipped(results.skipped, 'skill', skillName, `注册项目级 Skill 失败: ${error.message}`);
     }
@@ -895,7 +956,12 @@ async function applyTemplateToProject(targetDir, templateId, options = {}) {
     appliedAt: new Date().toISOString(),
     aiConfigTypes: aiConfigTypes,
     aiConfigPaths: results.aiConfigs.map(c => c.path),
-    skills: template.skills?.map(s => s.directory || s.name) || [],
+    // Record where skills actually landed, plus what is still pending; the raw
+    // template names alone cannot tell a projection failure from a success.
+    skills: [
+      ...(results.skills.files || []).map(item => ({ name: item.name, path: item.path })),
+      ...(results.skills.pendingItems || []).map(name => ({ name, path: null, status: 'pending_refresh' }))
+    ],
     agents: template.agents?.map(a => a.fileName || a.name) || [],
     commands: template.commands?.map(c => c.name) || [],
     plugins: template.plugins?.map(p => p.name) || [],
@@ -967,9 +1033,37 @@ function previewTemplateApplication(targetDir, templateId, options = {}) {
     }
   }
 
-  // Skills 摘要
-  if (template.skills?.length > 0) {
-    preview.summary.skills = template.skills.length;
+  // Skills 摘要: count only the entries this request can actually project.
+  for (const skill of template.skills || []) {
+    const skillPlatform = skill?.platform || template.cliType || aiConfigTypes[0];
+    const skillName = typeof skill === 'string' ? skill : (skill?.directory || skill?.name);
+    if (!skillName) continue;
+    if (!skillPlatform || !aiConfigTypes.includes(skillPlatform)) {
+      pushSkipped(preview.skipped, 'skill', skillName, `未选择 ${skillPlatform || '目标平台'}，预览已跳过`);
+      continue;
+    }
+    if (Array.isArray(skill.files) || skill.repo) {
+      preview.summary.skills++;
+      continue;
+    }
+    // A local directory skill must resolve inside the CLI's install root; the
+    // preview cannot predict the projection path (the projection service owns
+    // it), only whether the source exists.
+    try {
+      const skillService = new SkillService(skillPlatform);
+      const { path: sourcePath } = skillService.resolveInstallPath(
+        skill.directory || skill.name,
+        'skill directory',
+        { scope: 'user' }
+      );
+      if (fs.existsSync(sourcePath)) {
+        preview.summary.skills++;
+      } else {
+        pushSkipped(preview.skipped, 'skill', skillName, '未找到本地 Skill 源目录，预览已跳过');
+      }
+    } catch (error) {
+      pushSkipped(preview.skipped, 'skill', skillName, `无法解析 Skill 源目录: ${error.message}`);
+    }
   }
 
   if (template.agents?.length > 0) {

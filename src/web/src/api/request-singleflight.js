@@ -43,6 +43,16 @@ export function clearRequest(key) {
   return true
 }
 
+/**
+ * Drop the in-flight entry for `key` without aborting the underlying request.
+ *
+ * Used when cached data is invalidated: the next read must start a fresh
+ * request instead of joining a response that predates the mutation.
+ */
+export function forgetRequest(key) {
+  return inflight.delete(key)
+}
+
 export function clearResourceRequests(resource) {
   for (const [key, entry] of inflight) {
     if (entry.resource !== resource) continue

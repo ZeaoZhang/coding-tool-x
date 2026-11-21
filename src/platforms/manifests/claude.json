@@ -38,6 +38,11 @@
     "agents": true,
     "plugins": true
   },
+  "resourceActions": {
+    "skills": {
+      "import": true
+    }
+  },
   "agentCapabilities": {
     "projectScope": true,
     "repoOperations": true

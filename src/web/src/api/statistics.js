@@ -88,13 +88,13 @@ export async function getModelStatsHistory(days = 7) {
   return response.data
 }
 
-export async function getTrendStatistics(params) {
-  const response = await client.get('/statistics/trend', { params })
+export async function getTrendStatistics(params, options = {}) {
+  const response = await client.get('/statistics/trend', { params, signal: options.signal })
   return response.data
 }
 
-export async function getAvailableFilters(params) {
-  const response = await client.get('/statistics/filters', { params })
+export async function getAvailableFilters(params, options = {}) {
+  const response = await client.get('/statistics/filters', { params, signal: options.signal })
   return response.data
 }
 

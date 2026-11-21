@@ -396,7 +396,11 @@ const selectedSkillDirectories = computed({
     const skills = (platform && skillsByPlatform[platform]) ? skillsByPlatform[platform] : []
     formData.value.skills = directories.map(dir => {
       const found = skills.find(s => s.directory === dir)
-      return found ? { ...found } : { directory: dir, name: dir }
+      // Stamp the platform: apply/preview filter skills by platform, and a
+      // skill picked here belongs to the template's own CLI.
+      return found
+        ? { ...found, platform: found.platform || platform }
+        : { directory: dir, name: dir, platform }
     })
   }
 })

@@ -97,7 +97,7 @@
         </div>
         <div v-else class="asset-list">
           <PluginCard
-            v-for="plugin in filteredPlugins"
+            v-for="plugin in pagedPlugins"
             :key="plugin.key"
             :plugin="plugin"
             :readonly="plugin.readonly || (!capabilities.install && !capabilities.uninstall)"
@@ -108,6 +108,14 @@
             @install="handleInstall"
             @uninstall="handleUninstall"
             @click="handleCardClick"
+          />
+        </div>
+        <div v-if="pageCount > 1" class="asset-pagination">
+          <n-pagination
+            v-model:page="currentPage"
+            :page-count="pageCount"
+            :page-slot="5"
+            size="small"
           />
         </div>
       </n-spin>
@@ -141,7 +149,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { NButton, NIcon, NInput, NSelect, NSpin, NEmpty, useMessage } from 'naive-ui'
+import { NButton, NIcon, NInput, NSelect, NSpin, NEmpty, NPagination, useMessage } from 'naive-ui'
 import { ArrowBackOutline, GitBranchOutline, RefreshOutline, SearchOutline, ExtensionPuzzleOutline, InformationCircleOutline, CloudDownloadOutline } from '@vicons/ionicons5'
 import { getPlugins, getMarketPlugins, getPluginCapabilities, installPlugin, uninstallPlugin, installDshPlugin, uninstallDshPlugin, refreshPlugins, getPluginRefreshTask, invalidatePluginSessionCache } from '../api/plugins'
 import { getDshProfiles } from '../api/dsh-agent-presets'
@@ -179,6 +187,8 @@ const installingKeys = ref({})
 const uninstallingKeys = ref({})
 const importing = ref(false)
 const refreshing = ref(false)
+const currentPage = ref(1)
+const PAGE_SIZE = 24
 const dshProfiles = ref([])
 const dshProfile = ref('')
 const dshPackageSpec = ref('')
@@ -194,7 +204,7 @@ const capabilities = ref({
   import: true,
   syncRepos: true
 })
-const { catalog } = useEnabledCliPlatforms()
+const { catalog, byCapability } = useEnabledCliPlatforms()
 const managedPluginPlatforms = computed(() => getPlatformsByCapability(catalog.value, 'plugins').map(platform => platform.key))
 const supportsCurrentPlatform = computed(() => managedPluginPlatforms.value.includes(currentPlatform.value))
 
@@ -211,14 +221,23 @@ function setUnsupportedCapabilities() {
   }
 }
 
+const queryPlatform = computed(() => {
+  const requested = Array.isArray(route?.query?.platform) ? route.query.platform[0] : route?.query?.platform
+  return String(requested || '').trim().toLowerCase()
+})
+const defaultPlatform = computed(() => byCapability('plugins')[0]?.key || '')
+
 const currentPlatform = computed(() => {
   const requested = String(
     props.platform ||
-    (Array.isArray(route.query.platform) ? route.query.platform[0] : route.query.platform) ||
+    queryPlatform.value ||
     getRoutePlatform(route) ||
     ''
   ).trim().toLowerCase()
-  return requested
+  // Unknown/disabled ?platform= values fall back to the first enabled platform
+  // instead of rendering an unsupported page with no controls.
+  if (requested && managedPluginPlatforms.value.includes(requested)) return requested
+  return defaultPlatform.value || requested
 })
 
 const currentPlatformLabel = computed(() => {
@@ -255,6 +274,12 @@ const filteredPlugins = computed(() => {
     result = result.filter(p => p.name?.toLowerCase().includes(q) || p.description?.toLowerCase().includes(q))
   }
   return [...result].sort((a, b) => (a.installed === b.installed ? 0 : a.installed ? -1 : 1))
+})
+
+const pageCount = computed(() => Math.max(1, Math.ceil(filteredPlugins.value.length / PAGE_SIZE)))
+const pagedPlugins = computed(() => {
+  const start = (currentPage.value - 1) * PAGE_SIZE
+  return filteredPlugins.value.slice(start, start + PAGE_SIZE)
 })
 
 const emptyText = computed(() => {
@@ -532,6 +557,9 @@ async function handleInstall(plugin) {
     if (res.success) {
       message.success(`插件 "${plugin.name}" 安装成功`)
       invalidatePluginSessionCache(currentPlatform.value)
+      // Read the list back before releasing the row's loading state, otherwise
+      // the row can still look uninstalled until the next manual refresh.
+      await loadData()
       if (currentPlatform.value === 'dsh') {
         const merged = mergeDshProfilePlugins(plugins.value, res.plugins, plugin.profile)
         if (merged) {
@@ -604,11 +632,24 @@ onMounted(() => {
 })
 
 watch(() => props.drawerVisible, (val) => {
-  if (val) loadData()
+  if (val) {
+    currentPage.value = 1
+    loadData()
+  }
 })
 
 watch(() => currentPlatform.value, () => {
+  currentPage.value = 1
   loadData()
+})
+
+watch([searchQuery, filterStatus, dshProfile], () => {
+  currentPage.value = 1
+})
+
+watch(pageCount, (count) => {
+  if (currentPage.value > count) currentPage.value = count
+  if (currentPage.value < 1) currentPage.value = 1
 })
 </script>
 
@@ -617,4 +658,5 @@ watch(() => currentPlatform.value, () => {
 .action-btn { padding: 4px 8px; }
 .dsh-install-row { display: grid; grid-template-columns: minmax(150px, 220px) minmax(180px, 1fr) auto; gap: 8px; padding: 0 16px 12px; }
 @media (max-width: 620px) { .dsh-install-row { grid-template-columns: 1fr; } }
+.asset-pagination { display: flex; justify-content: center; padding: 12px 0 4px; }
 </style>

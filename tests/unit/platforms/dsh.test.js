@@ -476,6 +476,11 @@ fs.writeFileSync(manifestPath, JSON.stringify(manifest));
       expect.objectContaining({ name: 'cached-plugin', profile: 'cache', installed: true })
     ]));
 
+    const installed = service.listPlugins().plugins.find(item => item.name === 'cached-plugin');
+    expect(installed.installPath).toBe(path.join(profileDir, 'node_modules', 'cached-plugin'));
+    fs.writeFileSync(path.join(installed.installPath, 'README.md'), '# Cached plugin', 'utf8');
+    await expect(service.getPluginReadme({ ...installed })).resolves.toBe('# Cached plugin');
+
     await api.uninstallPlugin({ params: { profileName: 'cache', pluginName: 'cached-plugin' }, body: {} });
     expect(service.listPlugins().plugins).toEqual([]);
   });

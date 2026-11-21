@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const { createProjectsDriver } = require('../../../shared/driver-factories/projects');
+const { registerProject } = require('./project-registry');
 
 function createProject({ projectName, projectPath } = {}) {
   if (!projectName || !projectPath) {
@@ -41,7 +42,15 @@ function createProject({ projectName, projectPath } = {}) {
     'utf8'
   );
 
-  return { success: true, projectName, projectPath, claudeDir };
+  // Keep createProject and deleteProject symmetric: the registry lets delete
+  // find projects that have no sessions under ~/.claude/projects yet.
+  const registryEntry = registerProject(projectName, {
+    projectPath,
+    claudeDir,
+    createdAt: projectConfig.createdAt
+  });
+
+  return { success: true, projectName, projectPath, claudeDir, registryEntry };
 }
 
 function createDriver(context = {}) {

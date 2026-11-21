@@ -119,7 +119,7 @@ describe('DSH PluginsPanel', () => {
     wrapper.unmount()
   })
 
-  it('merges the install response inventory without reloading the list', async () => {
+  it('reloads the list and still merges the install response inventory', async () => {
     api.getPlugins.mockResolvedValue({ success: true, plugins: [
       {
         key: 'dsh:default:missing-package',
@@ -164,7 +164,9 @@ describe('DSH PluginsPanel', () => {
     await wrapper.find('.plugin-card').trigger('click')
     await flushPromises()
 
-    expect(api.getPlugins).toHaveBeenCalledTimes(1)
+    // The list is refreshed before the row leaves its installing state, then
+    // the install response inventory is merged on top.
+    expect(api.getPlugins).toHaveBeenCalledTimes(2)
     expect(wrapper.text()).toContain('missing-package:installed:dsh:default:missing-package:Installed now')
     expect(wrapper.text()).not.toContain('stale-package')
     wrapper.unmount()

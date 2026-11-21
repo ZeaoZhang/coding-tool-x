@@ -7,7 +7,10 @@
   >
     <n-drawer-content closable :native-scrollbar="false" :body-content-style="bodyStyle">
       <template #header>
-        <div class="drawer-header">技能管理</div>
+        <div class="drawer-header">
+          <span class="drawer-title">技能管理</span>
+          <span v-if="platformLabel" class="asset-platform-pill drawer-platform-pill">{{ platformLabel }}</span>
+        </div>
       </template>
       <SkillsPanel
         :in-drawer="true"
@@ -26,6 +29,8 @@ import { computed } from 'vue'
 import { NDrawer, NDrawerContent } from 'naive-ui'
 import SkillsPanel from './SkillsPanel.vue'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
+import { usePlatformStore } from '../stores/platforms'
+import { getPlatformConfig } from '../config/platforms'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -34,6 +39,15 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:visible'])
+
+const platformStore = usePlatformStore()
+// 抽屉从首页平台列打开时需要标明资源来源平台，和资源面板的平台标签保持一致。
+const platformLabel = computed(() => {
+  const key = String(props.platform || '').trim().toLowerCase()
+  if (!key) return ''
+  const platform = platformStore.get(key) || getPlatformConfig(key)
+  return platform?.label || platform?.title || key
+})
 
 const { drawerWidth } = useResponsiveDrawer(720)
 
@@ -52,8 +66,22 @@ const bodyStyle = {
 
 <style scoped>
 .drawer-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   font-size: 16px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.drawer-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawer-platform-pill {
+  font-weight: 500;
 }
 </style>

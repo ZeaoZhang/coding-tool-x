@@ -101,3 +101,50 @@ describe('ProjectList route lifecycle', () => {
     expect(store.pauseProjectRefresh).toHaveBeenCalledWith('old-channel')
   }, 30_000)
 })
+
+describe('ProjectList pagination', () => {
+  it('requests the selected page and scrolls the list to the top', async () => {
+    store.projects = [{ name: 'alpha' }]
+    store.projectsPagination = { page: 1, limit: 20, total: 48, hasMore: true }
+    store.fetchProjects.mockClear().mockResolvedValue(undefined)
+
+    const paginationStub = {
+      name: 'NPagination',
+      props: ['page', 'pageCount'],
+      emits: ['update:page'],
+      template: '<div class="pagination-stub" />'
+    }
+    const passthrough = { template: '<div><slot /></div>' }
+
+    const { default: ProjectList } = await import('../ProjectList.vue')
+    const wrapper = shallowMount(ProjectList, {
+      global: {
+        stubs: {
+          NH2: passthrough,
+          NText: passthrough,
+          NSpin: passthrough,
+          NAlert: passthrough,
+          NEmpty: passthrough,
+          NIcon: passthrough,
+          NInput: passthrough,
+          NModal: passthrough,
+          NButton: passthrough,
+          NTag: passthrough,
+          NSpace: passthrough,
+          NSelect: passthrough,
+          NPagination: paginationStub,
+          pagination: paginationStub,
+          ProjectCard: true
+        }
+      }
+    })
+
+    const pagination = wrapper.findComponent(paginationStub)
+    expect(pagination.exists()).toBe(true)
+    pagination.vm.$emit('update:page', 2)
+    await flushPromises()
+
+    expect(store.fetchProjects).toHaveBeenLastCalledWith({ page: 2, query: '' })
+    wrapper.unmount()
+  })
+})

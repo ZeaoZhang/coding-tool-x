@@ -79,7 +79,7 @@
     <!-- 底部提示 -->
     <div class="panel-footer">
       <n-icon size="14" class="info-icon"><InformationCircleOutline /></n-icon>
-      <span>配置模版可快速应用到工作区</span>
+      <span>配置模版可应用到任意已存在目录，或选择已注册项目</span>
     </div>
 
     <!-- 弹窗组件 -->

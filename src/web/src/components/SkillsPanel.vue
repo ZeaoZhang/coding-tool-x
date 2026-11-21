@@ -23,7 +23,7 @@
           <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
         </n-button>
-        <n-button v-if="canImport" text :focusable="false" @click="handleImport" :loading="importing" :disabled="currentPlatform !== 'claude'" class="action-btn">
+        <n-button v-if="canImport" text :focusable="false" @click="handleImport" :loading="importing" class="action-btn">
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
@@ -49,7 +49,7 @@
           <template #icon><n-icon><GitBranchOutline /></n-icon></template>
           仓库
         </n-button>
-        <n-button v-if="canImport" text :focusable="false" @click="handleImport" :loading="importing" :disabled="currentPlatform !== 'claude'" class="action-btn">
+        <n-button v-if="canImport" text :focusable="false" @click="handleImport" :loading="importing" class="action-btn">
           <template #icon><n-icon><CloudDownloadOutline /></n-icon></template>
           导入
         </n-button>
@@ -110,7 +110,7 @@
         </div>
         <div class="asset-list">
           <SkillCard
-            v-for="skill in filteredSkills"
+            v-for="skill in pagedSkills"
             :key="skill.controlKey || skill.key"
             :skill="skill"
             :toggling="!!togglingKeys[skill.controlKey || skill.key]"
@@ -119,6 +119,14 @@
             @click="handleCardClick"
             @toggle="handleToggle"
             @approve="handleApprove"
+          />
+        </div>
+        <div v-if="pageCount > 1" class="asset-pagination">
+          <n-pagination
+            v-model:page="currentPage"
+            :page-count="pageCount"
+            :page-slot="5"
+            size="small"
           />
         </div>
       </n-spin>
@@ -161,7 +169,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { NButton, NIcon, NInput, NSelect, NSpin, NEmpty, useMessage } from 'naive-ui'
+import { NButton, NIcon, NInput, NSelect, NSpin, NEmpty, NPagination, useMessage } from 'naive-ui'
 import { ArrowBackOutline, AddOutline, GitBranchOutline, RefreshOutline, SearchOutline, ExtensionPuzzleOutline, InformationCircleOutline, CloudDownloadOutline, SettingsOutline } from '@vicons/ionicons5'
 import { getSkills, refreshSkills, getSkillRefreshTask, toggleSkill, setSkillTrust } from '../api/skills'
 import { getProjectSkills, setProjectSkillEnabled } from '../api/project-config'
@@ -206,6 +214,8 @@ const togglingKeys = ref({})
 const refreshing = ref(false)
 const refreshTask = ref(null)
 const importing = ref(false)
+const currentPage = ref(1)
+const PAGE_SIZE = 24
 const loadRequestId = ref(0)
 const refreshContextEpoch = ref(0)
 const dshProfiles = ref([])
@@ -219,12 +229,25 @@ const currentPlatformConfig = computed(() => (
 const skillActions = computed(() => currentPlatformConfig.value?.resourceActions?.skills || {})
 const canCreate = computed(() => skillActions.value.create !== false)
 const canRepositories = computed(() => skillActions.value.repositories !== false)
-const canImport = computed(() => skillActions.value.import !== false)
+const canImport = computed(() => skillActions.value.import === true)
 const canRefresh = computed(() => skillActions.value.refresh !== false)
 const canToggle = computed(() => skillActions.value.toggle !== false)
 
+const queryPlatform = computed(() => {
+  const requested = Array.isArray(route?.query?.platform) ? route.query.platform[0] : route?.query?.platform
+  const normalized = String(requested || '').trim().toLowerCase()
+  // 仅接受当前启用且支持 Skills 的平台，非法 query 回退到默认平台
+  return managedSkillPlatforms.value.includes(normalized) ? normalized : ''
+})
+const defaultPlatform = computed(() => byCapability('skills')[0]?.key || 'claude')
+
 const currentPlatform = computed(() => {
-  return String(props.platform || getRoutePlatform(route) || 'claude').trim().toLowerCase()
+  return String(
+    props.platform ||
+    queryPlatform.value ||
+    getRoutePlatform(route) ||
+    defaultPlatform.value
+  ).trim().toLowerCase()
 })
 
 const showOmpSettings = computed(() => supportsOmpSkillSettings(currentPlatform.value))
@@ -276,7 +299,14 @@ const filteredSkills = computed(() => {
     const q = searchQuery.value.toLowerCase()
     result = result.filter(s => s.name?.toLowerCase().includes(q) || s.description?.toLowerCase().includes(q))
   }
-  return [...result].sort((a, b) => (a.enabled === b.enabled ? 0 : a.enabled ? -1 : 1))
+  return [...result]
+    .sort((a, b) => (a.enabled === b.enabled ? 0 : a.enabled ? -1 : 1))
+})
+
+const pageCount = computed(() => Math.max(1, Math.ceil(filteredSkills.value.length / PAGE_SIZE)))
+const pagedSkills = computed(() => {
+  const start = (currentPage.value - 1) * PAGE_SIZE
+  return filteredSkills.value.slice(start, start + PAGE_SIZE)
 })
 
 const emptyText = computed(() => {
@@ -365,7 +395,7 @@ async function scanLocalSkills({ notifyError = true } = {}) {
 }
 
 async function handleImport() {
-  if (!supportsCurrentPlatform.value || !canImport.value || currentPlatform.value !== 'claude') {
+  if (!supportsCurrentPlatform.value || !canImport.value) {
     return
   }
   importing.value = true
@@ -561,11 +591,26 @@ watch([() => currentPlatform.value, () => props.scope, () => props.projectPath],
   refreshTask.value = null
   ompSettingsEpoch.value += 1
   if (!supportsOmpSkillSettings(platform)) showOmpSettingsModal.value = false
+  currentPage.value = 1
   refreshForPlatform()
+})
+
+watch([searchQuery, filterStatus, dshProfile], () => {
+  currentPage.value = 1
+})
+
+watch(pageCount, (count) => {
+  if (currentPage.value > count) currentPage.value = count
+  if (currentPage.value < 1) currentPage.value = 1
+})
+
+watch(() => props.drawerVisible, (val) => {
+  if (val) currentPage.value = 1
 })
 </script>
 
 <style scoped>
 .back-btn { padding: 4px; }
 .action-btn { padding: 4px 8px; }
+.asset-pagination { display: flex; justify-content: center; padding: 12px 0 4px; }
 </style>

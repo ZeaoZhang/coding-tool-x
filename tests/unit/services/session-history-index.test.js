@@ -1313,7 +1313,11 @@ describe('session-history-index', () => {
 
     await index.ensureSourceIndexed('claude', { consistency: 'complete' });
 
-    expect(await index.getSessionStatus('claude', 'bad')).toBeNull();
+    // The stats-only scan still describes the file so callers can delete it,
+    // but a malformed file must never reach the content index.
+    expect(await index.getSessionStatus('claude', 'bad')).not.toBeNull();
+    expect(index._getDb().prepare('SELECT 1 AS present FROM session_file WHERE source = ? AND session_id = ?')
+      .get('claude', 'bad')).toBeUndefined();
     expect(await index.getSessionStatus('claude', 'good')).not.toBeNull();
   });
 
@@ -1399,6 +1403,79 @@ describe('session-history-index', () => {
       limit: 10
     });
     expect(projectResults.map(result => result.sessionId)).toEqual(['newer', 'older']);
+  });
+
+  it('keeps indexed rows when the adapter reports no project hint for a scoped refresh', async () => {
+    const fixture = setupIndex({ ftsEnabledOverride: false });
+    fixture.writeFixtureFile({
+      name: 'unlabeled-a.jsonl',
+      content: 'unlabeled fixture a\n',
+      session: makeSessionFixture('unlabeled-a', 'unlabeled-project', { updatedAt: 1000 }),
+      messages: [{ ...makeMessageFixtures(1)[0], content: 'needle inside scoped session' }],
+      projectHint: null
+    });
+    fixture.writeFixtureFile({
+      name: 'unlabeled-b.jsonl',
+      content: 'unlabeled fixture b\n',
+      session: makeSessionFixture('unlabeled-b', 'other-project', { updatedAt: 2000 }),
+      messages: [{ ...makeMessageFixtures(1)[0], content: 'needle inside other session' }],
+      projectHint: null
+    });
+
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    const db = index._getDb();
+    const countRows = () => Number(db.prepare('SELECT COUNT(*) AS count FROM session_file WHERE source = ?').get('claude').count);
+    expect(countRows()).toBe(2);
+
+    const scoped = await index.searchSessions('claude', 'needle', { projectName: 'unlabeled-project' });
+
+    expect(scoped.map(result => result.sessionId)).toEqual(['unlabeled-a']);
+    expect(countRows()).toBe(2);
+  });
+
+  it('rebuilds a missing content row when only the summary row is indexed', async () => {
+    const fixture = setupIndex({ ftsEnabledOverride: false });
+    const filePath = path.join(fixture.rootDir, 'summary-only.jsonl');
+    fixture.writeFixtureFile({
+      name: 'summary-only.jsonl',
+      content: 'summary only fixture\n',
+      session: makeSessionFixture('summary-only', 'repair-project'),
+      messages: makeMessageFixtures(3)
+    });
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+
+    const db = index._getDb();
+    db.prepare('DELETE FROM session_file WHERE source = ? AND session_id = ?').run('claude', 'summary-only');
+    expect(db.prepare('SELECT 1 AS present FROM session_file WHERE source = ? AND session_id = ?')
+      .get('claude', 'summary-only')).toBeUndefined();
+
+    const status = await index.getSessionStatus('claude', 'summary-only');
+
+    expect(status).toMatchObject({ sessionId: 'summary-only', filePath });
+    const repaired = db.prepare('SELECT message_count FROM session_file WHERE source = ? AND session_id = ?')
+      .get('claude', 'summary-only');
+    expect(Number(repaired.message_count)).toBe(3);
+    expect(await index.getSessionOutline('claude', 'summary-only')).toMatchObject({ sessionId: 'summary-only' });
+  });
+
+  it('stops reporting a deleted session file and removes its index rows', async () => {
+    const fixture = setupIndex({ ftsEnabledOverride: false });
+    const filePath = path.join(fixture.rootDir, 'ghost.jsonl');
+    fixture.writeFixtureFile({
+      name: 'ghost.jsonl',
+      content: 'ghost fixture\n',
+      session: makeSessionFixture('ghost', 'ghost-project'),
+      messages: [{ ...makeMessageFixtures(1)[0], content: 'needle ghost session' }]
+    });
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+    expect(await index.searchSessions('claude', 'needle')).toHaveLength(1);
+
+    fixture.removeFixtureFile(filePath);
+
+    expect(await index.searchSessions('claude', 'needle')).toEqual([]);
+    const db = index._getDb();
+    expect(Number(db.prepare('SELECT COUNT(*) AS count FROM session_file WHERE source = ?').get('claude').count)).toBe(0);
+    expect(Number(db.prepare('SELECT COUNT(*) AS count FROM session_message WHERE source = ?').get('claude').count)).toBe(0);
   });
 
   it('does not parse unrelated projects for a project-scoped search', async () => {
@@ -1539,7 +1616,9 @@ describe('session-history-index', () => {
     await index.ensureSourceIndexed('claude', { force: true, consistency: 'complete' });
     expect(maximum).toBeGreaterThan(1);
     expect(maximum).toBeLessThanOrEqual(4);
-    expect(await index.getSessionStatus('claude', 'parse-3')).toBeNull();
+    expect(await index.getSessionStatus('claude', 'parse-3')).not.toBeNull();
+    expect(index._getDb().prepare('SELECT 1 AS present FROM session_file WHERE source = ? AND session_id = ?')
+      .get('claude', 'parse-3')).toBeUndefined();
     expect(await index.getSessionStatus('claude', 'parse-4')).not.toBeNull();
     expect(index._getDb().prepare('SELECT last_error FROM source_state WHERE source = ?').get('claude').last_error).toContain('parse failed');
   });
@@ -1648,7 +1727,9 @@ describe('session-history-index', () => {
       return { session: makeSessionFixture(descriptor.sessionId, 'payload-project'), messages: makeMessageFixtures(2) };
     });
     await index.ensureSourceIndexed('claude', { force: true, consistency: 'complete' });
-    expect(await index.getSessionStatus('claude', 'malformed-payload')).toBeNull();
+    expect(await index.getSessionStatus('claude', 'malformed-payload')).not.toBeNull();
+    expect(index._getDb().prepare('SELECT 1 AS present FROM session_file WHERE source = ? AND session_id = ?')
+      .get('claude', 'malformed-payload')).toBeUndefined();
     expect(await index.getSessionStatus('claude', 'valid-payload')).not.toBeNull();
     expect(index._getDb().prepare('SELECT last_error FROM source_state WHERE source = ?').get('claude').last_error).toContain('invalid parsed session result');
   });
@@ -1661,7 +1742,9 @@ describe('session-history-index', () => {
       return { session: makeSessionFixture('identified-session', 'identity-project'), messages: makeMessageFixtures(2) };
     });
     await index.ensureSourceIndexed('claude', { force: true, consistency: 'complete' });
-    expect(await index.getSessionStatus('claude', 'empty-session')).toBeNull();
+    expect(await index.getSessionStatus('claude', 'empty-session')).not.toBeNull();
+    expect(index._getDb().prepare('SELECT 1 AS present FROM session_file WHERE source = ? AND session_id = ?')
+      .get('claude', 'empty-session')).toBeUndefined();
     expect(await index.getSessionStatus('claude', 'identified-session')).not.toBeNull();
     expect(index._getDb().prepare('SELECT last_error FROM source_state WHERE source = ?').get('claude').last_error).toContain('invalid parsed session result');
   });

@@ -2127,7 +2127,7 @@ class SkillService {
     };
   }
 
-  registerTemplateSkill({ directory, files = null, repo = null, fullDirectory = null, scope = 'user', cwd = null } = {}) {
+  registerTemplateSkill({ directory, files = null, repo = null, fullDirectory = null, scope = 'user', cwd = null, sourceRoot = 'storage' } = {}) {
     const safeDirectory = this.normalizeSkillDirectory(directory);
     const projectPath = scope === 'project' ? this._skillCwdKey({ cwd }) : null;
     const projectionCapability = this._skillProjectionCapability(scope);
@@ -2183,7 +2183,11 @@ class SkillService {
 
     let sourceFiles = files;
     if (!Array.isArray(sourceFiles)) {
-      const localRoot = this.resolveStoragePath(safeDirectory).path;
+      // Template skills selected from an installed skill live under the CLI's
+      // install root; only user-created bundles live in the storage root.
+      const localRoot = sourceRoot === 'install'
+        ? this.resolveInstallPath(safeDirectory, 'skill directory', { scope: 'user' }).path
+        : this.resolveStoragePath(safeDirectory).path;
       if (!fs.existsSync(localRoot)) throw new Error(`本地模板 Skill "${safeDirectory}" 不存在`);
       sourceFiles = this._collectLocalSkillFiles(localRoot);
     } else {

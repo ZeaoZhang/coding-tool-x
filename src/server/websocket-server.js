@@ -561,6 +561,26 @@ function broadcastLog(logData) {
   }
 }
 
+// 清空指定来源（平台）的日志；source 为空时清空全部
+function clearLogsBySource(source = null) {
+  const normalized = source ? String(source).trim().toLowerCase() : '';
+  if (!normalized || normalized === 'all') {
+    return clearAllLogs();
+  }
+
+  logsCache = logsCache.filter(log => (log.source || 'claude') !== normalized);
+  rebuildLogSourceCounts();
+  persistGeneration += 1;
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  const generation = persistGeneration;
+  enqueueLogPersistence(serializeLogs(logsCache), generation);
+  console.log(`[OK] Logs cleared for source: ${normalized}`);
+  return persistChain;
+}
+
 // 清空所有日志
 function clearAllLogs() {
   logsCache = [];
@@ -655,6 +675,7 @@ module.exports = {
   stopWebSocketServer,
   broadcastLog,
   clearAllLogs,
+  clearLogsBySource,
   flushPendingLogs,
   broadcastProxyState,
   broadcastSchedulerState,

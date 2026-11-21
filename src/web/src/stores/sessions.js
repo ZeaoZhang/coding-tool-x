@@ -130,12 +130,20 @@ export const useSessionsStore = defineStore('sessions', () => {
   const sessions = ref([])
   const aliases = ref({})
   const totalSize = ref(0)
-  const loading = ref(false)
+  const projectsLoading = ref(false)
+  const sessionsLoading = ref(false)
   const error = ref(null)
   const currentChannel = ref('claude') // 当前渠道
   const projectsInflight = new Map()
   const projectRequestIds = new Map()
   let nextProjectRequestId = 0
+  // Session reads are keyed by the exact query they answer. A duplicate retry
+  // for the same key must not let an older answer paint the list, and a silent
+  // project poll must not discard a response the user is waiting for.
+  const sessionRequestIds = new Map()
+  let nextSessionRequestId = 0
+  let sessionSelectionId = 0
+  const loading = computed(() => projectsLoading.value || sessionsLoading.value)
 
   // Computed
   const sessionsWithAlias = computed(() => {
@@ -152,9 +160,12 @@ export const useSessionsStore = defineStore('sessions', () => {
     projectsMeta.value?.refreshing
     && projects.value.length === 0
   ))
+  // "No sessions" is only true once the backend stopped reporting progress; an
+  // empty list with a refreshing/null meta is still pending.
   const sessionsPending = computed(() => Boolean(
-    sessionsMeta.value?.refreshing
+    !error.value
     && sessions.value.length === 0
+    && (sessionsMeta.value?.refreshing || !sessionsMeta.value)
   ))
 
   function syncSessionsCache() {
@@ -267,7 +278,7 @@ export const useSessionsStore = defineStore('sessions', () => {
   }
 
   async function fetchProjects({ page = 1, limit = DEFAULT_PAGE_SIZE, query = '', force = false, silent = false, pollAttempt = 0, fresh = false } = {}) {
-    if (!silent) loading.value = true
+    if (!silent) projectsLoading.value = true
     error.value = null
     try {
       const channel = currentChannel.value
@@ -289,7 +300,7 @@ export const useSessionsStore = defineStore('sessions', () => {
             : (projects.value[0]?.name || null)
           projectsMeta.value = cached.meta || null
           projectsPagination.value = cached.pagination || { page, limit, total: projects.value.length, hasMore: false }
-          if (!silent) loading.value = false
+          if (!silent) projectsLoading.value = false
           return
         }
       }
@@ -367,12 +378,19 @@ export const useSessionsStore = defineStore('sessions', () => {
     } catch (err) {
       error.value = err.message
     } finally {
-      if (!silent) loading.value = false
+      if (!silent) projectsLoading.value = false
     }
   }
 
   async function fetchSessions(projectName, { page = 1, limit = DEFAULT_PAGE_SIZE, query = '', force = false, silent = false, pollAttempt = 0, fresh = false } = {}) {
-    if (!silent) loading.value = true
+    if (!silent) {
+      sessionsLoading.value = true
+      // Every user-driven read changes the selection, including one answered
+      // from cache; otherwise an older in-flight response can repaint the
+      // project the user just left.
+      sessionSelectionId += 1
+    }
+    const selectionId = sessionSelectionId
     error.value = null
     try {
       const channel = currentChannel.value
@@ -388,6 +406,14 @@ export const useSessionsStore = defineStore('sessions', () => {
       if (!force) {
         const cached = getCachedSessions(channel, projectName, listOptions)
         if (cached) {
+          // A placeholder (still refreshing, backend fallback, or a stale empty
+          // list) may be painted for an instant first paint, but it must keep
+          // polling instead of being treated as final.
+          const placeholderReason = cached.meta?.refreshing
+            ? 'refreshing'
+            : (cached.meta?.fallback
+              ? 'fallback'
+              : ((!cached.sessions?.length && cached.meta?.stale) ? 'stale-empty' : null))
           sessions.value = filterDisplayableSessions(cached.sessions, projectName)
           aliases.value = cached.aliases || {}
           totalSize.value = cached.totalSize || 0
@@ -395,18 +421,27 @@ export const useSessionsStore = defineStore('sessions', () => {
           currentProjectInfo.value = cached.projectInfo || null
           sessionsMeta.value = cached.meta || null
           sessionsPagination.value = cached.pagination || { page, limit, total: sessions.value.length, hasMore: false }
-          if (!silent) loading.value = false
+          if (placeholderReason) {
+            scheduleSessionRefresh(channel, projectName)
+          }
+          if (!silent) sessionsLoading.value = false
           return
         }
       }
 
       currentProject.value = projectName
+      const sessionRequestKey = `${channel}:${projectName}:${page}:${limit}:${query}`
+      const sessionRequestId = ++nextSessionRequestId
+      sessionRequestIds.set(sessionRequestKey, sessionRequestId)
       const requestOptions = { fresh }
       if (page !== 1) requestOptions.page = page
       if (limit !== DEFAULT_PAGE_SIZE) requestOptions.limit = limit
       if (query) requestOptions.q = query
       const data = await getSessions(projectName, channel, requestOptions)
-      if (currentChannel.value !== channel || currentProject.value !== projectName) return
+      if (currentChannel.value !== channel) return
+      // A newer read for the same query, or a newer user selection, wins.
+      if (sessionRequestIds.get(sessionRequestKey) !== sessionRequestId) return
+      if (selectionId !== sessionSelectionId) return
       const nextSessions = filterDisplayableSessions(data.sessions, projectName)
       const shouldApplySessions = nextSessions.length > 0 || sessions.value.length === 0 || data.meta?.refreshing !== true
       sessionsMeta.value = data.meta || null
@@ -423,14 +458,24 @@ export const useSessionsStore = defineStore('sessions', () => {
 
       if (shouldApplySessions) {
         sessions.value = nextSessions
-        aliases.value = data.aliases || {}
+        // Some platform drivers attach `alias` per session but omit the
+        // top-level aliases map. Seed it from the rows so aliases survive a
+        // reload/fork instead of being lost when `data.aliases` is absent.
+        const aliasesFromSessions = {}
+        for (const session of nextSessions) {
+          if (session?.sessionId && session.alias) {
+            aliasesFromSessions[session.sessionId] = session.alias
+          }
+        }
+        const nextAliases = { ...aliasesFromSessions, ...(data.aliases || {}) }
+        aliases.value = nextAliases
         totalSize.value = data.totalSize || 0
         currentProjectInfo.value = data.projectInfo || null
 
         if (data.meta?.fallback !== true) {
           setCachedSessions(channel, projectName, {
             sessions: nextSessions,
-            aliases: data.aliases || {},
+            aliases: nextAliases,
             totalSize: data.totalSize || 0,
             projectInfo: data.projectInfo || null,
             meta: data.meta || null,
@@ -447,7 +492,7 @@ export const useSessionsStore = defineStore('sessions', () => {
     } catch (err) {
       error.value = err.message
     } finally {
-      if (!silent) loading.value = false
+      if (!silent) sessionsLoading.value = false
     }
   }
 
@@ -641,6 +686,8 @@ export const useSessionsStore = defineStore('sessions', () => {
     aliases,
     totalSize,
     loading,
+    projectsLoading,
+    sessionsLoading,
     error,
     currentChannel,
     sessionsWithAlias,

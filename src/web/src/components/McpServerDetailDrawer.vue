@@ -65,7 +65,7 @@
               </div>
 
               <!-- Empty state -->
-              <div v-else-if="!loading && tools.length === 0" class="empty-state">
+              <div v-else-if="!loading && !error && tools.length === 0" class="empty-state">
                 <n-icon :size="48" class="empty-icon">
                   <ConstructOutline />
                 </n-icon>
@@ -81,6 +81,9 @@
                   </template>
                   {{ error }}
                 </n-alert>
+                <n-button size="small" type="primary" ghost :loading="loading" @click="loadTools">
+                  重试
+                </n-button>
               </div>
             </n-spin>
           </n-tab-pane>
@@ -101,7 +104,7 @@
 import { ref, computed, watch } from 'vue'
 import {
   NDrawer, NDrawerContent, NIcon, NTag, NTabs, NTabPane,
-  NSpin, NCollapse, NCollapseItem, NAlert
+  NSpin, NCollapse, NCollapseItem, NAlert, NButton
 } from 'naive-ui'
 import {
   ExtensionPuzzleOutline, ConstructOutline, AlertCircleOutline

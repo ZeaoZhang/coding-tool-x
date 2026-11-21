@@ -41,3 +41,10 @@ export function resolveErrorMessage(error, fallback = '操作失败') {
   }
   return fallback
 }
+
+/**
+ * Proxy/platform payload convenience alias used by Layout/Home columns.
+ */
+export function formatErrorMessage(value, fallback = '操作失败') {
+  return resolveErrorMessage(value, fallback) || fallback
+}

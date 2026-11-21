@@ -475,9 +475,12 @@ class ProjectConfigService {
       error.code = 'MCP_DISABLED';
       throw error;
     }
+    // Same handshake budget as the global MCP tools path: `npx -y` may need to
+    // install the package on first use.
+    const mcpClientOptions = { connectTimeout: 30000, requestTimeout: 30000 };
     const client = this.mcpClientFactory
       ? this.mcpClientFactory(effectiveSpec, { projectPath: projectRoot, platform: key })
-      : new (require('./mcp-client').McpClient)(effectiveSpec);
+      : new (require('./mcp-client').McpClient)(effectiveSpec, mcpClientOptions);
     const startedAt = Date.now();
 
     try {

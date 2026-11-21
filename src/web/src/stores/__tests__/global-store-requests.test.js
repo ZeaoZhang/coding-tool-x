@@ -68,6 +68,65 @@ function responseFor(url) {
   return { data: { channels: [{ name: `${url}-channel` }] } }
 }
 
+describe('global proxy status hydration', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    enabledKeys.value = ['alpha-cli']
+    catalog.value.forEach(platform => {
+      platform.apiRoutes = baseApiRoutes.map(route => ({ ...route }))
+    })
+    axiosGet.mockReset()
+    axiosPost.mockReset()
+  })
+
+  it('hydrates a flat proxy status payload', async () => {
+    axiosGet.mockImplementation(async () => ({
+      data: { running: true, port: 20093, defaultPort: 20093 }
+    }))
+    const store = useGlobalStore()
+
+    await store.initializeState()
+
+    expect(store.getProxyState('alpha-cli').value).toMatchObject({
+      running: true,
+      port: 20093,
+      defaultPort: 20093
+    })
+  })
+
+  it('hydrates a driver envelope payload', async () => {
+    axiosGet.mockImplementation(async () => ({
+      data: {
+        status: 'ok',
+        platform: 'alpha-cli',
+        capability: 'proxy',
+        operation: 'status',
+        data: { running: true, port: 20094 }
+      }
+    }))
+    const store = useGlobalStore()
+
+    await store.initializeState()
+
+    expect(store.getProxyState('alpha-cli').value).toMatchObject({ running: true, port: 20094 })
+  })
+
+  it('stores the port reported by a successful start', async () => {
+    axiosGet.mockImplementation(async () => ({ data: { running: false } }))
+    axiosPost.mockResolvedValue({ data: { success: true, port: 20100, defaultPort: 20093 } })
+    const store = useGlobalStore()
+    await store.initializeState()
+
+    await store.startProxy('alpha-cli')
+
+    expect(store.getProxyState('alpha-cli').value).toMatchObject({
+      running: true,
+      port: 20100,
+      defaultPort: 20093
+    })
+  })
+})
+
 describe('global keyed platform requests', () => {
   beforeEach(() => {
     setActivePinia(createPinia())

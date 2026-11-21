@@ -75,7 +75,9 @@ export async function getStats() {
  * 测试 MCP 服务器连接
  */
 export async function testServer(serverId) {
-  const response = await client.post(`/mcp/servers/${serverId}/test`)
+  // The server handshake budget is 30s; the axios default is 30s too, so the
+  // request would abort just as the server could still answer.
+  const response = await client.post(`/mcp/servers/${serverId}/test`, null, { timeout: 60000 })
   return response.data
 }
 
@@ -109,7 +111,7 @@ export function getExportDownloadUrl(format = 'json') {
  * @returns {Promise<{tools: Array, duration: number, status: string}>}
  */
 export async function getServerTools(serverId) {
-  const response = await client.get(`/mcp/servers/${serverId}/tools`)
+  const response = await client.get(`/mcp/servers/${serverId}/tools`, { timeout: 60000 })
   return response.data
 }
 

@@ -167,6 +167,15 @@
           >
             {{ balance.label }}
           </n-tag>
+          <n-tag
+            v-else-if="showBalance && (balanceLoading || balanceRefreshing)"
+            size="tiny"
+            type="info"
+            :bordered="false"
+            class="balance-meta-tag"
+          >
+            余额加载中…
+          </n-tag>
           <span class="meta-item">
             权重: <span class="meta-value">{{ meta.weight }}</span>
           </span>
@@ -213,6 +222,18 @@ const props = defineProps({
     default: null
   },
   showApplyButton: {
+    type: Boolean,
+    default: false
+  },
+  showBalance: {
+    type: Boolean,
+    default: false
+  },
+  balanceLoading: {
+    type: Boolean,
+    default: false
+  },
+  balanceRefreshing: {
     type: Boolean,
     default: false
   },
@@ -397,14 +418,6 @@ function formatDateTime(value) {
 
 .channel-actions :deep(.n-button__icon) {
   margin: 0;
-}
-
-.apply-btn {
-  display: none;
-}
-
-.channel-card:hover .apply-btn {
-  display: inline-flex;
 }
 
 /* 测试结果样式 */

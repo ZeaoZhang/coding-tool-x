@@ -410,6 +410,7 @@ function deleteProject(projectName) {
 
   invalidateProjectAndSessionCountsCache();
   invalidateCodexSessionCaches();
+  getSessionHistoryIndex().invalidateSource('codex', { projectName });
   return { success: true, deletedCount };
 }
 
@@ -471,6 +472,9 @@ function deleteSession(sessionId) {
 
   invalidateProjectAndSessionCountsCache();
   invalidateCodexSessionCaches();
+  // Remove the indexed rows immediately; the post-delete refresh is too late
+  // and a failed refresh would leave the ghost searchable forever.
+  getSessionHistoryIndex().invalidateSource('codex', { deleted: true, sessionId });
   return { success: true };
 }
 

@@ -126,13 +126,20 @@ function handleSelectExisting(idx, value) {
 async function handleSubmit() {
   try {
     await formRef.value?.validate()
-    for (const proj of formData.value.projects) {
-      if (!proj.sourcePath) {
-        message.error('请填写项目路径')
-        return
-      }
+  } catch {
+    // 表单校验失败由 naive-ui 内联提示展示，这里只中断提交
+    return
+  }
+
+  for (const proj of formData.value.projects) {
+    if (!proj.sourcePath) {
+      message.error('请填写项目路径')
+      return
     }
-    submitting.value = true
+  }
+
+  submitting.value = true
+  try {
     const payload = {
       ...formData.value,
       projects: formData.value.projects.map(normalizeWorkspaceProjectForSubmit)
@@ -153,10 +160,6 @@ async function handleSubmit() {
       message.warning(errorMsg, { duration: 8000 })
     } else {
       message.error(errorMsg)
-    }
-    // 如果是表单验证错误，不显示额外消息
-    if (err.errors) {
-      // 表单验证错误已由 naive-ui 处理
     }
   } finally {
     submitting.value = false

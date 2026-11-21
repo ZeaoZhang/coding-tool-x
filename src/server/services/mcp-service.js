@@ -6,8 +6,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
-const { McpClient, buildMissingCommandMessage, createMissingCommandHint } = require('./mcp-client');
+const { McpClient } = require('./mcp-client');
 const mcpFormat = require('../../shared/mcp-format');
 const { importMcpServer } = require('../../shared/mcp-import');
 const { convertToOmpMcpFormat, convertFromOmpMcpFormat } = mcpFormat;
@@ -23,6 +22,13 @@ const MCP_SERVERS_FILE = PATHS.mcpServers;
 // serverId -> { client, timestamp }
 const mcpClientPool = new Map();
 const POOL_TTL = 5 * 60 * 1000; // 5 minutes
+// `npx -y <pkg>` downloads and installs on first run; a 10s handshake budget
+// reported working servers as broken.
+const MCP_TEST_TIMEOUT_MS = 30000;
+const MCP_INIT_TIMEOUT_MS = 30000;
+const MCP_TOOLS_TIMEOUT_MS = 30000;
+// One in-flight tools/list per server: concurrent opens must not each spawn.
+const serverToolsInflight = new Map();
 const STREAMABLE_HTTP_TYPE = 'streamable_http';
 const MCP_SERVER_TYPES = ['stdio', STREAMABLE_HTTP_TYPE, 'sse'];
 const REMOTE_MCP_SERVER_TYPES = [STREAMABLE_HTTP_TYPE, 'sse'];
@@ -351,89 +357,6 @@ function writeJsonFile(filePath, data) {
   fs.renameSync(tempPath, filePath);
 }
 
-
-function getPathEnvKey(envObj = {}) {
-  return Object.keys(envObj).find(key => key.toLowerCase() === 'path') || 'PATH';
-}
-
-function stripWrappingQuotes(value) {
-  const text = String(value || '').trim();
-  if (!text) return '';
-  if (
-    (text.startsWith('"') && text.endsWith('"')) ||
-    (text.startsWith("'") && text.endsWith("'"))
-  ) {
-    return text.slice(1, -1);
-  }
-  return text;
-}
-
-function mergeSpawnEnv(extraEnv = {}) {
-  const mergedEnv = { ...process.env, ...extraEnv };
-  const processPathKey = getPathEnvKey(process.env);
-  const extraPathKey = getPathEnvKey(extraEnv);
-  const mergedPathKey = getPathEnvKey(mergedEnv);
-
-  const extraPath = extraEnv && typeof extraEnv[extraPathKey] === 'string'
-    ? extraEnv[extraPathKey]
-    : '';
-  const processPath = process.env && typeof process.env[processPathKey] === 'string'
-    ? process.env[processPathKey]
-    : '';
-
-  if (extraPath && processPath) {
-    mergedEnv[mergedPathKey] = `${extraPath}${path.delimiter}${processPath}`;
-  }
-
-  return mergedEnv;
-}
-
-function resolveWindowsSpawnCommand(command, env, cwd) {
-  if (process.platform !== 'win32') {
-    return stripWrappingQuotes(command);
-  }
-
-  const normalizedCommand = stripWrappingQuotes(command);
-  if (!normalizedCommand) {
-    return normalizedCommand;
-  }
-
-  const hasPathSegment = /[\\/]/.test(normalizedCommand) || /^[a-zA-Z]:/.test(normalizedCommand);
-  const hasExtension = path.extname(normalizedCommand).length > 0;
-  const extensions = hasExtension ? [''] : ['.cmd', '.exe', '.bat', '.com'];
-  const resolveCandidate = (basePath) => {
-    for (const ext of extensions) {
-      const candidate = ext ? `${basePath}${ext}` : basePath;
-      if (fs.existsSync(candidate)) {
-        return candidate;
-      }
-    }
-    return null;
-  };
-
-  if (hasPathSegment) {
-    const absoluteBasePath = path.isAbsolute(normalizedCommand)
-      ? normalizedCommand
-      : path.resolve(cwd || process.cwd(), normalizedCommand);
-    return resolveCandidate(absoluteBasePath) || normalizedCommand;
-  }
-
-  const pathKey = getPathEnvKey(env || process.env);
-  const pathValue = env && typeof env[pathKey] === 'string' ? env[pathKey] : '';
-  if (!pathValue) {
-    return normalizedCommand;
-  }
-
-  const searchPaths = pathValue.split(path.delimiter).filter(Boolean);
-  for (const searchPath of searchPaths) {
-    const found = resolveCandidate(path.join(searchPath.trim(), normalizedCommand));
-    if (found) {
-      return found;
-    }
-  }
-
-  return normalizedCommand;
-}
 
 function extractMcpHint(error) {
   return error?.data?.hint || error?.hint || null;
@@ -825,6 +748,18 @@ function getAllServers() {
 /**
  * 获取单个 MCP 服务器
  */
+async function releasePooledClient(serverId) {
+  const cached = mcpClientPool.get(serverId);
+  mcpClientPool.delete(serverId);
+  serverToolsInflight.delete(serverId);
+  if (!cached) return;
+  try {
+    await cached.client.disconnect();
+  } catch (err) {
+    console.error(`[MCP] Error disconnecting client for "${serverId}": ${sanitizeMcpErrorText(err.message || err)}`);
+  }
+}
+
 function getServer(id) {
   const normalizedId = validateMcpId(id);
   const servers = getAllServers();
@@ -886,6 +821,9 @@ async function saveServer(server, options = {}) {
   servers[server.id] = server;
   writeJsonFile(MCP_SERVERS_FILE, servers);
   applyMcpControlApps(server);
+  // A saved spec may have changed (command, args, env). The pooled client
+  // still speaks the old spec, so drop it.
+  await releasePooledClient(server.id);
 
   return server;
 }
@@ -903,6 +841,8 @@ async function deleteServer(id) {
   }
 
   await removeServerFromAllPlatforms(normalizedId);
+  // Kill the pooled child process before the spec disappears.
+  await releasePooledClient(normalizedId);
   delete servers[normalizedId];
   writeJsonFile(MCP_SERVERS_FILE, servers);
   for (const platform of getControlMcpPlatformKeys()) {
@@ -1297,129 +1237,44 @@ async function testServer(serverId) {
 
 /**
  * 测试 stdio 类型服务器
+ *
+ * Uses the same handshake the tools list uses. A process that merely stayed
+ * alive for 3 seconds is not evidence of a working MCP server.
  */
 async function testStdioServer(spec) {
-  return new Promise((resolve) => {
-    const startTime = Date.now();
-    const timeout = 10000; // 10 秒超时
+  const startTime = Date.now();
+  let client = null;
 
-    // 检查命令是否存在
-    const command = spec.command;
-    const args = spec.args || [];
-    const cwd = spec.cwd || process.cwd();
-    const mergedEnv = mergeSpawnEnv(spec.env || {});
-    const resolvedCommand = resolveWindowsSpawnCommand(command, mergedEnv, cwd);
+  try {
+    client = new McpClient(spec, {
+      connectTimeout: MCP_TEST_TIMEOUT_MS,
+      requestTimeout: MCP_TEST_TIMEOUT_MS
+    });
+    await client.connect();
+    await client.initialize();
 
-    let child;
-    let resolved = false;
-    let stdout = '';
-    let stderr = '';
-
-    const cleanup = () => {
-      if (child && !child.killed) {
-        child.kill('SIGTERM');
-        setTimeout(() => {
-          if (!child.killed) child.kill('SIGKILL');
-        }, 1000);
+    return {
+      success: true,
+      message: '服务器 MCP 握手成功',
+      duration: Date.now() - startTime
+    };
+  } catch (err) {
+    const failure = buildMcpFailureResult(err, `测试失败: ${err.message}`, Date.now() - startTime);
+    return {
+      success: false,
+      message: failure.message,
+      hint: failure.hint,
+      duration: failure.duration
+    };
+  } finally {
+    if (client) {
+      try {
+        await client.disconnect();
+      } catch (err) {
+        // ignore cleanup failures
       }
-    };
-
-    const done = (result) => {
-      if (resolved) return;
-      resolved = true;
-      cleanup();
-      resolve(result);
-    };
-
-    try {
-      child = spawn(resolvedCommand, args, {
-        env: mergedEnv,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        cwd,
-        windowsHide: true
-      });
-
-      child.stdout.on('data', (data) => {
-        stdout += data.toString();
-        // MCP 服务器启动成功通常会输出 JSON-RPC 相关内容
-        if (stdout.includes('{') || stdout.length > 0) {
-          done({
-            success: true,
-            message: '服务器启动成功',
-            duration: Date.now() - startTime
-          });
-        }
-      });
-
-      child.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      child.on('error', (err) => {
-        if (err.code === 'ENOENT') {
-          const hint = createMissingCommandHint(command, resolvedCommand, mergedEnv);
-          done({
-            success: false,
-            message: buildMissingCommandMessage(command, resolvedCommand, mergedEnv),
-            hint,
-            duration: Date.now() - startTime
-          });
-        } else {
-          done({
-            success: false,
-            message: sanitizeMcpErrorText(`启动失败: ${err.message}`),
-            duration: Date.now() - startTime
-          });
-        }
-      });
-
-      child.on('close', (code) => {
-        if (code === 0 || stdout.length > 0) {
-          done({
-            success: true,
-            message: '服务器测试通过',
-            duration: Date.now() - startTime
-          });
-        } else {
-          done({
-            success: false,
-            message: sanitizeMcpErrorText(stderr || `进程退出码: ${code}`),
-            duration: Date.now() - startTime
-          });
-        }
-      });
-
-      // 超时处理
-      setTimeout(() => {
-        // 如果进程还在运行，说明服务器正常启动了
-        if (!resolved && child && !child.killed) {
-          done({
-            success: true,
-            message: '服务器正常运行中',
-            duration: Date.now() - startTime
-          });
-        }
-      }, 3000); // 3 秒后如果还在运行就认为成功
-
-      // 最终超时
-      setTimeout(() => {
-        done({
-          success: false,
-          message: '测试超时',
-          duration: timeout
-        });
-      }, timeout);
-
-    } catch (err) {
-      const failure = buildMcpFailureResult(err, `测试失败: ${err.message}`, Date.now() - startTime);
-      done({
-        success: false,
-        message: failure.message,
-        hint: failure.hint,
-        duration: failure.duration
-      });
     }
-  });
+  }
 }
 
 /**
@@ -1430,7 +1285,10 @@ async function testHttpServer(spec) {
   let client = null;
 
   try {
-    client = new McpClient(spec, { timeout: 10000 });
+    client = new McpClient(spec, {
+      connectTimeout: MCP_INIT_TIMEOUT_MS,
+      requestTimeout: MCP_INIT_TIMEOUT_MS
+    });
     await client.connect();
     await client.initialize();
 
@@ -1477,52 +1335,54 @@ async function getServerTools(serverId) {
   }
   assertMcpServerActivated(server);
 
+  // Concurrent opens (drawer + status poll) share one handshake.
+  const inflight = serverToolsInflight.get(serverId);
+  if (inflight) return inflight;
+
+  const promise = fetchServerTools(serverId, server).finally(() => {
+    if (serverToolsInflight.get(serverId) === promise) {
+      serverToolsInflight.delete(serverId);
+    }
+  });
+  serverToolsInflight.set(serverId, promise);
+  return promise;
+}
+
+async function fetchServerTools(serverId, server) {
   const startTime = Date.now();
   const spec = server.server;
+  let client = null;
+  let pooled = false;
 
   try {
-    // Check if we have a cached connection
     const cached = mcpClientPool.get(serverId);
     const now = Date.now();
 
-    let client;
-    let needsInitialization = false;
-
     if (cached && now - cached.timestamp < POOL_TTL && cached.client.connected) {
-      // Reuse existing connection
       client = cached.client;
+      pooled = true;
+      // Reuse must extend the TTL, otherwise a long tool listing expires a
+      // connection that is being used right now.
+      cached.timestamp = now;
       console.log(`[MCP] Reusing pooled connection for "${serverId}"`);
     } else {
-      // Create new connection
       if (cached) {
-        // Clean up expired connection
-        try {
-          await cached.client.disconnect();
-        } catch (err) {
-          console.error(`[MCP] Error disconnecting expired client: ${sanitizeMcpErrorText(err.message || err)}`);
-        }
-        mcpClientPool.delete(serverId);
+        await releasePooledClient(serverId);
       }
-
-      // Create new client with 10s timeout
-      client = new McpClient(spec, { timeout: 10000 });
-      needsInitialization = true;
+      client = new McpClient(spec, {
+        connectTimeout: MCP_INIT_TIMEOUT_MS,
+        requestTimeout: MCP_TOOLS_TIMEOUT_MS
+      });
       console.log(`[MCP] Creating new connection for "${serverId}"`);
-    }
-
-    // Connect and initialize if needed
-    if (needsInitialization) {
       await client.connect();
       await client.initialize();
-
-      // Cache the connection
       mcpClientPool.set(serverId, {
         client,
         timestamp: Date.now()
       });
+      pooled = true;
     }
 
-    // Get tools list
     const tools = sanitizeMcpToolValue(await client.listTools());
 
     return {
@@ -1530,17 +1390,16 @@ async function getServerTools(serverId) {
       duration: Date.now() - startTime,
       status: 'online'
     };
-
   } catch (err) {
-    // Clean up failed connection from pool
-    const cached = mcpClientPool.get(serverId);
-    if (cached) {
+    // A client that never reached the pool still holds a child process.
+    if (pooled) {
+      await releasePooledClient(serverId);
+    } else if (client) {
       try {
-        await cached.client.disconnect();
+        await client.disconnect();
       } catch (e) {
         // ignore
       }
-      mcpClientPool.delete(serverId);
     }
 
     const failure = buildMcpFailureResult(err, err.message, Date.now() - startTime);
@@ -1571,41 +1430,32 @@ async function callServerTool(serverId, toolName, arguments = {}) {
 
   const startTime = Date.now();
   const spec = server.server;
+  let client = null;
+  let pooled = false;
 
   try {
     // Check if we have a cached connection
     const cached = mcpClientPool.get(serverId);
     const now = Date.now();
 
-    let client;
-    let needsInitialization = false;
-
     if (cached && now - cached.timestamp < POOL_TTL && cached.client.connected) {
       // Reuse existing connection
       client = cached.client;
+      pooled = true;
       // Update timestamp
       cached.timestamp = now;
       console.log(`[MCP] Reusing pooled connection for "${serverId}"`);
     } else {
       // Create new connection
       if (cached) {
-        // Clean up expired connection
-        try {
-          await cached.client.disconnect();
-        } catch (err) {
-          console.error(`[MCP] Error disconnecting expired client: ${sanitizeMcpErrorText(err.message || err)}`);
-        }
-        mcpClientPool.delete(serverId);
+        await releasePooledClient(serverId);
       }
 
-      // Create new client with 30s timeout
-      client = new McpClient(spec, { timeout: 30000 });
-      needsInitialization = true;
+      client = new McpClient(spec, {
+        connectTimeout: MCP_INIT_TIMEOUT_MS,
+        requestTimeout: MCP_TOOLS_TIMEOUT_MS
+      });
       console.log(`[MCP] Creating new connection for "${serverId}"`);
-    }
-
-    // Connect and initialize if needed
-    if (needsInitialization) {
       await client.connect();
       await client.initialize();
 
@@ -1614,6 +1464,7 @@ async function callServerTool(serverId, toolName, arguments = {}) {
         client,
         timestamp: Date.now()
       });
+      pooled = true;
     }
 
     // Call the tool
@@ -1645,15 +1496,15 @@ async function callServerTool(serverId, toolName, arguments = {}) {
     };
 
   } catch (err) {
-    // Clean up failed connection from pool
-    const cached = mcpClientPool.get(serverId);
-    if (cached) {
+    // Clean up the failed connection, pooled or not.
+    if (pooled) {
+      await releasePooledClient(serverId);
+    } else if (client) {
       try {
-        await cached.client.disconnect();
+        await client.disconnect();
       } catch (e) {
         // ignore
       }
-      mcpClientPool.delete(serverId);
     }
 
     const failure = buildMcpFailureResult(err, err.message, Date.now() - startTime);
@@ -1751,6 +1602,15 @@ function exportAsJson(servers) {
 }
 
 
+/** Disconnect and forget every pooled client. Used by tests and shutdown. */
+async function clearMcpClientPool() {
+  const ids = [...mcpClientPool.keys()];
+  for (const id of ids) {
+    await releasePooledClient(id);
+  }
+  serverToolsInflight.clear();
+}
+
 module.exports = {
   getAllServers,
   getServer,
@@ -1769,6 +1629,7 @@ module.exports = {
   updateServerStatus,
   updateServerOrder,
   exportServers,
+  clearMcpClientPool,
   _test: {
     extractMcpHint,
     buildMcpFailureResult,

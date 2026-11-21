@@ -515,6 +515,26 @@ describe('tool routes', () => {
     expect(res.body.hint.command).toContain('[REDACTED]');
   });
 
+  test('GET /servers/:id/tools returns 504 for a timed-out handshake', async () => {
+    mockService.getServerTools.mockResolvedValue({
+      status: 'error',
+      error: 'Request "initialize" timed out after 30000ms',
+      duration: 30001
+    });
+
+    const res = await request(buildApp()).get('/servers/fetch/tools');
+
+    expect(res.status).toBe(504);
+    expect(mockService.updateServerStatus).toHaveBeenCalledWith('fetch', 'error');
+  });
+
+  test('GET /servers/:id/tools persists an online status', async () => {
+    const res = await request(buildApp()).get('/servers/fetch/tools');
+
+    expect(res.status).toBe(200);
+    expect(mockService.updateServerStatus).toHaveBeenCalledWith('fetch', 'online');
+  });
+
   test('POST /servers/:id/tools/test validates toolName', async () => {
     const res = await request(buildApp()).post('/servers/fetch/tools/test', {});
 

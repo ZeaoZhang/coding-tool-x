@@ -1,8 +1,18 @@
 const express = require('express');
 const router = express.Router();
-const { setAlias, deleteAlias } = require('../services/alias');
+const { setAlias, deleteAlias, loadAliases } = require('../services/alias');
 
 module.exports = () => {
+  // GET /api/aliases - List all session aliases
+  router.get('/', (req, res) => {
+    try {
+      res.json({ success: true, aliases: loadAliases() });
+    } catch (error) {
+      console.error('Error loading aliases:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // POST /api/aliases - Set alias for a session
   router.post('/', (req, res) => {
     try {

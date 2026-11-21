@@ -6,6 +6,9 @@ import { useGlobalStore } from '../stores/global'
 import { resolveErrorMessage } from '../utils/error-message'
 
 const BALANCE_LOAD_DELAY_MS = 5000
+// A channel without a balance right after a fetch is usually still being
+// scanned by the backend; one retry fills the gap without a polling loop.
+const BALANCE_RETRY_DELAY_MS = 1200
 // OAuth rolling windows can change while a channel stays open, so refresh them periodically.
 const BALANCE_POLL_INTERVAL_MS = 60_000
 const UI_CONFIG_TTL = 60000
@@ -69,12 +72,16 @@ export default function useChannelManager(config) {
   let balanceRetryTimer = null
   let balanceIdleCallbackId = null
   let balanceLoadPromise = null
+  let balanceLoadRequested = false
+  let balanceRetryAttempted = false
   let uiConfigPromise = null
   let channelMetaRefreshTimer = null
   let loadPromise = null
   let channelMetaRefreshAttempt = 0
   // 保存请求进行中时禁止再次提交：慢请求或卡住时用户重复点击会重复创建渠道。
   let saving = false
+  // 同步确认框打开期间忽略重复点击，避免弹出多个确认框。
+  let syncPromptOpen = false
 
   const state = reactive({
     channels: [],
@@ -83,6 +90,7 @@ export default function useChannelManager(config) {
     loading: false,
     saving: false,
     balanceLoading: false,
+    balanceRefreshing: false,
     balanceError: null,
     syncing: false,
     toggling: {},
@@ -202,7 +210,9 @@ export default function useChannelManager(config) {
       scheduleFrozenChannelRefresh()
       scheduleChannelMetaRefresh(state.channelMeta)
       if (!skipBalance) {
-        scheduleChannelBalanceLoad()
+        // First paint should not wait the background-refresh delay: an empty
+        // balance block reads as "no balance" instead of "still loading".
+        scheduleChannelBalanceLoad({ immediate: !balanceLoadRequested })
       }
     } catch (error) {
       if (state.channels.length === 0) {
@@ -228,6 +238,7 @@ export default function useChannelManager(config) {
           state.showChannelBalance = false
           state.formData._showChannelBalance = false
           state.balances = {}
+          state.balanceRefreshing = false
           return null
         }
 
@@ -235,12 +246,28 @@ export default function useChannelManager(config) {
         state.formData._showChannelBalance = true
         const response = await getChannelBalances(config.type)
         state.balances = response?.enabled && response.balances ? response.balances : {}
+        state.balanceRefreshing = response?.refreshing === true
         if (response?.refreshing) {
           if (balanceRetryTimer) clearTimeout(balanceRetryTimer)
           balanceRetryTimer = setTimeout(() => {
             balanceRetryTimer = null
             if (isDocumentVisible()) loadChannelBalances().catch(() => {})
-          }, 1200)
+          }, BALANCE_RETRY_DELAY_MS)
+        } else {
+          // A single retry for channels the backend has not priced yet.
+          const missingBalance = state.channels.some(channel => (
+            channel?.enabled !== false && channel?.id && !state.balances[channel.id]
+          ))
+          if (missingBalance && !balanceRetryAttempted) {
+            balanceRetryAttempted = true
+            if (balanceRetryTimer) clearTimeout(balanceRetryTimer)
+            balanceRetryTimer = setTimeout(() => {
+              balanceRetryTimer = null
+              if (isDocumentVisible()) loadChannelBalances().catch(() => {})
+            }, BALANCE_RETRY_DELAY_MS)
+          } else if (!missingBalance) {
+            balanceRetryAttempted = false
+          }
         }
         return response
       } catch (error) {
@@ -310,9 +337,14 @@ export default function useChannelManager(config) {
     }))
   }
 
-  function scheduleChannelBalanceLoad() {
+  function scheduleChannelBalanceLoad({ immediate = false } = {}) {
     clearBalanceLoadTimer()
     if (!isDocumentVisible()) return
+    balanceLoadRequested = true
+    requestBalanceLoad(immediate ? 0 : BALANCE_LOAD_DELAY_MS, immediate ? 300 : 1500)
+  }
+
+  function requestBalanceLoad(delayMs, idleTimeoutMs) {
     const run = () => {
       if (balanceLoadTimer) {
         clearTimeout(balanceLoadTimer)
@@ -323,11 +355,11 @@ export default function useChannelManager(config) {
     }
     balanceLoadTimer = setTimeout(() => {
       if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
-        balanceIdleCallbackId = window.requestIdleCallback(run, { timeout: 1500 })
+        balanceIdleCallbackId = window.requestIdleCallback(run, { timeout: idleTimeoutMs })
         return
       }
       run()
-    }, BALANCE_LOAD_DELAY_MS)
+    }, delayMs)
   }
 
   function clearFrozenChannelRefreshTimer() {
@@ -606,12 +638,47 @@ export default function useChannelManager(config) {
     return `${config.displayName} 无需同步`
   }
 
+  function confirmSyncCurrentChannel() {
+    return new Promise((resolve) => {
+      let settled = false
+      const finish = (value) => {
+        if (settled) return
+        settled = true
+        resolve(value)
+      }
+      try {
+        dialog.warning({
+          title: `同步 ${config.displayName} 原生配置`,
+          content: `同步会读取 ${config.displayName} 的原生配置文件，并把结果写入渠道列表（可能新增或覆盖已有渠道）。是否继续？`,
+          positiveText: '开始同步',
+          negativeText: '取消',
+          onPositiveClick: () => finish(true),
+          onNegativeClick: () => finish(false),
+          onMaskClick: () => finish(false),
+          onClose: () => finish(false)
+        })
+      } catch (error) {
+        // 无法弹出确认框时不执行写入操作，避免无提示地改动渠道列表。
+        finish(false)
+      }
+    })
+  }
+
   async function handleSyncCurrentChannels() {
     if (typeof config.api.syncCurrent !== 'function') {
       message.warning(`${config.displayName} 暂不支持同步`)
       return null
     }
-    if (state.syncing) return null
+    if (state.syncing || syncPromptOpen) return null
+    // 同步会改写渠道列表，先让用户确认。
+    syncPromptOpen = true
+    let confirmed = false
+    try {
+      confirmed = await confirmSyncCurrentChannel()
+    } finally {
+      syncPromptOpen = false
+    }
+    if (!confirmed) return null
     state.syncing = true
     try {
       const result = await config.api.syncCurrent()

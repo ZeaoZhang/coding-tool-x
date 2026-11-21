@@ -18,6 +18,7 @@ let convertCommandToCodexMock;
 let convertCommandToGeminiMock;
 let projectConfigService;
 let templateSkillRegistrations;
+let skillProjectionState;
 let templatesService;
 
 function writeFile(filePath, content) {
@@ -36,6 +37,7 @@ function readYaml(filePath) {
 beforeEach(() => {
   testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'config-templates-service-'));
   templateSkillRegistrations = [];
+  skillProjectionState = 'enabled';
   pluginsServiceArgs = [];
   configDir = path.join(testDir, '.cc-tool');
   agentList = [
@@ -201,6 +203,20 @@ beforeEach(() => {
       SkillService: class {
         constructor(platform) {
           this.platform = platform;
+          this.controlService = {
+            setSkillTrust: vi.fn(input => ({ ...input })),
+            setSkillEnabled: vi.fn(input => ({
+              controlKey: input.controlKey,
+              enabled: skillProjectionState === 'enabled',
+              trust: 'approved',
+              projection: {
+                state: skillProjectionState,
+                path: skillProjectionState === 'enabled'
+                  ? `/project/.${this.platform}/skills/${input.controlKey.split(':').pop()}`
+                  : null
+              }
+            }))
+          };
         }
         getInstalledSkills() {
           return skillsByPlatform[this.platform] || [];
@@ -584,7 +600,7 @@ describe('config-templates-service apply and preview', () => {
           { applied: true, path: 'GEMINI.md', type: 'Gemini', key: 'gemini' },
           { applied: true, path: '.opencode/AGENTS.md', type: 'OpenCode', key: 'opencode' }
         ],
-        skills: { applied: 0, items: [] },
+        skills: { applied: 0, items: [], files: [], pending: 0, pendingItems: [] },
         agents: {
           applied: 1,
           files: ['.claude/agents/reviewer.md', '.opencode/agents/reviewer.md', '.gemini/agents/reviewer.md']
@@ -730,6 +746,61 @@ describe('config-templates-service apply and preview', () => {
       }
     ]);
   });
+  test('counts a projected template Skill as applied and records its path', async () => {
+    const template = templatesService.createCustomTemplate({
+      name: 'Projected Skill',
+      cliType: 'claude',
+      skills: [{ platform: 'claude', directory: 'skill-projected', name: 'Skill Projected' }]
+    });
+    const targetDir = path.join(testDir, 'projected-skill');
+    fs.mkdirSync(targetDir, { recursive: true });
+
+    const result = await templatesService.applyTemplateToProject(targetDir, template.id, {
+      aiConfigTypes: ['claude']
+    });
+
+    expect(templateSkillRegistrations[0].input.sourceRoot).toBe('install');
+    expect(result.results.skills.applied).toBe(1);
+    expect(result.results.skills.files).toEqual([{
+      name: 'skill-projected',
+      path: '/project/.claude/skills/skill-projected',
+      status: 'applied'
+    }]);
+    expect(result.results.skipped.filter(item => item.type === 'skill')).toEqual([]);
+    expect(readJson(path.join(targetDir, '.ctx-config.json')).skills).toEqual([{
+      name: 'skill-projected',
+      path: '/project/.claude/skills/skill-projected'
+    }]);
+  });
+
+  test('does not report a failed Skill projection as applied', async () => {
+    skillProjectionState = 'conflict';
+    const template = templatesService.createCustomTemplate({
+      name: 'Conflicting Skill',
+      cliType: 'claude',
+      skills: [{ platform: 'claude', directory: 'skill-conflict', name: 'Skill Conflict' }]
+    });
+    const targetDir = path.join(testDir, 'conflicting-skill');
+    fs.mkdirSync(targetDir, { recursive: true });
+
+    const result = await templatesService.applyTemplateToProject(targetDir, template.id, {
+      aiConfigTypes: ['claude']
+    });
+
+    expect(result.results.skills.applied).toBe(0);
+    expect(result.results.skills.files).toEqual([{
+      name: 'skill-conflict',
+      path: null,
+      status: 'skipped',
+      reason: 'Skill 投影失败: conflict'
+    }]);
+    expect(result.results.skipped.filter(item => item.type === 'skill')).toEqual([{
+      type: 'skill',
+      item: 'skill-conflict',
+      reason: 'Skill 投影失败: conflict'
+    }]);
+  });
+
   test('rejects template resource paths that escape the project root', async () => {
 
     const template = templatesService.createCustomTemplate({
@@ -839,7 +910,7 @@ describe('config-templates-service apply and preview', () => {
       success: true,
       results: {
         aiConfigs: [],
-        skills: { applied: 0, items: [] },
+        skills: { applied: 0, items: [], files: [], pending: 0, pendingItems: [] },
         agents: {
           applied: 1,
           files: ['.omp/agents/reviewer.md']

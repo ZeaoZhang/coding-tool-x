@@ -73,7 +73,14 @@ async function readProxyStatus(source, runtime) {
     if (!driver || typeof driver.status !== 'function') {
       return { status: 'unsupported', platform: source, capability: 'proxy', operation: 'status' };
     }
-    return await driver.status();
+    const value = await driver.status();
+    // Proxy drivers answer with a driver envelope ({status:'ok', data:{...}}).
+    // The dashboard contract is the proxy state itself; hand the envelope to the
+    // frontend and every field (port, running, activeChannel) reads as missing.
+    if (value && value.status === 'ok' && value.data !== undefined) {
+      return value.data;
+    }
+    return value;
   } catch (error) {
     const failure = {
       status: typeof error?.status === 'string' ? safeText(error.status, 'failed') : 'failed',

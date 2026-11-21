@@ -113,15 +113,6 @@
   flex-shrink: 0;
 }
 
-.channel-actions .apply-btn {
-  opacity: 0;
-  transition: opacity 0.2s ease;
-}
-
-.channel-card:hover .channel-actions .apply-btn {
-  opacity: 1;
-}
-
 .channel-actions .n-switch {
   margin-left: 2px;
 }

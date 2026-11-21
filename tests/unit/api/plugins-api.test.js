@@ -409,6 +409,16 @@ describe('repository routes', () => {
     expect(res.body.repos[0].hasToken).toBe(true);
   });
 
+  test('GET /repos keeps the list when the service cannot serialize it', async () => {
+    services.claude.getReposForClient = vi.fn(() => { throw new Error('unsupported provider'); });
+
+    const res = await request(buildApp()).get('/repos');
+
+    expect(res.status).toBe(200);
+    expect(res.body.repos[0]).toMatchObject({ owner: 'demo', name: 'plugins', hasToken: true });
+    expect(res.body.repos[0].token).toBeUndefined();
+  });
+
   test('POST /repos validates repository url', async () => {
     const res = await request(buildApp()).post('/repos', {});
 

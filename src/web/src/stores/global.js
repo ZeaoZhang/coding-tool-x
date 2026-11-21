@@ -514,8 +514,14 @@ export const useGlobalStore = defineStore('global', () => {
       responses.forEach((response, index) => {
         const payload = response?.data || {}
         const proxyRef = getProxyState(keys[index])
-        if (proxyRef && payload.proxy) {
-          patchProxyState(proxyRef, payload.proxy, payload.activeChannel)
+        if (!proxyRef) return
+        // Platform routes return either {proxy, activeChannel} or a driver
+        // envelope; a bare proxy state is also valid.
+        const proxyPayload = payload.proxy
+          || (payload.status === 'ok' && payload.data)
+          || payload
+        if (proxyPayload && typeof proxyPayload === 'object') {
+          patchProxyState(proxyRef, proxyPayload, payload.activeChannel || proxyPayload.activeChannel)
         }
       })
       hydratedPlatformSignature = platformSignature
@@ -606,6 +612,10 @@ export const useGlobalStore = defineStore('global', () => {
       proxyRef.value.running = true
       proxyRef.value.activeChannel = response.data.activeChannel
       proxyRef.value.startTime = Date.now()
+      // The started proxy may listen on a different port than the default;
+      // without this the column keeps showing the previous (or empty) port.
+      if (response.data.port != null) proxyRef.value.port = response.data.port
+      if (response.data.defaultPort != null) proxyRef.value.defaultPort = response.data.defaultPort
     }
     return response.data
   }

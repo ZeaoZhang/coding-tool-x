@@ -117,6 +117,15 @@ function startCreate() {
 }
 
 async function save() {
+  if (!profile.value) {
+    message.error('请先选择 DSH Profile')
+    return
+  }
+  const presetId = String(draft.value?.id || '').trim()
+  if (!presetId) {
+    message.error('预设 ID 不能为空，请填写预设 ID 后再保存')
+    return
+  }
   let plugins
   try { plugins = JSON.parse(pluginsText.value || '[]') } catch (_) {
     message.error('插件声明必须是有效的 JSON 数组')
@@ -129,14 +138,14 @@ async function save() {
   saving.value = true
   try {
     await saveDshAgentPreset(profile.value, {
-      id: draft.value.id,
-      name: draft.value.name,
+      id: presetId,
+      name: String(draft.value?.name || '').trim(),
       description: draft.value.description,
       order: draft.value.order,
       plugins
     }, revision.value)
     message.success('Agent 预设已保存')
-    selectedId.value = draft.value.id
+    selectedId.value = presetId
     await loadPresets()
   } catch (cause) {
     message.error(cause.message || '保存失败，请刷新后重试')

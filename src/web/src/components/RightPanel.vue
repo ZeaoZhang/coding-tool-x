@@ -151,6 +151,8 @@ import ProxyLogs from './ProxyLogs.vue'
 import { getSkills } from '../api/skills'
 import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
 import { getRoutePlatform } from '../config/platformCatalog'
+import message from '../utils/message'
+import { openInNewTab } from '../utils/open-url'
 
 const route = useRoute()
 // Props for panel visibility
@@ -244,7 +246,13 @@ const channelTitle = computed(() => {
 })
 
 function openWebsite(url) {
-  window.open(url, '_blank')
+  if (!url) {
+    message.warning('该渠道未提供官网地址')
+    return
+  }
+  if (!openInNewTab(url)) {
+    message.warning('无法打开链接，请检查浏览器弹窗拦截')
+  }
 }
 
 function handleAddClick() {

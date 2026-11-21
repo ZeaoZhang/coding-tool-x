@@ -7,6 +7,12 @@
         </n-spin>
       </div>
 
+      <div v-else-if="generating" class="loading-container">
+        <n-spin size="medium">
+          <template #description>正在生成最近会话…</template>
+        </n-spin>
+      </div>
+
       <div v-else-if="sessions.length > 0" class="sessions-list">
         <SessionCard
           v-for="session in sessions"
@@ -16,6 +22,8 @@
           :show-project="true"
           :hide-fork="true"
           :hide-delete="true"
+          class="session-row"
+          @click="handleRowClick(session, $event)"
           @set-alias="handleSetAlias"
           @launch="handleLaunchSession"
         />
@@ -30,15 +38,26 @@
           <n-icon size="48"><ChatbubblesOutline /></n-icon>
         </template>
       </n-empty>
+
+      <!-- 点击会话行打开聊天记录，和收藏抽屉复用同一个历史记录抽屉 -->
+      <ChatHistoryDrawer
+        v-if="historyTarget"
+        v-model:show="showChatHistory"
+        :project-name="historyTarget.projectName"
+        :session-id="historyTarget.sessionId"
+        :session-alias="historyTarget.alias"
+        :channel="channel"
+      />
     </n-drawer-content>
   </n-drawer>
 </template>
 
 <script setup>
-import { ref, computed, watch, h } from 'vue'
+import { ref, computed, watch, h, onUnmounted } from 'vue'
 import { NDrawer, NDrawerContent, NSpin, NEmpty, NIcon, NInput } from 'naive-ui'
 import { ChatbubblesOutline } from '@vicons/ionicons5'
 import SessionCard from './SessionCard.vue'
+import ChatHistoryDrawer from './ChatHistoryDrawer.vue'
 import {
   getRecentSessions,
   setAlias as setAliasApi,
@@ -67,6 +86,29 @@ const emit = defineEmits(['update:visible'])
 const show = ref(false)
 const sessions = ref([])
 const loading = ref(false)
+// An empty answer on a cold index usually means the backend is still scanning.
+// Retry a bounded number of times instead of claiming there are no sessions.
+const generating = ref(false)
+const MAX_GENERATING_RETRIES = 3
+let generatingRetries = 0
+let retryTimer = null
+
+// 点击会话行时打开聊天记录（与收藏抽屉一致），行内操作按钮保持独立行为。
+const historyTarget = ref(null)
+const showChatHistory = ref(false)
+
+function handleRowClick(session, event) {
+  const target = event?.target
+  // 别名/启动等按钮自己消费点击，不打开聊天记录。
+  if (target?.closest?.('.session-actions, button, a, input, textarea')) return
+  if (!session?.sessionId || !session?.projectName) return
+  historyTarget.value = {
+    projectName: session.projectName,
+    sessionId: session.sessionId,
+    alias: session.alias || ''
+  }
+  showChatHistory.value = true
+}
 
 // 为了在 template 中使用
 const channel = computed(() => props.channel)
@@ -86,22 +128,53 @@ function getChannelTitle() {
 watch(() => props.visible, (val) => {
   show.value = val
   if (val) {
+    generatingRetries = 0
+    generating.value = false
     loadSessions()
   }
 }, { immediate: true })
 
 // Sync with show
 watch(show, (val) => {
+  if (!val) clearRetryTimer()
   emit('update:visible', val)
 })
 
-async function loadSessions() {
+onUnmounted(clearRetryTimer)
+
+function clearRetryTimer() {
+  if (retryTimer) {
+    clearTimeout(retryTimer)
+    retryTimer = null
+  }
+}
+
+async function loadSessions({ retry = true } = {}) {
+  clearRetryTimer()
   loading.value = true
   try {
     const data = await getRecentSessions(10, props.channel)
-    sessions.value = filterDisplayableSessions(data.sessions)
+    const nextSessions = filterDisplayableSessions(data.sessions)
+    sessions.value = nextSessions
+    if (nextSessions.length > 0 || !retry) {
+      generating.value = false
+      generatingRetries = 0
+      return
+    }
+    if (generatingRetries >= MAX_GENERATING_RETRIES) {
+      generating.value = false
+      return
+    }
+    // Empty while the index may still be warming: keep the spinner honest.
+    generatingRetries += 1
+    generating.value = true
+    retryTimer = setTimeout(() => {
+      retryTimer = null
+      if (show.value) loadSessions()
+    }, 1500)
   } catch (err) {
     console.error('Failed to load recent sessions:', err)
+    generating.value = false
     message.error('加载失败: ' + err.message)
   } finally {
     loading.value = false
@@ -187,5 +260,9 @@ async function handleLaunchSession(session) {
   display: flex;
   flex-direction: column;
   gap: 0;
+}
+
+.session-row {
+  cursor: pointer;
 }
 </style>

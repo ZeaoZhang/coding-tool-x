@@ -115,7 +115,13 @@ function sanitizeRepo(repo = {}) {
 
 function sanitizeRepos(service, repos = []) {
   if (typeof service.getReposForClient === 'function') {
-    return service.getReposForClient(repos);
+    try {
+      return service.getReposForClient(repos);
+    } catch (error) {
+      // Serialization is best-effort: a repository provider the service cannot
+      // normalize must not turn the whole list endpoint into a 500.
+      console.error('[PluginsAPI] Failed to serialize repos:', error?.message || error);
+    }
   }
   return (Array.isArray(repos) ? repos : []).map(sanitizeRepo);
 }

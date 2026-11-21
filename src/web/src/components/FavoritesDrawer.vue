@@ -200,6 +200,9 @@ const store = useSessionsStore()
 const claudeFavorites = computed(() => getFavorites('claude'))
 const codexFavorites = computed(() => getFavorites('codex'))
 const geminiFavorites = computed(() => getFavorites('gemini'))
+const totalCount = computed(() =>
+  claudeFavorites.value.length + codexFavorites.value.length + geminiFavorites.value.length
+)
 
 // 别名编辑
 const showAliasDialog = ref(false)

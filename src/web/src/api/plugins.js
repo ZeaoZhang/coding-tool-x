@@ -5,18 +5,38 @@
  */
 
 import { client, getPlatformApiPrefix } from './client'
-import { requestKey, requestSingleflight } from './request-singleflight'
+import { forgetRequest, requestKey, requestSingleflight } from './request-singleflight'
 
+// key -> { promise, generation }. The generation guard keeps a slow pre-mutation
+// response from evicting the entry a fresh read created.
 const sessionCache = new Map()
+let sessionGeneration = 0
 
 function sessionKey(resource, platform, options = {}) {
   return requestKey(resource, platform, options.scope || '', options.cwd || '')
 }
 
 function clearSessionCache(platform = '') {
+  sessionGeneration += 1
   for (const key of sessionCache.keys()) {
-    if (!platform || key.includes(`:${platform}:`)) sessionCache.delete(key)
+    if (platform && !key.includes(`:${platform}:`)) continue
+    sessionCache.delete(key)
+    // A list request that started before the mutation must not be reused.
+    forgetRequest(key)
   }
+}
+
+async function readThroughCache(key, load) {
+  const cached = sessionCache.get(key)
+  if (cached) return cached.promise
+  const generation = sessionGeneration
+  const promise = load().catch(error => {
+    const entry = sessionCache.get(key)
+    if (entry && entry.generation === generation) sessionCache.delete(key)
+    throw error
+  })
+  sessionCache.set(key, { promise, generation })
+  return promise
 }
 
 /**
@@ -32,16 +52,10 @@ function withPluginContext(payload = {}, options = {}) {
 
 export async function getPlugins(platform = 'claude', options = {}) {
   const key = sessionKey('plugins', platform, options)
-  if (sessionCache.has(key)) return sessionCache.get(key)
-  const request = requestSingleflight(key, signal => client.get('/plugins', {
+  return readThroughCache(key, () => requestSingleflight(key, signal => client.get('/plugins', {
     params: withPluginContext({ platform }, options),
     signal
-  }).then(response => response.data).catch(error => {
-    sessionCache.delete(key)
-    throw error
-  }), 'plugins', `plugins:${platform}`)
-  sessionCache.set(key, request)
-  return request
+  }).then(response => response.data), 'plugins', `plugins:${platform}`))
 }
 
 /**
@@ -65,16 +79,10 @@ export async function getPluginCapabilities(platform = 'claude', options = {}) {
  */
 export async function getMarketPlugins(platform = 'claude', forceRefresh = false, options = {}) {
   const key = sessionKey('plugins-market', platform, options)
-  if (sessionCache.has(key)) return sessionCache.get(key)
-  const request = requestSingleflight(key, signal => client.get('/plugins/market', {
+  return readThroughCache(key, () => requestSingleflight(key, signal => client.get('/plugins/market', {
     params: withPluginContext({ platform }, options),
     signal
-  }).then(response => response.data).catch(error => {
-    sessionCache.delete(key)
-    throw error
-  }), 'plugins-market', `plugins-market:${platform}`)
-  sessionCache.set(key, request)
-  return request
+  }).then(response => response.data), 'plugins-market', `plugins-market:${platform}`))
 }
 
 /** Start an explicit remote plugin sync. Reads never use this endpoint. */
@@ -145,6 +153,7 @@ export async function installPlugin(directory, repo, platform = 'claude', source
     body.repo = repo
   }
   const response = await client.post('/plugins/install', body)
+  clearSessionCache(platform)
   return response.data
 }
 
@@ -156,6 +165,7 @@ export async function uninstallPlugin(pluginId, platform = 'claude', options = {
   const response = await client.delete(`/plugins/${encodeURIComponent(pluginId)}`, {
     params: withPluginContext({ platform, pluginId }, options)
   })
+  clearSessionCache(platform)
   return response.data
 }
 

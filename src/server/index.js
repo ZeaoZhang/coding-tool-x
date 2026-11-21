@@ -236,6 +236,10 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
   // Keep the legacy /api/hooks endpoint ahead of Claude's rootAlias /hooks route.
   app.use('/api/hooks', require('./api/hooks'));
 
+  // Global proxy log clearing must be registered before platform root aliases
+  // (Claude mounts /proxy/... at /api) so every platform can clear its logs.
+  app.use('/api/proxy', require('./api/proxy-logs')());
+
   const { getPlatformContext } = require('./platform-context');
   const platformContext = getPlatformContext({ dependencies: { config } });
   app.use('/api/platforms', require('./api/platforms')({
@@ -287,6 +291,9 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
 
   // 配置注册表 API (集中管理 skills/commands/agents/plugins 的启用/禁用)
   app.use('/api/config-registry', require('./api/config-registry'));
+
+  // 未匹配的 /api/* 必须返回 JSON 404，而不是 SPA index.html。
+  app.use('/api', require('./api/not-found'));
 
 
   // Serve static files in production

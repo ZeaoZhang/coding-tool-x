@@ -27,6 +27,20 @@ const FIRST_MESSAGE_PREVIEW_MAX_CHARS = 1024;
 
 /** @type {number} Maximum time a cold stale-ok read waits for inventory */
 const INDEX_COLD_WAIT_MS = 1500;
+/**
+ * Maximum time a cold read waits when no summary rows exist at all.
+ * An empty index renders an empty session list, so a first open is worth
+ * waiting longer for than an incremental refresh.
+ * @type {number}
+ */
+const INDEX_SUMMARY_COLD_WAIT_MS = 5000;
+/**
+ * Maximum time an interactive search waits for the first content scan.
+ * The HTTP client budget is 30s; a source with no indexed messages must not
+ * turn a search into a timeout.
+ * @type {number}
+ */
+const SEARCH_COLD_WAIT_MS = 15000;
 /** @type {number} Maximum age for a lock whose owner cannot be inspected */
 const INVENTORY_LOCK_STALE_MS = 30 * 60 * 1000;
 /** @type {number} Maximum time a competing inventory waits for the database writer */
@@ -1115,7 +1129,7 @@ function createSessionHistoryIndex(opts = {}) {
     if (_hasSummaryData(source)) return;
     await Promise.race([
       promise,
-      new Promise(resolve => setTimeout(resolve, INDEX_COLD_WAIT_MS))
+      new Promise(resolve => setTimeout(resolve, INDEX_SUMMARY_COLD_WAIT_MS))
     ]);
   }
 
@@ -1272,7 +1286,12 @@ function createSessionHistoryIndex(opts = {}) {
       }
 
       const winnersBySessionId = new Map();
-      const scopedInventory = projectName
+      // Codex/OMP resolve the project name while parsing, so their descriptors
+      // carry `projectHint: null`. Filtering on the hint there would drop every
+      // descriptor, leave `activePaths` empty, and let the deletion pass wipe
+      // the project's rows on the next scoped refresh.
+      const canScope = inventoryResult.every(d => d && d.projectHint !== null && d.projectHint !== undefined);
+      const scopedInventory = projectName && canScope
         ? inventoryResult.filter(descriptor => descriptor?.projectHint === projectName)
         : inventoryResult;
       for (const descriptor of scopedInventory) {
@@ -1285,7 +1304,10 @@ function createSessionHistoryIndex(opts = {}) {
       }
 
       const toParse = [];
-      const activePaths = new Set();
+      // Deletion detection must consider every file the adapter reported, not
+      // just the scoped winners; otherwise a project-scoped run reads an empty
+      // (or partial) set as "all files vanished".
+      const activePaths = new Set(inventoryResult.map(d => d.filePath));
       // Inventory adapters may return directory order. Parse changed files in
       // recency order so a bounded search warms the newest conversations
       // first, matching the result ordering used by the query layer.
@@ -1294,7 +1316,6 @@ function createSessionHistoryIndex(opts = {}) {
         || String(left.filePath).localeCompare(String(right.filePath))
       );
       for (const d of orderedDescriptors) {
-        activePaths.add(d.filePath);
         const idx = indexedFiles.get(d.filePath);
         if (!idx
           || idx.size !== d.size
@@ -1698,6 +1719,10 @@ function createSessionHistoryIndex(opts = {}) {
       mtimeMs: Number(summaryRow.mtime_ms) || 0,
       sessionId: summaryRow.session_id,
       projectHint: summaryRow.project_name,
+      // Adapters that resolve the project from the descriptor (Gemini hashes
+      // the storage name) need the known root; without it the parse reports a
+      // null project and the content write erases project_full_path.
+      projectRoot: summaryRow.project_full_path || null,
       projectsDir: projectsDir || explicitProjectsDir
     };
     const parseResult = await adapter.parse(descriptor);
@@ -2218,7 +2243,62 @@ function createSessionHistoryIndex(opts = {}) {
     });
     const db = _getDb();
     const contextLength = Math.max(1, Math.min(200, Number(options.contextLength) || 35));
+    const searchOptions = { projectName, resultLimit, contextLength };
 
+    let results = _matchSessions(db, source, keyword, searchOptions);
+    if (results.length === 0) {
+      // No match on a source whose message table is empty means the index is
+      // cold, not that the keyword is absent. Wait for one real scan so a
+      // first search does not answer "nothing found".
+      const messageCount = Number(db.prepare(
+        'SELECT COUNT(*) AS count FROM session_message WHERE source = ?'
+      ).get(source)?.count) || 0;
+      if (messageCount === 0) {
+        // The scan keeps running in the background after the wait; a client
+        // request must not hold an HTTP connection open for a multi-minute
+        // first inventory.
+        await Promise.race([
+          ensureSourceIndexed(source, {
+            force: true,
+            consistency: 'complete',
+            allowStaleData: false,
+            projectName,
+            config: options.config
+          }),
+          new Promise(resolve => {
+            const timer = setTimeout(resolve, SEARCH_COLD_WAIT_MS);
+            // Never keep the process alive for a deadline the scan beat.
+            timer.unref?.();
+          })
+        ]);
+        results = _matchSessions(db, source, keyword, searchOptions);
+      }
+    }
+
+    return _pruneMissingFiles(db, source, results).slice(0, resultLimit);
+  }
+
+  /**
+   * Drop results whose session file no longer exists, together with their
+   * index rows, so a deleted conversation stops being searchable.
+   */
+  function _pruneMissingFiles(db, source, results) {
+    const kept = [];
+    for (const result of results) {
+      if (result.filePath && !fs.existsSync(result.filePath)) {
+        // Removing the content row cascades to session_message/FTS because
+        // the connection runs with foreign_keys=ON.
+        db.prepare('DELETE FROM session_file WHERE source = ? AND file_path = ?').run(source, result.filePath);
+        db.prepare('DELETE FROM session_summary WHERE source = ? AND file_path = ?').run(source, result.filePath);
+        continue;
+      }
+      kept.push(result);
+    }
+    if (kept.length !== results.length) sourceMessageCounts.delete(source);
+    return kept;
+  }
+
+  function _matchSessions(db, source, keyword, { projectName, resultLimit, contextLength }) {
     // Build candidate query
     const needle = String(keyword);
     const useFtsAccelerator = _ftsAvailable
@@ -2465,17 +2545,11 @@ function createSessionHistoryIndex(opts = {}) {
       'SELECT file_path, size, mtime_ms FROM session_summary WHERE source = ? AND session_id = ?'
     ).get(source, sessionId);
     if (!row) {
-      const fullState = db.prepare(
-        'SELECT last_inventory_ms FROM source_state WHERE source = ?'
-      ).get(source);
-      const fullIndexIsFresh = fullState?.last_inventory_ms
-        && Date.now() - Number(fullState.last_inventory_ms) < INDEX_CONTENT_TTL_MS;
-      // A completed legacy inventory with no matching session row is a
-      // definitive miss (including malformed files). Do not start a second
-      // summary scan merely because this status probe is lightweight.
-      if (fullIndexIsFresh && options.force !== true) return;
+      // A missing summary row can be a stale index (deleted rows from a
+      // project-scoped refresh, a fresh process, or a queued background scan).
+      // Repair it instead of answering "no such session" from cache state.
       await ensureSummaryIndexed(source, {
-        force: options.force === true,
+        force: true,
         consistency: 'complete',
         config: options.config || indexConfig
       });
@@ -2484,6 +2558,25 @@ function createSessionHistoryIndex(opts = {}) {
       ).get(source, sessionId);
     }
     if (!row) return;
+
+    // Summary-only rows (crash between transactions, legacy database, or a
+    // summary write that outlived its content row) make message readers report
+    // an empty conversation. Repair the content row for this one session.
+    const contentRow = db.prepare(
+      'SELECT 1 AS present FROM session_file WHERE source = ? AND session_id = ? AND file_path = ?'
+    ).get(source, sessionId, row.file_path);
+    if (!contentRow) {
+      try {
+        await ensureSessionContentIndexed(source, sessionId, {
+          ...options,
+          config: options.config || indexConfig
+        });
+      } catch (_) {
+        // A file the adapter cannot parse stays a summary-only row. The status
+        // is still useful (it carries the path callers need to delete it) and
+        // the inventory already recorded the parse error.
+      }
+    }
 
     const fileKey = `${source}:${row.file_path}`;
     const now = Date.now();

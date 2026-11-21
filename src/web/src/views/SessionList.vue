@@ -91,7 +91,7 @@
     <!-- Scrollable Content -->
     <div class="content" ref="contentEl">
       <!-- Loading -->
-      <div v-if="store.loading && store.sessions.length === 0 && !store.sessionsPending" class="loading-container">
+      <div v-if="store.sessionsLoading && store.sessions.length === 0 && !store.sessionsPending" class="loading-container">
         <n-spin size="large">
           <template #description>
             加载会话列表...
@@ -255,7 +255,7 @@
 
       <!-- Empty State -->
       <n-empty
-        v-if="!store.loading && !store.error && !store.sessionsPending && orderedSessions.length === 0"
+        v-if="!store.sessionsLoading && !store.error && !store.sessionsPending && orderedSessions.length === 0"
         :description="searchQuery ? '当前页没有匹配的会话' : '没有找到会话'"
         style="margin-top: 60px;"
       >

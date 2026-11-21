@@ -8,7 +8,8 @@
     <n-drawer-content closable :native-scrollbar="false" :body-content-style="bodyStyle">
       <template #header>
         <div class="drawer-header">
-          <span>{{ props.platform === 'dsh' ? 'Agent 预设管理' : '代理管理' }}</span>
+          <span class="drawer-title">{{ props.platform === 'dsh' ? 'Agent 预设管理' : '代理管理' }}</span>
+          <span v-if="platformLabel" class="asset-platform-pill drawer-platform-pill">{{ platformLabel }}</span>
         </div>
       </template>
       <DshAgentPresetsPanel v-if="props.platform === 'dsh'" />
@@ -29,6 +30,8 @@ import { NDrawer, NDrawerContent } from 'naive-ui'
 import AgentsPanel from './AgentsPanel.vue'
 import DshAgentPresetsPanel from './DshAgentPresetsPanel.vue'
 import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
+import { usePlatformStore } from '../stores/platforms'
+import { getPlatformConfig } from '../config/platforms'
 
 const props = defineProps({
   visible: Boolean,
@@ -39,6 +42,15 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['update:visible'])
+
+const platformStore = usePlatformStore()
+// 抽屉从首页平台列打开时需要标明资源来源平台，和资源面板的平台标签保持一致。
+const platformLabel = computed(() => {
+  const key = String(props.platform || '').trim().toLowerCase()
+  if (!key) return ''
+  const platform = platformStore.get(key) || getPlatformConfig(key)
+  return platform?.label || platform?.title || key
+})
 
 const { drawerWidth } = useResponsiveDrawer(720)
 
@@ -57,8 +69,22 @@ const bodyStyle = {
 
 <style scoped>
 .drawer-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   font-size: 16px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.drawer-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drawer-platform-pill {
+  font-weight: 500;
 }
 </style>

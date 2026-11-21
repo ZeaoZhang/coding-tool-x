@@ -594,58 +594,113 @@ function addLogEntryToResult(result, entry, groupBy, filters = null) {
   result[key].requests += 1;
 }
 
-function mergePendingLogEntries(result, dateStr, hour, groupBy, filters = null) {
-  for (const { logEntry } of pendingEntries) {
-    const timestamp = new Date(logEntry.timestamp);
-    if (getCSTDateStr(timestamp) !== dateStr) continue;
-    if (hour !== undefined && getCSTHour(timestamp) !== hour) continue;
-    addLogEntryToResult(result, logEntry, groupBy, filters);
-  }
+function getLogEntryDedupeKey(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const tokens = entry.tokens || {};
+  const signature = [
+    entry.timestamp, entry.toolType, entry.channelId || entry.channel,
+    entry.model, tokens.input, tokens.output, tokens.cacheCreation,
+    tokens.cacheRead, tokens.total, entry.cost, entry.session
+  ].join('|');
+  // id may be reused by fixtures/legacy writers for different payloads, so
+  // include the payload signature and only collapse truly identical records.
+  return entry.id ? `id:${entry.id}|${signature}` : `c:${signature}`;
 }
 
-function readJsonlForHour(year, month, day, hour, groupBy, filters) {
-  const filePath = getRequestLogFilePath(year, month, day);
-  const result = {};
+// Deduped day entries are expensive to rebuild (large JSONL files) and the UI
+// issues one trend request per metric. Cache by file mtime+size so concurrent
+// metric requests reuse the same parse, with bounded memory.
+const jsonlEntriesCache = new Map();
+const JSONL_ENTRY_CACHE_MAX_FILES = 32;
+const JSONL_ENTRY_CACHE_MAX_ENTRIES = 200000;
+let jsonlEntriesCacheSize = 0;
 
+function readJsonlFileEntries(filePath) {
+  let stat;
   try {
-    if (!fs.existsSync(filePath)) return result;
-    const lines = fs.readFileSync(filePath, 'utf8').split('\n');
+    stat = fs.statSync(filePath);
+  } catch (_) {
+    return [];
+  }
 
+  const cached = jsonlEntriesCache.get(filePath);
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    // Refresh insertion order for a simple LRU.
+    jsonlEntriesCache.delete(filePath);
+    jsonlEntriesCache.set(filePath, cached);
+    return cached.entries;
+  }
+
+  const byKey = new Map();
+  try {
+    const lines = fs.readFileSync(filePath, 'utf8').split('\n');
     for (const line of lines) {
       if (!line.trim()) continue;
       let entry;
       try { entry = JSON.parse(line); } catch { continue; }
-
-      const ts = new Date(entry.timestamp);
-      if (getCSTHour(ts) !== hour) continue;
-
-      const actualModel = resolveActualModel(entry.model, entry);
-
-      // Apply filters
-      if (filters) {
-        if (filters.toolType && entry.toolType !== filters.toolType) continue;
-        if (filters.channel && entry.channel !== filters.channel) continue;
-        if (filters.model && actualModel !== filters.model) continue;
-      }
-
-      let key;
-      if (groupBy === 'model') key = actualModel || 'unknown';
-      else if (groupBy === 'channel') key = entry.channel || entry.channelId || 'unknown';
-      else if (groupBy === 'toolType') key = entry.toolType || 'claude-code';
-      else continue;
-
-      if (!result[key]) result[key] = { tokens: { total: 0 }, cost: 0, requests: 0 };
-      result[key].tokens.total += getTokenTotal(entry.tokens);
-      result[key].cost += entry.cost || 0;
-      result[key].requests += 1;
+      if (!entry || typeof entry !== 'object') continue;
+      const key = getLogEntryDedupeKey(entry);
+      if (key && !byKey.has(key)) byKey.set(key, entry);
     }
   } catch (err) {
-    console.error('Failed to read JSONL for hour:', err);
+    console.error('Failed to read JSONL entries:', err);
+    return [];
   }
 
+  const entries = [...byKey.values()];
+  if (entries.length <= JSONL_ENTRY_CACHE_MAX_ENTRIES) {
+    if (cached) jsonlEntriesCacheSize -= cached.entries.length;
+    jsonlEntriesCache.set(filePath, { mtimeMs: stat.mtimeMs, size: stat.size, entries });
+    jsonlEntriesCacheSize += entries.length;
+    while (
+      jsonlEntriesCache.size > JSONL_ENTRY_CACHE_MAX_FILES
+      || jsonlEntriesCacheSize > JSONL_ENTRY_CACHE_MAX_ENTRIES
+    ) {
+      const oldestKey = jsonlEntriesCache.keys().next().value;
+      if (oldestKey === filePath && jsonlEntriesCache.size === 1) break;
+      const oldest = jsonlEntriesCache.get(oldestKey);
+      jsonlEntriesCache.delete(oldestKey);
+      jsonlEntriesCacheSize -= oldest?.entries.length || 0;
+    }
+  }
+  return entries;
+}
+
+/**
+ * 读取某天的 JSONL 日志并去重。
+ *
+ * 历史版本的 flush 重试会把同一条记录重复追加到 JSONL，导致按原始行累加时
+ * token/请求数翻倍（而 daily-stats 去重后是正确值）。这里以日志 id 为键去重，
+ * 同时合并尚未落盘的 pending 记录，确保所有聚合口径使用同一份数据。
+ */
+function readJsonlEntriesForDay(year, month, day) {
+  const filePath = getRequestLogFilePath(year, month, day);
+  let entries = [];
+  try {
+    if (fs.existsSync(filePath)) entries = readJsonlFileEntries(filePath);
+  } catch (err) {
+    console.error('Failed to read JSONL entries:', err);
+  }
+
+  if (pendingEntries.length === 0) return entries;
+
+  const byKey = new Map();
+  const addEntry = (entry) => {
+    if (!entry || typeof entry !== 'object') return;
+    const key = getLogEntryDedupeKey(entry);
+    if (!key || byKey.has(key)) return;
+    byKey.set(key, entry);
+  };
+  entries.forEach(addEntry);
+
   const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  mergePendingLogEntries(result, dateStr, hour, groupBy, filters);
-  return result;
+  for (const { logEntry } of pendingEntries) {
+    const timestamp = new Date(logEntry.timestamp);
+    if (Number.isNaN(timestamp.getTime()) || getCSTDateStr(timestamp) !== dateStr) continue;
+    addEntry(logEntry);
+  }
+
+  return [...byKey.values()];
 }
 
 /**
@@ -657,44 +712,10 @@ function readJsonlForHour(year, month, day, hour, groupBy, filters) {
  * @param {Object} [filters] - optional { toolType, channel, model }
  */
 function readJsonlForDay(year, month, day, groupBy, filters) {
-  const filePath = getRequestLogFilePath(year, month, day);
   const result = {};
-
-  try {
-    if (!fs.existsSync(filePath)) return result;
-    const lines = fs.readFileSync(filePath, 'utf8').split('\n');
-
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      let entry;
-      try { entry = JSON.parse(line); } catch { continue; }
-
-      const actualModel = resolveActualModel(entry.model, entry);
-
-      // Apply filters
-      if (filters) {
-        if (filters.toolType && entry.toolType !== filters.toolType) continue;
-        if (filters.channel && entry.channel !== filters.channel) continue;
-        if (filters.model && actualModel !== filters.model) continue;
-      }
-
-      let key;
-      if (groupBy === 'model') key = actualModel || 'unknown';
-      else if (groupBy === 'channel') key = entry.channel || entry.channelId || 'unknown';
-      else if (groupBy === 'toolType') key = entry.toolType || 'claude-code';
-      else continue;
-
-      if (!result[key]) result[key] = { tokens: { total: 0 }, cost: 0, requests: 0 };
-      result[key].tokens.total += getTokenTotal(entry.tokens);
-      result[key].cost += entry.cost || 0;
-      result[key].requests += 1;
-    }
-  } catch (err) {
-    console.error('Failed to read JSONL for day:', err);
+  for (const entry of readJsonlEntriesForDay(year, month, day)) {
+    addLogEntryToResult(result, entry, groupBy, filters);
   }
-
-  const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  mergePendingLogEntries(result, dateStr, undefined, groupBy, filters);
   return result;
 }
 
@@ -717,7 +738,7 @@ function loadProxyLogs() {
   }
 }
 
-function filterProxyLogsForHour(logs, dateStr, hour, groupBy) {
+function filterProxyLogsForHour(logs, dateStr, hour, groupBy, filters = null) {
   const result = {};
 
   for (const entry of logs) {
@@ -730,6 +751,12 @@ function filterProxyLogsForHour(logs, dateStr, hour, groupBy) {
     if (entryDate !== dateStr || getCSTHour(ts) !== hour) continue;
 
     const actualModel = resolveActualModel(entry.model, entry);
+    const toolType = mapSourceToToolType(entry.source);
+    if (filters) {
+      if (filters.toolType && toolType !== filters.toolType) continue;
+      if (filters.channel && (entry.channel || entry.channelId || 'unknown') !== filters.channel) continue;
+      if (filters.model && actualModel !== filters.model) continue;
+    }
     const normalizedTokens = normalizeUsageTokens(entry.source || mapSourceToToolType(entry.source), {
       input: entry.inputTokens ?? entry.tokens?.input,
       output: entry.outputTokens ?? entry.tokens?.output,
@@ -742,7 +769,7 @@ function filterProxyLogsForHour(logs, dateStr, hour, groupBy) {
 
     let key;
     if (groupBy === 'toolType') {
-      key = mapSourceToToolType(entry.source);
+      key = toolType;
     } else if (groupBy === 'model') {
       key = actualModel || 'unknown';
     } else if (groupBy === 'channel') {
@@ -763,8 +790,14 @@ function filterProxyLogsForHour(logs, dateStr, hour, groupBy) {
   return result;
 }
 
-function readProxyLogsForHour(dateStr, hour, groupBy) {
-  return filterProxyLogsForHour(loadProxyLogs(), dateStr, hour, groupBy);
+function mergeDimensionStats(target, source) {
+  for (const [key, stats] of Object.entries(source || {})) {
+    if (!target[key]) target[key] = { tokens: { total: 0 }, cost: 0, requests: 0 };
+    target[key].tokens.total += getTokenTotal(stats?.tokens);
+    target[key].cost += Number(stats?.cost) || 0;
+    target[key].requests += Number(stats?.requests) || 0;
+  }
+  return target;
 }
 
 /**
@@ -1107,32 +1140,15 @@ function getAvailableFilters(startDate, endDate) {
     const year = d.getFullYear();
     const month = d.getMonth() + 1;
     const day = d.getDate();
-    const filePath = getRequestLogFilePath(year, month, day);
 
-    try {
-      if (!fs.existsSync(filePath)) continue;
-      const lines = fs.readFileSync(filePath, 'utf8').split('\n');
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        let entry;
-        try { entry = JSON.parse(line); } catch { continue; }
-        const actualModel = resolveActualModel(entry.model, entry);
-        if (entry.toolType) toolTypes.add(entry.toolType);
-        if (entry.channel) channels.add(entry.channel);
-        if (actualModel) models.add(actualModel);
-      }
-    } catch (err) {
-      console.error('Failed to scan JSONL for filters:', err);
+    for (const entry of readJsonlEntriesForDay(year, month, day)) {
+      const actualModel = resolveActualModel(entry.model, entry);
+      if (entry.toolType) toolTypes.add(entry.toolType);
+      if (entry.channel) channels.add(entry.channel);
+      if (actualModel) models.add(actualModel);
     }
   }
 
-for (const { logEntry, date } of pendingEntries) {
-  if (date < startDate || date > endDate) continue;
-  if (logEntry.toolType) toolTypes.add(logEntry.toolType);
-  if (logEntry.channel) channels.add(logEntry.channel);
-  const actualModel = resolveActualModel(logEntry.model, logEntry);
-  if (actualModel) models.add(actualModel);
-}
   if (includeProxyLogs) {
     for (const entry of loadProxyLogs()) {
       if (!entry || entry.type === 'action' || entry.status === 'error') continue;
@@ -1213,6 +1229,11 @@ async function getTrendStatistics({ startDate, endDate, granularity = 'day', ste
 
   const start = new Date(startDate + 'T00:00:00');
   const end = new Date(endDate + 'T00:00:00');
+  const rangeDays = Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1;
+  // Short ranges use deduped JSONL so day and hour granularity agree exactly.
+  // Long unfiltered ranges use pre-aggregated daily stats to avoid parsing
+  // hundreds of MB of request logs on every dashboard request.
+  const preferJsonlDaily = Boolean(activeFilters) || rangeDays <= 7;
 
   // Load proxy-logs once upfront (only needed for hour granularity) to avoid
   // re-reading the large file on every iteration of the inner loop.
@@ -1224,15 +1245,23 @@ async function getTrendStatistics({ startDate, endDate, granularity = 'day', ste
     const month = d.getMonth() + 1;
     const day = d.getDate();
     const dateStr = `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+    const dayEntries = granularity === 'hour' ? readJsonlEntriesForDay(year, month, day) : null;
 
     if (granularity === 'day') {
       labels.push(dateStr);
-      let byDimension = activeFilters
+      // Single source of truth: deduped JSONL. Fall back to daily aggregates
+      // for legacy days that predate request logs.
+      let byDimension = preferJsonlDaily
         ? readJsonlForDay(year, month, day, groupBy, activeFilters)
         : mergeAllToolsDailyStats(dateStr, groupBy);
-      if (!activeFilters && Object.keys(byDimension).length === 0) {
-        // Fallback: if daily stats are missing, derive from JSONL logs
-        byDimension = readJsonlForDay(year, month, day, groupBy);
+      if (Object.keys(byDimension).length === 0) {
+        // Never fall back to unfiltered data when filters are active: that
+        // would make combined filters return a superset of the single filter.
+        if (preferJsonlDaily) {
+          if (!activeFilters) byDimension = mergeAllToolsDailyStats(dateStr, groupBy);
+        } else {
+          byDimension = readJsonlForDay(year, month, day, groupBy, activeFilters);
+        }
       }
 
       // Accumulate dimensions seen so far with 0 for this label position
@@ -1257,6 +1286,7 @@ async function getTrendStatistics({ startDate, endDate, granularity = 'day', ste
       }
     } else {
       // granularity === 'hour'
+      const hasJsonlEntries = dayEntries.length > 0;
       for (let h = 0; h < 24; h += step) {
         const hourEnd = Math.min(h + step, 24);
         const hourStr = h.toString().padStart(2, '0');
@@ -1271,21 +1301,24 @@ async function getTrendStatistics({ startDate, endDate, granularity = 'day', ste
           seriesMap[key].push(0);
         }
 
-        // Accumulate all hours in this step bucket
-        for (let hh = h; hh < hourEnd; hh++) {
-          const hhStr = hh.toString().padStart(2, '0');
-          let byDimension = {};
-
-          // 小时粒度优先使用 proxy-logs（含 codex/gemini/opencode 实时数据），
-          // 若该小时没有 proxy-logs 再回退到历史统计文件/JSONL。
-          byDimension = filterProxyLogsForHour(cachedProxyLogs, dateStr, hh, groupBy);
-
-          if (Object.keys(byDimension).length === 0 || activeFilters) {
-            if (activeFilters) {
-              byDimension = readJsonlForHour(year, month, day, hh, groupBy, activeFilters);
-            } else if (groupBy === 'toolType') {
+        // Prefer the same deduped JSONL used by day granularity so both
+        // granularities always agree. Proxy logs only cover live/legacy data
+        // when a day has no request log at all.
+        const bucket = {};
+        if (hasJsonlEntries) {
+          for (const entry of dayEntries) {
+            const timestamp = new Date(entry.timestamp);
+            if (Number.isNaN(timestamp.getTime())) continue;
+            const entryHour = getCSTHour(timestamp);
+            if (entryHour < h || entryHour >= hourEnd) continue;
+            addLogEntryToResult(bucket, entry, groupBy, activeFilters);
+          }
+        } else {
+          for (let hh = h; hh < hourEnd; hh++) {
+            let byDimension = filterProxyLogsForHour(cachedProxyLogs, dateStr, hh, groupBy, activeFilters);
+            if (Object.keys(byDimension).length === 0 && !activeFilters && groupBy === 'toolType') {
               const dailyStats = aggregateDailyStatistics(dateStr, dailyStatsCache.get(dateStr) || null);
-              const hourData = dailyStats?.hourly?.[hhStr];
+              const hourData = dailyStats?.hourly?.[hh.toString().padStart(2, '0')];
               for (const [toolType, toolStats] of Object.entries(hourData?.byToolType || {})) {
                 if (!hasStatsData(toolStats)) continue;
                 byDimension[toolType] = {
@@ -1294,23 +1327,22 @@ async function getTrendStatistics({ startDate, endDate, granularity = 'day', ste
                   cost: toolStats.cost || 0
                 };
               }
-            } else {
-              byDimension = readJsonlForHour(year, month, day, hh, groupBy);
             }
+            mergeDimensionStats(bucket, byDimension);
           }
+        }
 
-          for (const [key, stats] of Object.entries(byDimension)) {
-            const val = extractMetric(stats, metric);
-            if (!seriesMap[key]) {
-              seriesMap[key] = new Array(labelIdx).fill(0);
-              seriesMap[key].push(val);
-            } else {
-              if (seriesMap[key].length <= labelIdx) seriesMap[key].push(0);
-              seriesMap[key][labelIdx] = (seriesMap[key][labelIdx] || 0) + val;
-            }
-            totals[key] = (totals[key] || 0) + val;
+        for (const [key, stats] of Object.entries(bucket)) {
+          const val = extractMetric(stats, metric);
+          if (!seriesMap[key]) {
+            seriesMap[key] = new Array(labelIdx).fill(0);
+            seriesMap[key].push(val);
+          } else {
+            if (seriesMap[key].length <= labelIdx) seriesMap[key].push(0);
+            seriesMap[key][labelIdx] = (seriesMap[key][labelIdx] || 0) + val;
           }
-        } // end hh loop
+          totals[key] = (totals[key] || 0) + val;
+        }
       } // end h loop
     } // end else (hour granularity)
   } // end for day loop

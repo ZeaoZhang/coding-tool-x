@@ -4,14 +4,14 @@
       <div class="header">
         <div class="header-text">
           <n-h2 style="margin: 0;">我的项目</n-h2>
-          <n-text depth="3">选择一个项目查看会话（共 {{ store.projects.length }} 个）</n-text>
+          <n-text depth="3">选择一个项目查看会话（共 {{ store.projectsPagination.total || store.projects.length }} 个）</n-text>
         </div>
         <n-space>
-          <n-button type="primary" size="medium" @click="handleNewProjectCommand">
+          <n-button type="primary" size="medium" @click="handleNewProjectCommand" title="复制基础启动命令">
             <template #icon>
               <n-icon><AddOutline /></n-icon>
             </template>
-            新建项目
+            复制启动命令
           </n-button>
           <n-input
             v-model:value="searchQuery"
@@ -30,7 +30,7 @@
       <div class="content" ref="contentEl">
 
         <!-- Loading -->
-        <div v-if="store.loading && store.projects.length === 0 && !store.projectsPending" class="loading-container">
+        <div v-if="store.projectsLoading && store.projects.length === 0 && !store.projectsPending" class="loading-container">
         <n-spin size="large">
           <template #description>
             加载项目列表...
@@ -62,9 +62,18 @@
         />
       </div>
 
+      <n-pagination
+        v-if="projectPageCount > 1"
+        class="projects-pagination"
+        :page="projectsPage"
+        :page-count="projectPageCount"
+        :page-slot="7"
+        @update:page="handleProjectsPageChange"
+      />
+
       <!-- Empty State -->
       <n-empty
-        v-if="!store.loading && !store.error && !store.projectsPending && store.projects.length === 0"
+        v-if="!store.projectsLoading && !store.error && !store.projectsPending && store.projects.length === 0"
         :description="searchQuery ? '没有匹配的项目' : '没有找到项目'"
         style="margin-top: 60px;"
       >
@@ -179,7 +188,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { NH2, NText, NSpin, NAlert, NEmpty, NIcon, NInput, NModal, NButton, NTag, NSpace, NSelect } from 'naive-ui'
+import { NH2, NText, NSpin, NAlert, NEmpty, NIcon, NInput, NModal, NButton, NTag, NSpace, NSelect, NPagination } from 'naive-ui'
 import { FolderOpenOutline, SearchOutline, TerminalOutline, AddOutline } from '@vicons/ionicons5'
 import { useSessionsStore } from '../stores/sessions'
 import ProjectCard from '../components/ProjectCard.vue'
@@ -251,9 +260,23 @@ watch(() => store.projects, (newProjects) => {
 watch(searchQuery, (query) => {
   if (projectSearchTimer) clearTimeout(projectSearchTimer)
   projectSearchTimer = setTimeout(() => {
-    store.fetchProjects({ query }).catch(() => {})
+    store.fetchProjects({ page: 1, query }).catch(() => {})
   }, 180)
 })
+
+const projectsPage = computed(() => store.projectsPagination.page || 1)
+const projectPageCount = computed(() => {
+  const pagination = store.projectsPagination || {}
+  const limit = Number(pagination.limit) || 20
+  const total = Number(pagination.total) || 0
+  return Math.max(1, Math.ceil(total / limit))
+})
+
+async function handleProjectsPageChange(page) {
+  if (page === projectsPage.value) return
+  await store.fetchProjects({ page, query: searchQuery.value }).catch(() => {})
+  if (contentEl.value) contentEl.value.scrollTo?.({ top: 0, behavior: 'smooth' })
+}
 
 function handleProjectClick(projectName) {
   router.push({
@@ -524,6 +547,12 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 12px;
+}
+
+.projects-pagination {
+  display: flex;
+  justify-content: center;
+  margin: 18px 0 8px;
 }
 
 /* 拖动时的半透明虚影 */

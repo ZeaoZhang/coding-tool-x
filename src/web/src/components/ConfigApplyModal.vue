@@ -25,6 +25,9 @@
           v-model:value="formData.targetPath"
           placeholder="输入项目目录路径，如 /path/to/project"
         />
+        <n-text depth="3" style="font-size: 12px; margin-top: 4px; display: block">
+          支持任意已存在的绝对目录；已注册项目可直接从列表选择
+        </n-text>
       </n-form-item>
 
       <!-- AI 配置文件选择（多选） -->
@@ -52,7 +55,7 @@
 
     <!-- 预览按钮 -->
     <n-space style="margin-bottom: 16px">
-      <n-button @click="handlePreview" :loading="loadingPreview" :disabled="!formData.targetPath || formData.aiConfigTypes.length === 0">
+      <n-button @click="handlePreview" :loading="loadingPreview" :disabled="!canApply">
         预览应用效果
       </n-button>
     </n-space>
@@ -130,13 +133,60 @@
       </n-space>
     </n-card>
 
+    <!-- 应用结果：只展示真正落盘的内容 -->
+    <n-card v-if="applyResult" size="small" title="应用结果" style="margin-top: 12px">
+      <n-space vertical>
+        <div v-if="applyResult.skills?.files?.length">
+          <n-text depth="3">Skills：</n-text>
+          <n-ul style="margin: 4px 0">
+            <n-li v-for="item in applyResult.skills.files" :key="`${item.name}-${item.status}`">
+              <n-text code>{{ item.name }}</n-text>
+              <n-text v-if="item.path" depth="3"> - {{ item.path }}</n-text>
+              <n-tag
+                v-if="item.status === 'skipped'"
+                type="warning"
+                size="tiny"
+                style="margin-left: 8px"
+              >
+                {{ item.reason || '已跳过' }}
+              </n-tag>
+            </n-li>
+          </n-ul>
+        </div>
+
+        <div v-if="applyResult.skills?.pendingItems?.length">
+          <n-text depth="3">待刷新 Skills：</n-text>
+          <n-ul style="margin: 4px 0">
+            <n-li v-for="name in applyResult.skills.pendingItems" :key="name">
+              <n-text code>{{ name }}</n-text>
+              <n-tag type="info" size="tiny" style="margin-left: 8px">远程 Skill 已注册，刷新后生效</n-tag>
+            </n-li>
+          </n-ul>
+        </div>
+
+        <div v-if="applyResult.skipped?.length">
+          <n-text type="error">已跳过：</n-text>
+          <n-ul style="margin: 4px 0">
+            <n-li v-for="(item, index) in applyResult.skipped" :key="`${item.type}-${item.item}-${index}`">
+              <n-text>{{ item.type }}: </n-text>
+              <n-text code>{{ item.item }}</n-text>
+              <n-text depth="3"> - {{ item.reason }}</n-text>
+            </n-li>
+          </n-ul>
+        </div>
+      </n-space>
+    </n-card>
+
     <template #footer>
-      <n-space justify="end">
+      <n-space justify="end" align="center">
+        <n-text v-if="applyDisabledReason" depth="3" style="font-size: 12px">
+          {{ applyDisabledReason }}
+        </n-text>
         <n-button @click="emit('update:show', false)">取消</n-button>
         <n-button
           type="primary"
           :loading="applying"
-          :disabled="!formData.targetPath || formData.aiConfigTypes.length === 0"
+          :disabled="!canApply"
           @click="handleApply"
         >
           确认应用
@@ -154,8 +204,8 @@ import {
   NSelect, useMessage
 } from 'naive-ui'
 import { DocumentTextOutline } from '@vicons/ionicons5'
-import { applyTemplate, previewTemplate } from '@/api/config-templates'
-import { getAvailableProjects } from '@/api/workspaces'
+import { applyTemplate, previewTemplate } from '../api/config-templates'
+import { getAvailableProjects } from '../api/workspaces'
 
 const props = defineProps({
   show: Boolean,
@@ -169,6 +219,7 @@ const formRef = ref(null)
 const loadingPreview = ref(false)
 const applying = ref(false)
 const previewData = ref(null)
+const applyResult = ref(null)
 const loadingProjects = ref(false)
 const existingProjects = ref([])
 const selectedProjectPath = ref(null)
@@ -220,15 +271,51 @@ const formRules = {
   targetPath: { required: true, message: '请输入目标路径', trigger: 'blur' }
 }
 
+// 模版中的资源条目（Skills / Agents / Commands / Plugins / MCP），
+// 即使没有任何可用的 AI 配置文件也应当允许应用。
+const resourceCounts = computed(() => {
+  const tpl = props.template || {}
+  const countOf = value => (Array.isArray(value) ? value.length : 0)
+  return {
+    skills: countOf(tpl.skills),
+    agents: countOf(tpl.agents),
+    commands: countOf(tpl.commands),
+    plugins: countOf(tpl.plugins),
+    mcpServers: countOf(tpl.mcpServers)
+  }
+})
+
+const hasResources = computed(() => Object.values(resourceCounts.value).some(count => count > 0))
+
+const canApply = computed(() => {
+  if (!props.template) return false
+  if (!formData.value.targetPath) return false
+  return hasResources.value || formData.value.aiConfigTypes.length > 0
+})
+
+const applyDisabledReason = computed(() => {
+  if (canApply.value) return ''
+  if (!formData.value.targetPath) return '请先填写目标项目路径'
+  if (!hasResources.value && formData.value.aiConfigTypes.length === 0) {
+    return '当前模版没有可应用的配置或资源，请先在模版中添加配置项'
+  }
+  return ''
+})
+
+const ABSOLUTE_PATH_RE = /^\/|^[A-Za-z]:[\\/]/
+
 const projectOptions = computed(() => {
   const seen = new Set()
   const options = []
   for (const project of existingProjects.value) {
-    const projectPath = project.fullPath || project.path || project.name
-    if (!projectPath || seen.has(projectPath)) continue
+    const projectPath = project.fullPath || project.path
+    // The apply target must be a real absolute directory; a bare project name
+    // would be rejected by the server.
+    if (!projectPath || !ABSOLUTE_PATH_RE.test(projectPath) || seen.has(projectPath)) continue
     seen.add(projectPath)
+    const label = project.displayName || project.name || projectPath
     options.push({
-      label: `${project.displayName || project.name} (${project.channel})`,
+      label: project.channel ? `${label} (${project.channel})` : label,
       value: projectPath
     })
   }
@@ -253,6 +340,7 @@ watch(() => props.show, (newVal) => {
     formData.value.targetPath = ''
     formData.value.aiConfigTypes = getDefaultAiConfigTypes()
     previewData.value = null
+    applyResult.value = null
     selectedProjectPath.value = null
     loadProjects()
   }
@@ -262,6 +350,13 @@ watch(() => props.show, (newVal) => {
 watch(() => props.template, () => {
   formData.value.aiConfigTypes = getDefaultAiConfigTypes()
 })
+
+// A preview describes one target/selection pair; never let it be applied to a
+// different path or config set.
+watch([() => formData.value.targetPath, () => formData.value.aiConfigTypes], () => {
+  previewData.value = null
+  applyResult.value = null
+}, { deep: true })
 
 async function loadProjects() {
   loadingProjects.value = true
@@ -287,7 +382,7 @@ function handleProjectSelect(value) {
 
 // 预览
 async function handlePreview() {
-  if (!formData.value.targetPath || !props.template || formData.value.aiConfigTypes.length === 0) return
+  if (!canApply.value) return
 
   loadingPreview.value = true
   try {
@@ -316,7 +411,7 @@ async function handleApply() {
     return
   }
 
-  if (!props.template || formData.value.aiConfigTypes.length === 0) return
+  if (!canApply.value) return
 
   applying.value = true
   try {
@@ -326,6 +421,7 @@ async function handleApply() {
       formData.value.aiConfigTypes  // 传递数组
     )
     if (res.success) {
+      applyResult.value = res.data || null
       const skipped = res.data?.results?.skipped || []
       if (skipped.length > 0) {
         message.warning(`模版已部分应用，${skipped.length} 项已跳过`)

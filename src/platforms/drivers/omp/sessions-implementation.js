@@ -1,5 +1,7 @@
 const fs = require('fs');
 const path = require('path');
+const { forkSessionFile } = require('./session-file');
+const { setAlias } = require('../../../server/services/alias');
 const { PATHS, HOME_DIR } = require('../../../config/paths');
 const { quoteShellArgument } = require('../../../shared/shell-quote');
 const ompConfig = require('./config');
@@ -584,6 +586,9 @@ async function deleteSession(sessionId) {
   const session = await getSessionById(sessionId);
   if (!session) throw new Error('Session not found');
   fs.unlinkSync(session.filePath);
+  // Delete the rows now: waiting for the post-delete refresh leaves the
+  // session searchable and listable in the meantime.
+  getSessionHistoryIndex().invalidateSource('omp', { deleted: true, sessionId });
   return { success: true };
 }
 
@@ -591,17 +596,25 @@ async function deleteProject(projectName) {
   const sessions = await getSessionsByProject(projectName);
   if (sessions.length === 0) throw new Error('Project not found');
   sessions.forEach(session => fs.unlinkSync(session.filePath));
+  getSessionHistoryIndex().invalidateSource('omp', { projectName });
   return { success: true, deletedSessions: sessions.length };
 }
 
-async function forkSession(sessionId) {
+async function forkSession(sessionId, options = {}) {
   const session = await getSessionById(sessionId);
   if (!session) throw new Error('Session not found');
   const newSessionId = crypto.randomUUID();
   const newFile = path.join(path.dirname(session.filePath), `${newSessionId}.jsonl`);
-  const content = fs.readFileSync(session.filePath, 'utf8');
-  fs.writeFileSync(newFile, content, 'utf8');
-  return { success: true, sessionId: newSessionId, filePath: newFile, forkedFrom: sessionId };
+  forkSessionFile({ sourcePath: session.filePath, targetPath: newFile, newSessionId });
+  const alias = String(options.alias || '').trim();
+  if (alias) {
+    try {
+      setAlias(newSessionId, alias);
+    } catch (error) {
+      console.error('Failed to set alias for OMP fork:', error.message);
+    }
+  }
+  return { success: true, sessionId: newSessionId, filePath: newFile, forkedFrom: sessionId, alias: alias || null };
 }
 
 function saveProjectOrder(order) {

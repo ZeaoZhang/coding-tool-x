@@ -566,4 +566,49 @@ describe('OMP session parser', () => {
       expect.objectContaining({ id: 'omp-session-reset:after-reset' })
     ]);
   });
+
+describe('OMP session deletion', () => {
+  test('invalidates the deleted session rows immediately', async () => {
+    const invalidateSource = vi.fn();
+    const targetPath = path.join(sessionDir, 'omp-delete-me.jsonl');
+    writeJsonl(targetPath, [{ type: 'session', version: 3, id: 'omp-delete-me' }]);
+    const module = loadModule();
+    module.configure({
+      sessionHistoryIndex: {
+        getSessionStatus: () => ({ sessionId: 'omp-delete-me', filePath: targetPath, size: 10, lastModified: 1000 }),
+        invalidateSource
+      }
+    });
+
+    await expect(module.deleteSession('omp-delete-me')).resolves.toEqual({ success: true });
+
+    expect(fs.existsSync(targetPath)).toBe(false);
+    expect(invalidateSource).toHaveBeenCalledWith('omp', { deleted: true, sessionId: 'omp-delete-me' });
+  });
+
+  test('invalidates the deleted project rows immediately', async () => {
+    const invalidateSource = vi.fn();
+    const targetPath = path.join(sessionDir, 'omp-project-session.jsonl');
+    writeJsonl(targetPath, [{ type: 'session', version: 3, id: 'omp-project-session' }]);
+    const module = loadModule();
+    module.configure({
+      sessionHistoryIndex: {
+        listSessions: async () => [{
+          sessionId: 'omp-project-session',
+          filePath: targetPath,
+          size: 10,
+          mtime: 1000,
+          projectFullPath: '/repo/demo',
+          messageCount: 1
+        }],
+        invalidateSource
+      }
+    });
+
+    await expect(module.deleteProject('demo')).resolves.toEqual({ success: true, deletedSessions: 1 });
+
+    expect(fs.existsSync(targetPath)).toBe(false);
+    expect(invalidateSource).toHaveBeenCalledWith('omp', { projectName: 'demo' });
+  });
+});
 });

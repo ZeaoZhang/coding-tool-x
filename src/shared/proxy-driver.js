@@ -54,6 +54,15 @@ function createProxyDriver({
   for (const operation of ['status', 'start', 'stop']) {
     driver[operation] = (...args) => call(operation, args);
   }
+  driver.clearLogs = async () => {
+    try {
+      const { clearLogsBySource } = require('../server/websocket-server');
+      await clearLogsBySource(platform);
+      return ok(platform, capability, 'clearLogs', { source: platform });
+    } catch (error) {
+      return failed(platform, capability, 'clearLogs', error);
+    }
+  };
   driver.restoreOnBoot = async ({ config = {} } = {}) => {
     const started = await driver.start({ preserveStartTime: true });
     if (started.status !== 'ok') return { ...started, operation: 'restoreOnBoot' };

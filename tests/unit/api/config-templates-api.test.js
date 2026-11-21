@@ -83,7 +83,7 @@ beforeEach(() => {
     filename: validationPath,
     loaded: true,
     exports: {
-      validateKnownProjectCwd: vi.fn(async targetPath => targetPath)
+      validateProjectApplyTarget: vi.fn(targetPath => targetPath)
     }
   };
 

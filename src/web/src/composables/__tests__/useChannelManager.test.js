@@ -1,7 +1,7 @@
 import { defineComponent, h } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   success: vi.fn(),
@@ -61,6 +61,15 @@ function createConfig(create) {
   }
 }
 
+const mountedWrappers = []
+
+afterEach(() => {
+  // 卸载会清掉余额轮询/重试定时器，避免上一个用例定时器打到下一个用例的 mock 计数。
+  while (mountedWrappers.length) {
+    mountedWrappers.pop().unmount()
+  }
+})
+
 async function createManager(create) {
   // 组合式函数内部会注册 onUnmounted，需要在组件上下文里调用。
   let manager = null
@@ -72,7 +81,7 @@ async function createManager(create) {
   })
   const config = createConfig(create)
   setActivePinia(createPinia())
-  mount(Wrapper)
+  mountedWrappers.push(mount(Wrapper))
   await manager.actions.loadChannels()
   return { manager, config }
 }
@@ -147,5 +156,78 @@ describe('useChannelManager handleSave', () => {
     await expect(manager.actions.handleSave()).resolves.toBe(false)
     expect(create).not.toHaveBeenCalled()
     expect(manager.state.saving).toBe(false)
+  })
+})
+
+describe('useChannelManager balance loading', () => {
+  function mountManager(fetch) {
+    let manager = null
+    const config = createConfig(vi.fn())
+    config.api.fetch = fetch
+    const Wrapper = defineComponent({
+      setup() {
+        manager = useChannelManager(config)
+        return () => h('div')
+      }
+    })
+    setActivePinia(createPinia())
+    mountedWrappers.push(mount(Wrapper))
+    return manager
+  }
+
+  const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.getUIConfig.mockResolvedValue({ success: true, config: { channelBalance: { showRemaining: true } } })
+  })
+
+  it('requests balances on the first paint instead of after the refresh delay', async () => {
+    mocks.getChannelBalances.mockResolvedValue({
+      enabled: true,
+      balances: { c1: { visible: true, label: '余额 $5' } },
+      refreshing: false
+    })
+    const manager = mountManager(vi.fn().mockResolvedValue({ channels: [{ id: 'c1', enabled: true }] }))
+
+    await manager.actions.loadChannels()
+    await wait(400)
+
+    expect(mocks.getChannelBalances).toHaveBeenCalledTimes(1)
+    expect(manager.state.balances.c1).toEqual({ visible: true, label: '余额 $5' })
+    expect(manager.state.showChannelBalance).toBe(true)
+    expect(manager.state.balanceRefreshing).toBe(false)
+  })
+
+  it('retries exactly once for a channel still missing a balance', async () => {
+    mocks.getChannelBalances
+      .mockResolvedValueOnce({ enabled: true, balances: {}, refreshing: false })
+      .mockResolvedValue({
+        enabled: true,
+        balances: { c1: { visible: true, label: '余额 $5' } },
+        refreshing: false
+      })
+    const manager = mountManager(vi.fn().mockResolvedValue({ channels: [{ id: 'c1', enabled: true }] }))
+
+    await manager.actions.loadChannels()
+    await wait(400)
+    expect(mocks.getChannelBalances).toHaveBeenCalledTimes(1)
+
+    await wait(1400)
+    expect(mocks.getChannelBalances).toHaveBeenCalledTimes(2)
+    expect(manager.state.balances.c1).toEqual({ visible: true, label: '余额 $5' })
+
+    await wait(1400)
+    expect(mocks.getChannelBalances).toHaveBeenCalledTimes(2)
+  })
+
+  it('exposes the refreshing flag while the backend is still scanning', async () => {
+    mocks.getChannelBalances.mockResolvedValue({ enabled: true, balances: {}, refreshing: true })
+    const manager = mountManager(vi.fn().mockResolvedValue({ channels: [{ id: 'c1', enabled: true }] }))
+
+    await manager.actions.loadChannels()
+    await wait(400)
+
+    expect(manager.state.balanceRefreshing).toBe(true)
   })
 })

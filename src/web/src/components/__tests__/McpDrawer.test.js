@@ -60,7 +60,7 @@ const McpFormStub = {
   props: ['platforms'],
   template: '<div class="mcp-form-stub">{{ platforms.map(platform => platform.label).join(",") }}</div>'
 }
-const McpDetailStub = { name: 'McpServerDetailDrawer', template: '<div />' }
+const McpDetailStub = { name: 'McpServerDetailDrawer', props: ['visible', 'server'], template: '<div />' }
 
 describe('McpDrawer capability filtering', () => {
   beforeEach(() => {
@@ -72,6 +72,7 @@ describe('McpDrawer capability filtering', () => {
     const wrapper = shallowMount(McpDrawer, {
       props: { visible: false },
       global: {
+        renderStubDefaultSlot: true,
         stubs: {
           drawer: { template: '<div><slot /></div>' },
           'drawer-content': { template: '<div><slot name="header" /><slot /><slot name="footer" /></div>' },
@@ -88,5 +89,57 @@ describe('McpDrawer capability filtering', () => {
     expect(wrapper.text()).toContain('Alpha CLI')
     expect(wrapper.text()).not.toContain('Hidden CLI')
     expect(wrapper.findComponent(McpFormStub).props('platforms')).toEqual([alpha])
+  })
+})
+
+describe('McpDrawer server detail navigation', () => {
+  beforeEach(() => {
+    byCapability.mockReturnValue([alpha])
+  })
+
+  it('opens the detail drawer when a server card is clicked', async () => {
+    getAllServers.mockResolvedValue({
+      success: true,
+      servers: {
+        fetch: {
+          id: 'fetch',
+          name: 'fetch',
+          server: { type: 'stdio' },
+          apps: {},
+          description: 'GitHub tools',
+          tags: ['git']
+        }
+      }
+    })
+
+    const wrapper = shallowMount(McpDrawer, {
+      props: { visible: false },
+      global: {
+        renderStubDefaultSlot: true,
+        stubs: {
+          drawer: { template: '<div><slot /></div>' },
+          'drawer-content': { template: '<div><slot name="header" /><slot /><slot name="footer" /></div>' },
+          NDrawer: { template: '<div><slot /></div>' },
+          NDrawerContent: { template: '<div><slot /></div>' },
+          NSpin: { template: '<div><slot /></div>' },
+          'n-spin': { template: '<div><slot /></div>' },
+          McpFormDrawer: McpFormStub,
+          McpServerDetailDrawer: McpDetailStub,
+          dropdown: { template: '<div><slot /></div>' }
+        }
+      }
+    })
+
+    await wrapper.setProps({ visible: true })
+    await flushPromises()
+
+    const card = wrapper.find('.server-card')
+    expect(card.exists()).toBe(true)
+    await card.trigger('click')
+
+    const detail = wrapper.findComponent(McpDetailStub)
+    expect(detail.exists()).toBe(true)
+    expect(detail.props('visible')).toBe(true)
+    expect(detail.props('server')).toMatchObject({ id: 'fetch' })
   })
 })

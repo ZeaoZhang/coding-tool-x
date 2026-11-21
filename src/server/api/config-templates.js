@@ -194,8 +194,8 @@ router.post('/:id/apply', async (req, res) => {
         message: '目标路径不能为空'
       });
     }
-    const { validateKnownProjectCwd } = require('../services/project-path-validation');
-    const validatedTargetPath = await validateKnownProjectCwd(targetPath);
+    const { validateProjectApplyTarget } = require('../services/project-path-validation');
+    const validatedTargetPath = validateProjectApplyTarget(targetPath);
     if (!validatedTargetPath) {
       return res.status(400).json({
         success: false,
@@ -235,8 +235,8 @@ router.post('/:id/preview', async (req, res) => {
         message: '目标路径不能为空'
       });
     }
-    const { validateKnownProjectCwd } = require('../services/project-path-validation');
-    const validatedTargetPath = await validateKnownProjectCwd(targetPath);
+    const { validateProjectApplyTarget } = require('../services/project-path-validation');
+    const validatedTargetPath = validateProjectApplyTarget(targetPath);
     if (!validatedTargetPath) {
       return res.status(400).json({
         success: false,

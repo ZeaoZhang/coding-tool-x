@@ -251,7 +251,7 @@ watch(filteredLogs, (newLogs) => {
 // 清空日志
 async function clearLogs() {
   try {
-    await clearProxyLogs()
+    await clearProxyLogs(props.source)
     clearLogsState()
     message.success('日志已清空')
   } catch (err) {

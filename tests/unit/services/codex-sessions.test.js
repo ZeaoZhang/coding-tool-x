@@ -351,3 +351,59 @@ describe('codex-sessions', () => {
     });
   });
 });
+
+describe('codex session deletion', () => {
+  const ALIAS_PATH = require.resolve('../../../src/server/services/alias');
+
+  function loadWithIndex(invalidateSource) {
+    require.cache[ALIAS_PATH] = {
+      id: ALIAS_PATH, filename: ALIAS_PATH, loaded: true,
+      exports: { deleteAlias: vi.fn(), loadAliases: vi.fn(() => ({})) }
+    };
+    const module = require(MODULE_PATH);
+    module.configure({ sessionHistoryIndex: { invalidateSource } });
+    return module;
+  }
+
+  function writeRollout(projectDir, name, sessionId, cwd) {
+    const filePath = createRolloutFile(projectDir, name);
+    fs.writeFileSync(filePath, JSON.stringify({
+      type: 'session_meta',
+      payload: { id: sessionId, cwd }
+    }) + '\n', 'utf8');
+    return filePath;
+  }
+
+  beforeEach(() => {
+    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-delete-'));
+    injectStubs();
+  });
+
+  afterEach(() => {
+    delete require.cache[ALIAS_PATH];
+    delete require.cache[MODULE_PATH];
+    fs.rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('invalidates the deleted session rows immediately', () => {
+    const invalidateSource = vi.fn();
+    const filePath = writeRollout('demo-project', 'rollout-2024-01-01T00-00-00-abc-123.jsonl', 'abc-123', '/home/user/demo-project');
+    const module = loadWithIndex(invalidateSource);
+
+    expect(module.deleteSession('abc-123')).toEqual({ success: true });
+
+    expect(fs.existsSync(filePath)).toBe(false);
+    expect(invalidateSource).toHaveBeenCalledWith('codex', { deleted: true, sessionId: 'abc-123' });
+  });
+
+  it('invalidates the deleted project rows immediately', () => {
+    const invalidateSource = vi.fn();
+    const filePath = writeRollout('demo-project', 'rollout-2024-01-01T00-00-00-abc-123.jsonl', 'abc-123', '/home/user/demo-project');
+    const module = loadWithIndex(invalidateSource);
+
+    expect(module.deleteProject('demo-project')).toEqual({ success: true, deletedCount: 1 });
+
+    expect(fs.existsSync(filePath)).toBe(false);
+    expect(invalidateSource).toHaveBeenCalledWith('codex', { projectName: 'demo-project' });
+  });
+});

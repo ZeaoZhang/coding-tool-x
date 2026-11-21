@@ -227,7 +227,12 @@
     />
 
     <!-- Workspace Drawer -->
-    <WorkspaceDrawer v-if="isDrawerLoaded('workspace')" v-model:visible="showWorkspaceDrawer" />
+    <!-- The workspaces page already renders a WorkspacePanel; a drawer there
+         would mount a second instance with its own list state. -->
+    <WorkspaceDrawer
+      v-if="isDrawerLoaded('workspace') && currentRoute !== 'workspaces'"
+      v-model:visible="showWorkspaceDrawer"
+    />
 
     <!-- Config Templates Drawer -->
     <ConfigTemplatesDrawer v-if="isDrawerLoaded('config-templates')" v-model:visible="showConfigTemplatesDrawer" />
@@ -548,6 +553,7 @@ import { updateNestedUIConfig } from '../api/ui-config'
 import { checkEnvConflicts } from '../api/env'
 import { getSecurityStatus, verifySecurityPassword } from '../api/security'
 import message from '../utils/message'
+import { formatErrorMessage } from '../utils/error-message'
 import { useTheme } from '../composables/useTheme'
 import { useGlobalState } from '../composables/useGlobalState'
 import { useFavorites } from '../composables/useFavorites'
@@ -558,6 +564,7 @@ import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
 // RightPanel is part of every CLI route's primary layout. Keeping this shell
 // in the entry chunk avoids a circular lazy chunk (RightPanel -> app entry)
 // that leaves the panel unmounted in production browsers.
+import { openInNewTab } from '../utils/open-url'
 import RightPanel from './RightPanel.vue'
 const RecentSessionsDrawer = defineAsyncComponent(() => import('./RecentSessionsDrawer.vue'))
 const FavoritesDrawer = defineAsyncComponent(() => import('./FavoritesDrawer.vue'))
@@ -816,7 +823,9 @@ function toggleLogs() {
 }
 
 function openGithub() {
-  window.open('https://github.com/ZeaoZhang/coding-tool-x', '_blank')
+  if (!openInNewTab('https://github.com/ZeaoZhang/coding-tool-x')) {
+    message.warning('无法打开链接，请检查浏览器弹窗拦截')
+  }
 }
 function openDrawer(name, visibleRef) {
   markDrawerLoaded(name)
@@ -844,6 +853,8 @@ function openPromptsDrawer() {
 }
 
 function openWorkspaceDrawer() {
+  // On the workspaces route the panel is already on screen.
+  if (currentRoute.value === 'workspaces') return
   openDrawer('workspace', showWorkspaceDrawer)
 }
 
@@ -905,10 +916,10 @@ async function handleProxyToggle(newValue) {
       }
       savePanelSettings()
     } else {
-      message.error(result.error || '操作失败')
+      message.error(formatErrorMessage(result.error))
     }
   } catch (error) {
-    message.error(error.response?.data?.error || error.message || '操作失败')
+    message.error(formatErrorMessage(error.response?.data?.error || error))
   } finally {
     proxyState.value.loading = false
   }

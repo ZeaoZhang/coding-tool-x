@@ -19,8 +19,10 @@ export async function getPlatformProxyStatus(platform) {
   return response.data
 }
 
-export async function clearProxyLogs() {
-  const response = await client.post('/proxy/logs/clear')
+export async function clearProxyLogs(platform) {
+  const response = await client.post('/proxy/logs/clear', null, {
+    params: platform ? { source: platform } : undefined
+  })
   return response.data
 }
 

@@ -27,6 +27,14 @@
 - **Dependabot 依赖清账** - adm-zip 升至 0.6.1、toml 升至 5.0.1；根目录与 Web 统一 override minimatch 11.0.9、glob 14.0.6、editorconfig 4.0.1，清理 `@vue/test-utils` 开发链上的传递漏洞；根目录与 `src/web` 的 `npm audit` 均为 0
 
 ### Fixed
+- **项目级会话列表被清空** - Codex/OMP 的 inventory 描述符不带 `projectHint`，项目级刷新会把它们全部过滤掉并当成"文件已消失"，删除整批会话行。刷新现在只在驱动真正提供项目标签时按项目过滤，删除检测始终按完整 inventory 计算；会话索引缺失时会重建缺失的 summary/内容行，搜索遇到空消息表会等待一次真实扫描并清理已删除文件的残留结果；OMP/Codex 删除会话或项目后立即删除对应索引行，不再留下可搜索的"幽灵"。
+- **OMP 插件仓库列表 500** - `omp-marketplace` 条目没有 GitHub/GitLab 结构，序列化时抛错导致整个 `GET /api/plugins/repos?platform=omp` 失败。原生市场条目现在原样返回（仅补 `hasToken`/`tokenPreview`），单条历史配置无法序列化时只回退该条。
+- **MCP 测试假成功与工具列表超时** - stdio 测试改为真实 `connect` + `initialize` 握手（30 秒预算），不再把"进程存活 3 秒"当成成功；`npx -y` 首次下载安装期间工具列表不再固定 10 秒超时；并发读取共享一次握手，失败或超时的连接（含尚未入池的）都会被断开，不再残留子进程；`/tools` 回写服务器状态并在超时时返回 504，前端请求超时提高到 60 秒且失败后提供「重试」。
+- **配置模版只能应用到已注册工作区** - 应用/预览现在接受任意已存在的绝对目录（文件系统根目录仍拒绝并给出原因），与前端提示一致；预览随目标路径或配置选择变化立即失效，避免把 A 目录的预览套用到 B。
+- **模版 Skill 未真正写入项目** - 应用模版时按平台从 CLI 安装目录读取本地 Skill，登记后自动批准并启用、由投影服务写入项目；只有投影成功才计入 `applied`，远程 Skill 保持待刷新，投影冲突会出现在跳过列表并说明原因；`.ctx-config.json` 记录实际落盘路径而不是模板里的名字。
+- **首页 DSH 渠道状态为空** - Dashboard 的 `proxyStatus` 现在解包驱动信封，DSH 列显示真实端口；启动代理后立即使用返回的端口，无需刷新页面。
+- **首次进入渠道面板无余额 / 「写入配置」需悬停** - 首次加载立即请求余额（不再等 5 秒），仍有渠道缺余额时单次重试并显示「余额加载中…」；「写入配置」不再依赖悬停才可见。
+- **外部链接、导出与主题、插件、会话列表的低危问题** - 外链与导出改用统一 helper（弹窗被拦截时回退 anchor，并提示失败）；Analytics 丢弃过期请求，旧时间范围的响应不再覆盖新图表；主题写入不再被服务端回显覆盖，初始化不再回写服务器，写入失败会回滚并提示；插件安装后在释放加载态前重新读取列表，缓存失效不再复用变更前的请求；DSH 插件暴露安装路径并在无 README 时给出明确文案；工作区刷新忽略过期响应，工作区页面不再同时挂载抽屉里的第二个面板；会话列表区分"仍在生成"与"没有会话"，静默轮询不再丢弃正在等待的会话响应。
 - **DSH 禁用模块误报无 providers** - 当 profile 的 `llm-pi-ai` 标记 `disabled: true` 时，“同步当前”不再提示“没有可同步的 llm-pi-ai.providers”，而是返回 `source.disabled` 并明确指出被禁用的配置文件与 `disabled: true`，避免把配置开关误判为 profile 缺失或需要更换 profile。
 - **DSH 写路径静默解除禁用** - `llm-pi-ai` 被 `disabled: true` 禁用时，新增/更新/应用渠道与写入代理配置现在返回 409 `dsh_profile_module_disabled`，不再通过 upsert 重建条目时丢掉 `disabled: true`；删除本地渠道与停止动态代理会跳过原生写入并保留禁用状态。
 - **OpenCode / OMP 禁用 provider 仍被同步** - “同步当前”现在会检查 OpenCode `disabled_providers` / `enabled_providers` 与 OMP `config.yml` 的 `disabledProviders`；当前 provider 被禁用时直接跳过并给出明确原因，不再把它当作可用渠道导入。

@@ -485,11 +485,21 @@ router.get('/servers/:id/tools', async (req, res) => {
   try {
     const { id } = req.params;
     const result = await mcpService.getServerTools(id);
+    try {
+      await mcpService.updateServerStatus(id, result.status === 'online' ? 'online' : 'error');
+    } catch (statusError) {
+      // Persisting the status is bookkeeping; never fail the tools response.
+      console.error('[MCP API] Failed to persist tools status:', sanitizeErrorMessage(statusError.message || statusError));
+    }
     if (result.status === 'error') {
-      return res.status(502).json({
+      const failureMessage = result.error || '获取工具列表失败';
+      // A timed-out handshake is not a bad gateway; the client may simply be
+      // installing the server for the first time.
+      const status = /timed? ?out/i.test(String(failureMessage)) ? 504 : 502;
+      return res.status(status).json({
         success: false,
-        error: sanitizeErrorMessage(result.error || '获取工具列表失败'),
-        message: sanitizeErrorMessage(result.error || '获取工具列表失败'),
+        error: sanitizeErrorMessage(failureMessage),
+        message: sanitizeErrorMessage(failureMessage),
         hint: sanitizeMcpValue(result.hint || null),
         duration: result.duration,
         tools: []

@@ -9,6 +9,16 @@
               <SettingsOutline />
             </n-icon>
             <span class="sidebar-title">设置分类</span>
+            <n-button
+              quaternary
+              circle
+              size="small"
+              class="settings-close-button"
+              aria-label="关闭设置"
+              @click="show = false"
+            >
+              <template #icon><n-icon><CloseOutline /></n-icon></template>
+            </n-button>
           </div>
 
           <div class="settings-menu">
@@ -1164,7 +1174,7 @@ import { useResponsiveDrawer } from '../composables/useResponsiveDrawer'
 
 const { drawerWidth, isMobile } = useResponsiveDrawer(720)
 import {
-  SettingsOutline, ColorPaletteOutline, OptionsOutline,
+  SettingsOutline, CloseOutline, ColorPaletteOutline, OptionsOutline,
   SaveOutline, CheckmarkCircleOutline, StarOutline, WarningOutline,
   SunnyOutline, MoonOutline, NotificationsOutline,
   SparklesOutline, ShieldCheckmarkOutline, AddOutline, ChevronForwardOutline,
@@ -1653,6 +1663,8 @@ const modelMetaLoading = ref(false)
 const savingModelMeta = ref(false)
 // Built-in + overrides merged table, keyed by model ID
 const modelMetaTable = ref({})
+// Snapshot of the last loaded/saved table, used to detect real edits
+const savedModelMetaTable = ref({})
 // User overrides only (what's saved to config)
 const modelMetaOverrides = ref({})
 // Local edits: { [modelId]: { limit?: {...}, pricing?: {...} } }
@@ -1691,7 +1703,27 @@ const toggleModelExpand = (modelId) => {
   expandedModels.value = new Set(expandedModels.value)
 }
 
-const modelMetaDirty = computed(() => Object.keys(modelMetaEdits.value).length > 0)
+function normalizeModelMetaValue(value) {
+  return value === undefined ? null : value
+}
+
+function hasModelMetaEdits(modelId) {
+  const edits = modelMetaEdits.value[modelId]
+  if (!edits) return false
+  const baseline = savedModelMetaTable.value[modelId] || {}
+  for (const section of ['limit', 'pricing']) {
+    const sectionEdits = edits[section]
+    if (!sectionEdits) continue
+    for (const [field, value] of Object.entries(sectionEdits)) {
+      if (normalizeModelMetaValue(value) !== normalizeModelMetaValue(baseline[section]?.[field])) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+const modelMetaDirty = computed(() => Object.keys(modelMetaEdits.value).some(hasModelMetaEdits))
 const modelSettingsDirty = computed(() => {
   return modelMetaDirty.value || JSON.stringify(defaultSpeedTestModels.value) !== JSON.stringify(originalDefaultSpeedTestModels.value)
 })
@@ -1890,6 +1922,7 @@ async function loadModelMetadata() {
     modelMetaTable.value = data.models && typeof data.models === 'object' && !Array.isArray(data.models)
       ? data.models
       : {}
+    savedModelMetaTable.value = JSON.parse(JSON.stringify(modelMetaTable.value))
     modelPlatformConfigs.value = Array.isArray(data.modelPlatforms)
       ? data.modelPlatforms.filter(platform => platform && typeof platform.key === 'string' && platform.key.trim())
       : []
@@ -2587,6 +2620,10 @@ watch(activeMenu, (newVal, oldVal) => {
 
 [data-theme="dark"] .sidebar-header {
   border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.settings-close-button {
+  margin-left: auto;
 }
 
 .sidebar-title {
