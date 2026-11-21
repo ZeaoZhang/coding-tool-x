@@ -67,11 +67,20 @@ jobs:
           FORCE_PUBLISH: ${{ inputs.publish }}
         run: |
           current_version=$(node -p "require('./package.json').version")
+          today=$(node -p "require('./scripts/next-model-catalog-version.js').getShanghaiDateStamp()")
           use_current=false
           if [ "$FORCE_PUBLISH" = "true" ] \
-            && node -e "const v=require('semver').parse(require('./package.json').version); process.exit(v && v.prerelease.length === 0 ? 0 : 1)" \
-            && ! npm view "coding-tool-x@$current_version" version >/dev/null 2>&1; then
-            # A manual bump to an unpublished version: publish it as-is.
+            && ! npm view "coding-tool-x@$current_version" version >/dev/null 2>&1 \
+            && node -e "
+                 const semver = require('semver');
+                 const v = semver.parse(require('./package.json').version);
+                 const stable = v && v.prerelease.length === 0;
+                 const today = v && v.prerelease.length === 1 && String(v.prerelease[0]) === process.argv[1];
+                 process.exit(stable || today ? 0 : 1);
+               " "$today"; then
+            # A manual bump, or today's dated build that has not reached the
+            # registry yet (a queued/interrupted publish must not invent a new
+            # version when the dispatch is retried).
             use_current=true
           fi
           if [ "$use_current" = "true" ]; then
