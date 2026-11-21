@@ -67,9 +67,18 @@ jobs:
           FORCE_PUBLISH: ${{ inputs.publish }}
         run: |
           current_version=$(node -p "require('./package.json').version")
-          if [ "$FORCE_PUBLISH" = "true" ] && node -e "const v=require('semver').parse(require('./package.json').version); process.exit(v && v.prerelease.length === 0 ? 0 : 1)"; then
+          use_current=false
+          if [ "$FORCE_PUBLISH" = "true" ] \
+            && node -e "const v=require('semver').parse(require('./package.json').version); process.exit(v && v.prerelease.length === 0 ? 0 : 1)" \
+            && ! npm view "coding-tool-x@$current_version" version >/dev/null 2>&1; then
+            # A manual bump to an unpublished version: publish it as-is.
+            use_current=true
+          fi
+          if [ "$use_current" = "true" ]; then
             version="$current_version"
           else
+            # No manual bump (or that version is already on npm): publish
+            # today's date-stamped build instead of silently skipping.
             version=$(node scripts/next-model-catalog-version.js)
           fi
           if [ "$current_version" != "$version" ]; then
