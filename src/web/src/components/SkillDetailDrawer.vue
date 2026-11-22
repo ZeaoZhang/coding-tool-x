@@ -63,7 +63,7 @@
                 <h3 class="asset-detail-section-title">操作</h3>
                 <div class="asset-detail-actions">
                   <n-button
-                    v-if="detail.controlKey && detail.trust === 'approved' && detail.cached && !detail.protected && detail.projection?.state !== 'unsupported' && !(scope === 'project' && detail.sourceScope !== 'project')"
+                    v-if="detail.controlKey && detail.trust === 'approved' && detail.cached && !detail.protected && (!isProjectionUnsupported(detail) || detail.enabled) && !(scope === 'project' && detail.sourceScope !== 'project')"
                     type="primary"
                     size="small"
                     :loading="toggling"
@@ -84,7 +84,7 @@
                   <n-button v-else-if="detail.protected" tertiary size="small" disabled>
                     受保护
                   </n-button>
-                  <n-button v-else-if="detail.projection?.state === 'unsupported'" tertiary size="small" disabled>
+                  <n-button v-else-if="isProjectionUnsupported(detail)" tertiary size="small" disabled>
                     不支持投影
                   </n-button>
                   <n-button v-else-if="['pending', 'needs_review'].includes(detail.trust)" tertiary size="small" disabled>
@@ -142,6 +142,7 @@ import {
   getSkillSourceLinkLabel,
   getSkillSourceLocation
 } from '../utils/skill-source'
+import { isProjectionUnsupported } from '../utils/skill-projection'
 
 const { drawerWidth } = useResponsiveDrawer(600)
 
@@ -329,7 +330,7 @@ async function handleToggle() {
     || detail.value.readonly
     || detail.value.managed === false
     || detail.value.trust !== 'approved'
-    || detail.value.projection?.state === 'unsupported'
+    || (isProjectionUnsupported(detail.value) && !detail.value.enabled)
     || !detail.value.cached
     || (props.scope === 'project' && detail.value.sourceScope !== 'project')
   ) return

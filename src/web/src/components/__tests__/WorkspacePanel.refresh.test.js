@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 const hoisted = vi.hoisted(() => ({
   getWorkspaces: vi.fn(),
   deleteWorkspace: vi.fn(),
-  messages: { success: vi.fn(), warning: vi.fn(), error: vi.fn() }
+  messages: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
+  dialogWarning: vi.fn()
 }))
 
 vi.mock('../../api/workspaces', () => ({
@@ -25,7 +26,7 @@ vi.mock('naive-ui', () => {
     NSpin: { props: ['show'], template: '<div><slot /></div>' },
     NEmpty: { props: ['description'], template: '<div class="empty-state"><slot name="extra" /></div>' },
     useMessage: () => hoisted.messages,
-    useDialog: () => ({ warning: vi.fn() })
+    useDialog: () => ({ warning: hoisted.dialogWarning })
   }
 })
 
@@ -113,5 +114,29 @@ describe('WorkspacePanel refresh ordering', () => {
     expect(wrapper.emitted('updated')).toHaveLength(1)
     // The reload happened before the event (two reads total: mount + refresh).
     expect(hoisted.getWorkspaces).toHaveBeenCalledTimes(2)
+  })
+
+  test('delete confirmation distinguishes retained sources from worktree cleanup', async () => {
+    hoisted.getWorkspaces.mockResolvedValue({
+      success: true,
+      data: [{ id: 'a', name: 'workspace-a' }]
+    })
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    wrapper.findComponent(WorkspaceCardStub).vm.$emit('delete', { id: 'a', name: 'workspace-a' })
+    await flushPromises()
+
+    expect(hoisted.dialogWarning).toHaveBeenCalledTimes(1)
+    const options = hoisted.dialogWarning.mock.calls[0][0]
+    expect(options.content).toContain('不会删除源项目文件')
+    expect(options.content).toContain('worktree')
+    expect(options.content).not.toContain('不会删除磁盘内容')
+    expect(options.positiveText).toBe('删除记录')
+
+    hoisted.deleteWorkspace.mockResolvedValue({ success: true })
+    hoisted.getWorkspaces.mockResolvedValue({ success: true, data: [] })
+    await options.onPositiveClick()
+    expect(hoisted.deleteWorkspace).toHaveBeenCalledWith('a', false)
   })
 })

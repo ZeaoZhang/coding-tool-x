@@ -183,6 +183,7 @@ import { getPlatformConfig } from '../config/platforms'
 import { usePlatformStore } from '../stores/platforms'
 import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
 import { completeOmpSkillSettingsSave, supportsOmpSkillSettings, validateOmpSkillListResponse } from '../utils/omp-skill-settings'
+import { isProjectionUnsupported } from '../utils/skill-projection'
 import { getRoutePlatform } from '../config/platformCatalog'
 import { getDshProfiles } from '../api/dsh-agent-presets'
 
@@ -427,8 +428,8 @@ async function handleToggle(skill, enabled) {
     message.warning(skill.trust === 'blocked' ? '该技能已被阻止' : '该技能需要先审批')
     return
   }
-  if (skill.projection?.state === 'unsupported') {
-    message.error('当前平台不支持安全投影，无法切换该项目技能')
+  if (enabled && isProjectionUnsupported(skill)) {
+    message.error('当前平台不支持安全投影，无法启用该项目技能')
     return
   }
   if (enabled && !skill.cached) {

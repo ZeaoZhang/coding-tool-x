@@ -27,6 +27,9 @@
 - **Dependabot 依赖清账** - adm-zip 升至 0.6.1、toml 升至 5.0.1；根目录与 Web 统一 override minimatch 11.0.9、glob 14.0.6、editorconfig 4.0.1，清理 `@vue/test-utils` 开发链上的传递漏洞；根目录与 `src/web` 的 `npm audit` 均为 0
 
 ### Fixed
+- **Skills 列表丢失投影能力** - `GET /api/skills` 的受控条目未返回 `projection`，前端无法判断平台是否支持投影；不支持安全投影的 Skill 开关仍可点击，点击后才报错。列表现在回传 `projection.mode/state`；前端按 `mode === 'unsupported'` 或 `state === 'unsupported'` 阻止启用并显示「不支持投影」，但已启用但投影异常的 Skill 仍可关闭；原生可投影 Skill 仍可正常启停。
+- **工作区删除未说明文件保留** - 删除确认框现在说明仅删除工作区记录，源项目文件会保留，工作区目录/symlink 保留，但 worktree 项目会注销并移除工作区内的 worktree 目录；主操作改为「删除记录」，避免用户误以为源项目已被删除。
+- **Prompts「移除」作用域歧义** - 顶部按钮改为「移除激活」，tooltip 明确为“删除各平台当前激活的提示词文件”，避免与选中卡片混淆。
 - **项目级会话列表被清空** - Codex/OMP 的 inventory 描述符不带 `projectHint`，项目级刷新会把它们全部过滤掉并当成"文件已消失"，删除整批会话行。刷新现在只在驱动真正提供项目标签时按项目过滤，删除检测始终按完整 inventory 计算；会话索引缺失时会重建缺失的 summary/内容行，搜索遇到空消息表会等待一次真实扫描并清理已删除文件的残留结果；OMP/Codex 删除会话或项目后立即删除对应索引行，不再留下可搜索的"幽灵"。
 - **OMP 插件仓库列表 500** - `omp-marketplace` 条目没有 GitHub/GitLab 结构，序列化时抛错导致整个 `GET /api/plugins/repos?platform=omp` 失败。原生市场条目现在原样返回（仅补 `hasToken`/`tokenPreview`），单条历史配置无法序列化时只回退该条。
 - **MCP 测试假成功与工具列表超时** - stdio 测试改为真实 `connect` + `initialize` 握手（30 秒预算），不再把"进程存活 3 秒"当成成功；`npx -y` 首次下载安装期间工具列表不再固定 10 秒超时；并发读取共享一次握手，失败或超时的连接（含尚未入池的）都会被断开，不再残留子进程；`/tools` 回写服务器状态并在超时时返回 504，前端请求超时提高到 60 秒且失败后提供「重试」。

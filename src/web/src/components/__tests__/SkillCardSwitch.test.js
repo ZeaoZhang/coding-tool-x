@@ -62,3 +62,43 @@ test('hides the switch when the platform does not support skill toggling', async
   expect(wrapper.find('.skill-switch').exists()).toBe(false)
   expect(wrapper.text()).toContain('不支持投影')
 })
+
+test('disables enabling when projection mode is unsupported', async () => {
+  const { default: SkillCard } = await import('../SkillCard.vue')
+  const wrapper = mount(SkillCard, {
+    props: {
+      skill: {
+        name: 'Native',
+        directory: 'native',
+        enabled: false,
+        cached: true,
+        trust: 'approved',
+        projection: { mode: 'unsupported' }
+      }
+    }
+  })
+
+  expect(wrapper.find('.skill-switch').attributes('disabled')).toBeDefined()
+  expect(wrapper.text()).toContain('不支持投影')
+})
+
+test('still allows disabling an enabled skill with unsupported projection', async () => {
+  const { default: SkillCard } = await import('../SkillCard.vue')
+  const wrapper = mount(SkillCard, {
+    props: {
+      skill: {
+        name: 'Native',
+        directory: 'native',
+        enabled: true,
+        cached: true,
+        trust: 'approved',
+        projection: { mode: 'unsupported' }
+      }
+    }
+  })
+
+  const toggle = wrapper.find('.skill-switch')
+  expect(toggle.attributes('disabled')).toBeUndefined()
+  await toggle.trigger('click')
+  expect(wrapper.emitted('toggle')).toEqual([[expect.objectContaining({ name: 'Native' }), false]])
+})

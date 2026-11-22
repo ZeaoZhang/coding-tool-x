@@ -1370,6 +1370,72 @@ describe('SkillService scan-only control surface', () => {
       trust: 'needs_review',
       managed: true
     }));
+    expect(missing.projection).toEqual(expect.objectContaining({
+      mode: 'native-copy',
+      state: 'disabled'
+    }));
+  });
+
+  it('exposes projection capability and unsupported mode in list entries', () => {
+    const { SkillService } = require('../../../src/server/services/skill-service');
+    const svc = new SkillService('omp');
+    const entry = {
+      controlKey: 'skill:omp:user:user:native-key',
+      sourceKey: 'native-key',
+      scope: 'user',
+      projectPath: null,
+      trust: 'approved',
+      cached: true,
+      enabled: false,
+      artifact: { state: 'ready' },
+      projection: { mode: 'native-copy', state: 'disabled' }
+    };
+
+    const supported = svc._mapControlledSkill(
+      { name: 'native' },
+      { sourceKey: 'native-key', projection: { mode: 'native-copy' } },
+      entry
+    );
+    expect(supported.projection).toEqual(expect.objectContaining({
+      mode: 'native-copy',
+      state: 'disabled'
+    }));
+
+    const unsupported = svc._mapControlledSkill(
+      { name: 'native' },
+      { sourceKey: 'native-key', projection: { mode: 'unsupported' } },
+      entry
+    );
+    expect(unsupported.projection).toEqual(expect.objectContaining({
+      mode: 'unsupported',
+      state: 'disabled'
+    }));
+
+    const entryUnsupported = svc._mapControlledSkill(
+      { name: 'native' },
+      { sourceKey: 'native-key', projection: { mode: 'native-copy' } },
+      {
+        ...entry,
+        projection: { mode: 'unsupported', state: 'disabled' }
+      }
+    );
+    expect(entryUnsupported.projection).toEqual(expect.objectContaining({
+      mode: 'unsupported',
+      state: 'disabled'
+    }));
+
+    const entryStateUnsupported = svc._mapControlledSkill(
+      { name: 'native' },
+      { sourceKey: 'native-key', projection: { mode: 'native-copy' } },
+      {
+        ...entry,
+        projection: { mode: 'native-copy', state: 'unsupported' }
+      }
+    );
+    expect(entryStateUnsupported.projection).toEqual(expect.objectContaining({
+      mode: 'unsupported',
+      state: 'unsupported'
+    }));
   });
 
   it('updates the managed artifact when local Skill content changes', async () => {

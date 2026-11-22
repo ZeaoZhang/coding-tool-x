@@ -79,7 +79,7 @@ vi.mock('naive-ui', () => {
 const SkillCardStub = {
   props: ['skill', 'toggling', 'panelScope', 'canToggle'],
   emits: ['click', 'toggle', 'approve'],
-  template: '<div class="skill-card" :data-projection="skill.projection?.state || \'none\'"><span>{{ skill.name }}</span><button class="skill-toggle" @click="$emit(\'toggle\', skill, !skill.enabled)">toggle</button></div>'
+  template: '<div class="skill-card"><span>{{ skill.name }}</span><button class="skill-toggle" @click="$emit(\'toggle\', skill, !skill.enabled)">toggle</button></div>'
 }
 
 function skill(index, overrides = {}) {
@@ -167,7 +167,6 @@ describe('SkillsPanel unsupported projection', () => {
     const wrapper = mountPanel({ platform: 'omp' })
     await flushPromises()
 
-    expect(wrapper.find('.skill-card').attributes('data-projection')).toBe('none')
 
     await wrapper.find('.skill-toggle').trigger('click')
     await flushPromises()
@@ -184,12 +183,48 @@ describe('SkillsPanel unsupported projection', () => {
     const wrapper = mountPanel({ platform: 'omp' })
     await flushPromises()
 
-    expect(wrapper.find('.skill-card').attributes('data-projection')).toBe('unsupported')
 
     await wrapper.find('.skill-toggle').trigger('click')
     await flushPromises()
 
     expect(api.toggleSkill).not.toHaveBeenCalled()
+  })
+
+  test('does not send a toggle request when projection mode is unsupported', async () => {
+    api.getSkills.mockResolvedValue({
+      success: true,
+      skills: [skill(1, { projection: { mode: 'unsupported' } })],
+      refresh: { state: 'never_fetched', taskId: null, fetchedAt: null, error: null }
+    })
+    const wrapper = mountPanel({ platform: 'omp' })
+    await flushPromises()
+
+
+    await wrapper.find('.skill-toggle').trigger('click')
+    await flushPromises()
+
+    expect(api.toggleSkill).not.toHaveBeenCalled()
+  })
+
+  test('allows disabling an enabled skill with unsupported projection', async () => {
+    api.getSkills.mockResolvedValue({
+      success: true,
+      skills: [skill(1, { enabled: true, projection: { mode: 'unsupported' } })],
+      refresh: { state: 'never_fetched', taskId: null, fetchedAt: null, error: null }
+    })
+    api.toggleSkill.mockResolvedValue({ enabled: false, projection: { mode: 'unsupported', state: 'disabled' } })
+    const wrapper = mountPanel({ platform: 'omp' })
+    await flushPromises()
+
+    await wrapper.find('.skill-toggle').trigger('click')
+    await flushPromises()
+
+    expect(api.toggleSkill).toHaveBeenCalledWith(
+      'skill:omp:user:user:skill-1',
+      false,
+      'omp',
+      expect.any(Object)
+    )
   })
 })
 

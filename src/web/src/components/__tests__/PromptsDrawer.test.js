@@ -1,4 +1,4 @@
-import { flushPromises, shallowMount } from '@vue/test-utils'
+import { flushPromises, mount, shallowMount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const alpha = { key: 'alpha-cli', label: 'Alpha CLI', promptLabel: 'Alpha', capabilities: { prompts: true } }
@@ -80,5 +80,31 @@ describe('PromptsDrawer capability filtering', () => {
     expect(wrapper.text()).toContain('Alpha')
     expect(wrapper.text()).not.toContain('Hidden CLI')
     expect(wrapper.findComponent(FormStub).props('platforms')).toEqual([alpha])
+  })
+
+  it('labels the deactivate action as removing the active prompt', async () => {
+    getAllPresets.mockResolvedValue({
+      success: true,
+      presets: {
+        review: { id: 'review', name: 'Review', content: '# review', apps: { 'alpha-cli': true } }
+      },
+      activePresetId: 'review'
+    })
+    const wrapper = mount(PromptsDrawer, {
+      props: { visible: false },
+      global: {
+        stubs: {
+          drawer: { template: '<div><slot /></div>' },
+          'drawer-content': { template: '<div><slot name="header" /><slot /><slot name="footer" /></div>' },
+          dropdown: { template: '<div><slot /></div>' },
+          PromptsFormDrawer: FormStub
+        }
+      }
+    })
+
+    await wrapper.setProps({ visible: true })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('移除激活')
   })
 })

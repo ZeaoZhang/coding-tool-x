@@ -16,7 +16,7 @@
             <n-tag v-if="skill.trust === 'pending'" type="warning" size="tiny" :bordered="false">待审批</n-tag>
             <n-tag v-if="skill.trust === 'needs_review'" type="warning" size="tiny" :bordered="false">需复审</n-tag>
             <n-tag v-if="skill.protected" type="default" size="tiny" :bordered="false">受保护</n-tag>
-            <n-tag v-if="skill.projection?.state === 'unsupported'" type="warning" size="tiny" :bordered="false">不支持投影</n-tag>
+            <n-tag v-if="isProjectionUnsupported(skill)" type="warning" size="tiny" :bordered="false">不支持投影</n-tag>
             <n-tag v-if="getSkillSourceTag(skill)" type="info" size="tiny" :bordered="false">{{ getSkillSourceTag(skill) }}</n-tag>
           </div>
         </div>
@@ -49,7 +49,7 @@
         v-if="canToggle"
         :value="skill.enabled"
         :loading="toggling"
-        :disabled="skill.protected || skill.readonly || skill.managed === false || !skill.cached || skill.trust !== 'approved' || skill.projection?.state === 'unsupported' || (panelScope === 'project' && skill.sourceScope !== 'project')"
+        :disabled="skill.protected || skill.readonly || skill.managed === false || !skill.cached || skill.trust !== 'approved' || (isProjectionUnsupported(skill) && !skill.enabled) || (panelScope === 'project' && skill.sourceScope !== 'project')"
         :aria-label="`${skill.name} 开关`"
         @update:value="$emit('toggle', skill, $event)"
       />
@@ -65,6 +65,7 @@ import {
   getSkillSourceLocation,
   getSkillSourceTag
 } from '../utils/skill-source'
+import { isProjectionUnsupported } from '../utils/skill-projection'
 
 defineProps({
   skill: { type: Object, required: true },

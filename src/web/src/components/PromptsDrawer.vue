@@ -61,10 +61,10 @@
                   <template #icon>
                     <n-icon :size="16"><CloseOutline /></n-icon>
                   </template>
-                  移除
+                  移除激活
                 </n-button>
               </template>
-              删除各平台的提示词文件
+              删除各平台当前激活的提示词文件
             </n-tooltip>
           </div>
         </div>

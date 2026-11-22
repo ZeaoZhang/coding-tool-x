@@ -154,8 +154,8 @@ function handleView(ws) {
 function handleDelete(ws) {
   dialog.warning({
     title: '确认删除',
-    content: `确定要删除工作区"${ws.name}"吗？`,
-    positiveText: '删除',
+    content: `确定要删除工作区"${ws.name}"吗？\n\n仅删除工作区记录，不会删除源项目文件；工作区目录与 symlink 会保留。worktree 项目会注销，并移除工作区内的 worktree 目录。`,
+    positiveText: '删除记录',
     negativeText: '取消',
     onPositiveClick: async () => {
       try {

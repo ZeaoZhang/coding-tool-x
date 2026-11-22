@@ -1233,6 +1233,12 @@ class SkillService {
 
   _mapControlledSkill(skill, candidate, entry) {
     const loadable = entry.trust === 'approved' && entry.artifact?.state === 'ready';
+    const candidateProjection = candidate.projection || {};
+    const entryProjection = entry.projection || {};
+    const projectionUnsupported = candidateProjection.mode === 'unsupported'
+      || candidateProjection.state === 'unsupported'
+      || entryProjection.mode === 'unsupported'
+      || entryProjection.state === 'unsupported';
     return {
       ...skill,
       controlKey: entry.controlKey,
@@ -1246,6 +1252,16 @@ class SkillService {
       trust: entry.trust,
       artifact: entry.artifact,
       installed: loadable && entry.enabled === true,
+      // The list response must carry the projection capability; otherwise the
+      // UI cannot disable toggles for skills the platform cannot project.
+      projection: {
+        ...candidateProjection,
+        ...entryProjection,
+        mode: projectionUnsupported
+          ? 'unsupported'
+          : (entryProjection.mode || candidateProjection.mode || null),
+        state: entryProjection.state || candidateProjection.state || null
+      },
       lastError: entry.lastError || null
     };
   }
