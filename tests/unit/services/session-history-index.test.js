@@ -431,6 +431,47 @@ describe('session-history-index', () => {
     expect(await index.searchSessions('claude', 'assistantneedleonly', { limit: 10 })).toHaveLength(0);
   });
 
+  it('keeps matchCount and the five-match slice exact through the FTS accelerator', async () => {
+    const fixture = setupIndex({
+      storeAssistantContent: false,
+      ftsEnabledOverride: true,
+      ftsAcceleratorMinMessages: 0
+    });
+    const userMessages = (prefix, count, contentFor) => Array.from({ length: count }, (_, i) => ({
+      messageId: `${prefix}-${i}`,
+      role: 'user',
+      type: 'user',
+      subtype: null,
+      content: contentFor(i),
+      timestamp: 1000 + i,
+      model: 'claude',
+      provider: 'anthropic',
+      userMessageNumber: i + 1,
+      extraJson: null
+    }));
+    fixture.writeFixtureFile({
+      name: 'many-hits.jsonl',
+      content: '{"type":"metadata"}\n',
+      session: makeSessionFixture('many-hits', 'count-project', { updatedAt: 1000 }),
+      messages: userMessages('many', 6, i => (i === 0 ? 'multineedle multineedle multineedle' : `multineedle ${i}`))
+    });
+    fixture.writeFixtureFile({
+      name: 'one-hit.jsonl',
+      content: '{"type":"metadata"}\n',
+      session: makeSessionFixture('one-hit', 'count-project', { updatedAt: 2000 }),
+      messages: userMessages('one', 1, () => 'multineedle')
+    });
+    await index.ensureSourceIndexed('claude', { consistency: 'complete' });
+
+    const results = await index.searchSessions('claude', 'multineedle', { limit: 10 });
+    expect(results.map(result => result.sessionId)).toEqual(['one-hit', 'many-hits']);
+    expect(results[0].matchCount).toBe(1);
+    // 3 occurrences in the first message plus 1 in each of the other 5.
+    expect(results[1].matchCount).toBe(8);
+    expect(results[1].matches).toHaveLength(5);
+    expect(results[1].matches[0].positions).toHaveLength(3);
+  });
+
   it('hydrates message pages from the source file when assistant content is not stored', async () => {
     const messagesWorkerRunner = vi.fn(async (_source, _dbPath, _sessionId, options) => ({
       messages: [{ role: 'assistant', content: 'live-from-file' }],
@@ -1670,13 +1711,26 @@ describe('session-history-index', () => {
     expect(await index.getSessionStatus('claude', 'deleted-detail')).toBeNull();
   });
 
-  it('creates the outline user-message index while retaining ordinal index', async () => {
+  it('drops the superseded ordinal index and keeps the outline index', async () => {
     const fixture = setupIndex({ ftsEnabledOverride: false });
     fixture.writeFixtureFile({ name: 'outline-index.jsonl', content: 'outline index fixture\n', session: makeSessionFixture('outline-index', 'outline-project'), messages: makeMessageFixtures(4) });
     await index.ensureSourceIndexed('claude', { consistency: 'complete' });
-    const names = index._getDb().prepare('PRAGMA index_list(session_message)').all().map(row => row.name);
-    expect(names).toContain('idx_session_message_user_number');
-    expect(names).toContain('idx_session_message_sid_ord');
+    const indexNames = () => index._getDb().prepare('PRAGMA index_list(session_message)').all().map(row => row.name);
+    expect(indexNames()).toContain('idx_session_message_user_number');
+    // (source, session_id, ordinal) is the primary key: a second index on the
+    // same columns only duplicated the b-tree and every insert into it.
+    expect(indexNames()).not.toContain('idx_session_message_sid_ord');
+
+    // Databases created before the removal still carry it; opening drops it.
+    index._getDb().exec('CREATE INDEX idx_session_message_sid_ord ON session_message(source, session_id, ordinal)');
+    index.closeSessionHistoryIndex();
+    index = createSessionHistoryIndex({
+      dbPath: state.dbPath,
+      adapterRegistry: { claude: state.adapter },
+      workerRunner: vi.fn(async () => {}),
+      ftsEnabledOverride: false
+    });
+    expect(indexNames()).not.toContain('idx_session_message_sid_ord');
     expect((await index.getSessionOutline('claude', 'outline-index')).items).toHaveLength(2);
   });
   it('removes previous messages when a session is replaced with fewer messages', async () => {

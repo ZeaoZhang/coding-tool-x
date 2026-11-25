@@ -18,6 +18,7 @@
 - **配置驱动通知设置** - Hooks capability、可信 hooks/provider adapter 和公开字段 schema 统一从平台注册表发现；设置面板可消费新增平台/provider 描述，无需重复维护前端模板。
 
 ### Changed
+- **会话索引写入与搜索提速** - `session_message` 上 `(source, session_id, ordinal)` 与主键同列的冗余索引已删除（已存在的数据库在下次打开时自动 `DROP`），15 万条消息的建库耗时下降约 17%（实测 8.8–11.7 s → 6.4–7.6 s），索引体积减少约 4.5 MB；FTS 加速搜索不再对同一关键字执行两次 `MATCH`，命中行在单次扫描内收敛后再按会话限流，返回行集、顺序、`matchCount` 和「每会话最多 5 条」均保持不变，同一数据集上搜索中位耗时 318→199 ms。
 - **兼容性边界明确** - 用户配置禁止任意 Node.js 模块、函数值和 shell 命令；特殊 SQLite、OAuth/keychain、非标准配置及 fork 语义继续由专用 capability driver 负责；既有 CLI/API 兼容路径与 mock seam 保持有意稳定。
 - **手动刷新边界** - Skill 页面进入、浏览器刷新、切换页面和添加/修改仓库只读取或保存本地状态；只有用户手动点击刷新才触发远端网络任务。
 
