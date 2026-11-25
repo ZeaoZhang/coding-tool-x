@@ -224,3 +224,91 @@ test('excludes OAuth channels and injects the allocated API key into requests', 
   expect(proxyReq.end).toHaveBeenCalled();
 });
 describe('codex Proxy Driver', () => { test('exposes structured lifecycle operations', async () => { const { createDriver } = require('../../../../src/platforms/drivers/codex/proxy'); const driver = createDriver({ requireImpl: () => ({ getCodexProxyStatus: () => ({ running: false }), startCodexProxyServer: options => ({ running: true, options }), stopCodexProxyServer: options => ({ running: false, options }) }) }); expect(driver.status()).toMatchObject({ status: 'ok', platform: 'codex', capability: 'proxy', operation: 'status', data: { running: false } }); await expect(driver.start({ port: 1234 })).toMatchObject({ status: 'ok', operation: 'start', data: { running: true, options: { port: 1234 } } }); }); });
+
+function codexFailoverFixture() {
+  const { Readable } = require('stream');
+  const channels = [
+    { id: 'channel-a', name: 'Channel A', baseUrl: 'https://a.example.com/v1', apiKey: 'key-a', authMode: 'api_key', modelRedirects: [] },
+    { id: 'channel-b', name: 'Channel B', baseUrl: 'https://b.example.com/v1', apiKey: 'key-b', authMode: 'api_key', modelRedirects: [] }
+  ];
+  const scheduler = require(CHANNEL_SCHEDULER_PATH);
+  const health = require(CHANNEL_HEALTH_PATH);
+  const allocations = [];
+  scheduler.allocateChannel.mockImplementation(async (options) => {
+    allocationOptions = options;
+    allocations.push(options);
+    return channels.find(item => !(options.excludeChannelIds || []).includes(item.id)) || null;
+  });
+
+  const targets = [];
+  const channelIds = [];
+  const written = [];
+  const statuses = [429, 200];
+  const httpProxy = require(HTTP_PROXY_PATH);
+  httpProxy.createProxyServer.mockImplementation(() => ({
+    on: (event, listener) => { proxyEvents[event] = listener; },
+    web: (req, res, options) => {
+      const index = targets.length;
+      targets.push(options.target);
+      channelIds.push(req.selectedChannel && req.selectedChannel.id);
+      const upstreamHeaders = {};
+      const chunks = [];
+      const proxyReq = {
+        removeHeader: name => { delete upstreamHeaders[name]; },
+        setHeader: (name, value) => { upstreamHeaders[String(name).toLowerCase()] = value; },
+        getHeader: name => upstreamHeaders[String(name).toLowerCase()],
+        once: () => {},
+        write: chunk => { chunks.push(Buffer.from(chunk)); },
+        end: () => { written.push(Buffer.concat(chunks).toString('utf8')); }
+      };
+      proxyEvents.proxyReq(proxyReq, req, res);
+      const statusCode = statuses[index];
+      const proxyRes = Readable.from([
+        Buffer.from(statusCode === 200 ? '{"ok":true}' : '{"error":"rate limited"}')
+      ]);
+      proxyRes.statusCode = statusCode;
+      proxyRes.headers = { 'content-type': 'application/json' };
+      proxyEvents.proxyRes(proxyRes, req, res);
+    }
+  }));
+
+  return { scheduler, health, allocations, targets, channelIds, written };
+}
+
+test('fails over to the next channel when the upstream returns a retryable status', async () => {
+  const { scheduler, health, allocations, channelIds, written } = codexFailoverFixture();
+  const started = await proxyImplementation.startCodexProxyServer();
+  const response = await request(started.port);
+
+  expect(response.statusCode).toBe(200);
+  expect(response.body).toBe('{"ok":true}');
+  expect(channelIds).toEqual(['channel-a', 'channel-b']);
+  expect(allocations[1].excludeChannelIds).toEqual(['channel-a']);
+  expect(scheduler.releaseChannel.mock.calls.map(call => call[0])).toEqual(['channel-a', 'channel-b']);
+  expect(health.recordFailure).toHaveBeenCalledWith('channel-a', 'codex', expect.any(Error));
+  expect(health.recordSuccess).toHaveBeenCalledWith('channel-b', 'codex');
+  expect(written).toEqual([JSON.stringify({ model: 'gpt-5' }), JSON.stringify({ model: 'gpt-5' })]);
+});
+
+test('does not fail over on a non-retryable status', async () => {
+  const { scheduler, allocations, targets } = codexFailoverFixture();
+  const httpProxy = require(HTTP_PROXY_PATH);
+  httpProxy.createProxyServer.mockImplementation(() => ({
+    on: (event, listener) => { proxyEvents[event] = listener; },
+    web: (req, res, options) => {
+      targets.push(options.target);
+      const { Readable } = require('stream');
+      const proxyRes = Readable.from([Buffer.from('{"error":"invalid request"}')]);
+      proxyRes.statusCode = 400;
+      proxyRes.headers = { 'content-type': 'application/json' };
+      proxyEvents.proxyRes(proxyRes, req, res);
+    }
+  }));
+
+  const started = await proxyImplementation.startCodexProxyServer();
+  const response = await request(started.port);
+
+  expect(response.statusCode).toBe(400);
+  expect(allocations).toHaveLength(1);
+  expect(scheduler.releaseChannel.mock.calls.map(call => call[0])).toEqual(['channel-a']);
+});

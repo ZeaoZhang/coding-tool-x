@@ -1,5 +1,4 @@
 const express = require('express');
-const httpProxy = require('http-proxy');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -25,6 +24,7 @@ const { memoryPressureMiddleware } = require('../../../server/services/memory-pr
 const { redirectModel, normalizeGatewaySourceType } = require('../../../shared/proxy-utils');
 const { handleClaudeOpenAiGatewayRequest } = require('./openai-gateway');
 const { bindProxyRequest, prepareProxyResponse } = require('../../../shared/proxy-transport');
+const { createFailoverProxy } = require('../../../shared/proxy-failover');
 const { attachServerShutdownHandling, expediteServerShutdown, PROXY_IDLE_TIMEOUT_MS } = require('../../../server/services/server-shutdown');
 
 let proxyServer = null;
@@ -190,108 +190,72 @@ async function startProxyServer(options = {}) {
       }
       return next();
     });
-    const proxy = httpProxy.createProxyServer({});
-
-    proxy.on('proxyReq', (proxyReq, req, res) => {
-      bindProxyRequest(proxyReq, res);
-      const selectedChannel = req.selectedChannel;
-      if (selectedChannel) {
-        const requestId = `${Date.now()}-${Math.random()}`;
-        requestMetadata.set(req, {
-          id: requestId,
-          channel: selectedChannel.name,
-          channelId: selectedChannel.id,
-          startTime: Date.now(),
-          sessionId: req.sessionId || null,
-          requestModel: req.body?.model || ''
-        });
-
-        proxyReq.removeHeader('x-api-key');
-        const effectiveKey = req.effectiveApiKey;
-        proxyReq.setHeader('x-api-key', effectiveKey);
-        proxyReq.removeHeader('authorization');
-        proxyReq.setHeader('authorization', `Bearer ${effectiveKey}`);
-
-        if (!proxyReq.getHeader('anthropic-version')) {
-          proxyReq.setHeader('anthropic-version', '2023-06-01');
-        }
-        if (!proxyReq.getHeader('content-type')) {
-          proxyReq.setHeader('content-type', 'application/json');
-        }
-      }
-
-      if (shouldParseJson(req) && (req.rawBody || req.body)) {
-        const bodyBuffer = req.rawBody
-          ? Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(req.rawBody)
-          : Buffer.from(JSON.stringify(req.body));
-        proxyReq.setHeader('Content-Length', bodyBuffer.length);
-        proxyReq.write(bodyBuffer);
-        proxyReq.end();
-      }
-    });
-
-    proxyApp.use(async (req, res) => {
-      try {
+    const { handle } = createFailoverProxy({
+      source: 'claude',
+      proxyOptions: {
+        changeOrigin: true,
+        proxyTimeout: PROXY_IDLE_TIMEOUT_MS,  // Allow long reasoning gaps without an unbounded upstream wait
+        timeout: 0            // The upstream timeout bounds idle waits; streaming clients may pause
+      },
+      canRetry: shouldParseJson,
+      allocate: async ({ req, res, excludeChannelIds }) => {
         const sessionId = extractSessionId(req);
+        req.sessionId = sessionId || null;
         const config = loadConfig();
         const enableSessionBinding = config.enableSessionBinding !== false; // 默认开启
         const abortController = new AbortController();
         const abortOnClose = () => abortController.abort();
         res.once('close', abortOnClose);
-        let channel;
         try {
-          channel = await allocateChannel({
+          const channel = await allocateChannel({
             source: 'claude',
             sessionId,
             signal: abortController.signal,
             enableSessionBinding,
-            excludeChannelIds: getClaudeProxyExcludedChannelIds()
+            excludeChannelIds: [...getClaudeProxyExcludedChannelIds(), ...excludeChannelIds]
           });
+          // 广播调度状态（请求开始）
+          broadcastSchedulerState('claude', getSchedulerState('claude'));
+          return channel;
         } finally {
           res.removeListener('close', abortOnClose);
         }
-
-        // 广播调度状态（请求开始）
+      },
+      release: channelId => {
+        releaseChannel(channelId, 'claude');
+        // 广播调度状态（请求结束）
         broadcastSchedulerState('claude', getSchedulerState('claude'));
-
-        req.selectedChannel = channel;
-        req.sessionId = sessionId || null;
-        let released = false;
-
-        const release = () => {
-          if (released) return;
-          released = true;
-          releaseChannel(channel.id, 'claude');
-          // 广播调度状态（请求结束）
-          broadcastSchedulerState('claude', getSchedulerState('claude'));
-        };
-
-        req.__releaseChannel = release;
-        res.on('finish', release);
-        res.on('close', release);
-        res.on('error', release);
-        if (res.destroyed || res.writableEnded) { release(); return; }
-
+      },
+      prepareAttempt: async (req, res, channel, releaseOnce) => {
         const effectiveKey = getEffectiveApiKey(channel);
         if (!effectiveKey) {
-          release();
-          return res.status(401).json({
-            error: 'API key not configured or expired. Please update your channel key.',
-            type: 'authentication_error'
-          });
+          throw Object.assign(
+            new Error('API key not configured or expired. Please update your channel key.'),
+            {
+              statusCode: 401,
+              payload: {
+                error: 'API key not configured or expired. Please update your channel key.',
+                type: 'authentication_error'
+              }
+            }
+          );
         }
         req.effectiveApiKey = effectiveKey;
-        if (isProxyRequestLoggingEnabled()) {
-          const requestSnapshot = serializeFullClaudeRequest(req);
-          persistClaudeRequestSnapshot({
-            timestamp: Date.now(),
-            source: 'claude',
-            channel: channel.name,
-            sessionId: sessionId || null,
-            request: requestSnapshot
-          });
+
+        // 诊断日志与模板每个请求只记录一次，重试时请求体与首选渠道一致。
+        if (!req.__claudeSnapshotRecorded) {
+          req.__claudeSnapshotRecorded = true;
+          if (isProxyRequestLoggingEnabled()) {
+            persistClaudeRequestSnapshot({
+              timestamp: Date.now(),
+              source: 'claude',
+              channel: channel.name,
+              sessionId: req.sessionId || null,
+              request: serializeFullClaudeRequest(req)
+            });
+          }
+          persistClaudeRequestTemplate(req.body);
         }
-        persistClaudeRequestTemplate(req.body);
 
         // 应用模型重定向（当 proxy 开启时）
         if (req.body && req.body.model) {
@@ -328,38 +292,103 @@ async function startProxyServer(options = {}) {
             res,
             channel,
             effectiveKey,
-            onDone: release
+            onDone: releaseOnce
           });
-          if (handled) {
-            return;
-          }
+          if (handled) return { handled: true };
         }
 
-        const proxyOptions = {
+        return {
           target: channel.baseUrl,
-          changeOrigin: true,
-          proxyTimeout: PROXY_IDLE_TIMEOUT_MS,  // Allow long reasoning gaps without an unbounded upstream wait
-          timeout: 0            // The upstream timeout bounds idle waits; streaming clients may pause
+          body: shouldParseJson(req) ? Buffer.from(JSON.stringify(req.body ?? {})) : null,
+          proxyOptions: channel.proxyUrl ? { agent: new HttpsProxyAgent(channel.proxyUrl) } : undefined
         };
+      },
+      onProxyReq: (proxyReq, req, res, channel) => {
+        bindProxyRequest(proxyReq, res);
+        if (!channel) return;
 
-        if (channel.proxyUrl) {
-          proxyOptions.agent = new HttpsProxyAgent(channel.proxyUrl);
+        const requestId = `${Date.now()}-${Math.random()}`;
+        requestMetadata.set(req, {
+          id: requestId,
+          channel: channel.name,
+          channelId: channel.id,
+          startTime: Date.now(),
+          sessionId: req.sessionId || null,
+          requestModel: req.body?.model || ''
+        });
+
+        proxyReq.removeHeader('x-api-key');
+        const effectiveKey = req.effectiveApiKey;
+        proxyReq.setHeader('x-api-key', effectiveKey);
+        proxyReq.removeHeader('authorization');
+        proxyReq.setHeader('authorization', `Bearer ${effectiveKey}`);
+
+        if (!proxyReq.getHeader('anthropic-version')) {
+          proxyReq.setHeader('anthropic-version', '2023-06-01');
+        }
+        if (!proxyReq.getHeader('content-type')) {
+          proxyReq.setHeader('content-type', 'application/json');
+        }
+      },
+      // 代理响应只负责维护传输健康状态；实时日志和 usage 来自 CLI 原生日志。
+      onFinalResponse: (proxyRes, req, res) => {
+        prepareProxyResponse(proxyRes, res);
+        const metadata = requestMetadata.get(req);
+        if (!metadata) return;
+
+        if (res.writableEnded || res.destroyed) {
+          requestMetadata.delete(req);
+          return;
         }
 
-        proxy.web(req, res, proxyOptions, (err) => {
-          release();
-          if (err) {
-            // 记录请求失败
-            recordFailure(channel.id, 'claude', err);
-            console.error('Proxy error:', err);
-            if (res && !res.headersSent) {
-              res.status(502).json({
-                error: 'Proxy error: ' + err.message,
-                type: 'proxy_error'
-              });
-            }
-          }
+        res.on('close', () => requestMetadata.delete(req));
+        res.on('error', (err) => {
+          if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Response error:', err);
+          recordFailure(metadata.channelId, 'claude', err);
+          requestMetadata.delete(req);
         });
+
+        const statusCode = Number(proxyRes.statusCode) || 200;
+        proxyRes.on('end', () => {
+          if (statusCode >= 400) {
+            recordFailure(metadata.channelId, 'claude', new Error(`Claude upstream HTTP ${statusCode}`));
+          } else {
+            recordSuccess(metadata.channelId, 'claude');
+          }
+          requestMetadata.delete(req);
+        });
+        proxyRes.on('error', (err) => {
+          if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Proxy response error:', err);
+          recordFailure(metadata.channelId, 'claude', err);
+          requestMetadata.delete(req);
+        });
+      },
+      onRetry: ({ channel, statusCode, error }) => {
+        recordFailure(channel.id, 'claude', error || new Error(`Claude upstream HTTP ${statusCode}`));
+      },
+      writeError: (res, statusCode, error) => {
+        if (res.headersSent) return;
+        if (statusCode === 401 && error?.payload) {
+          res.status(401).json(error.payload);
+          return;
+        }
+        if (statusCode === 503) {
+          res.status(503).json({
+            error: (error && error.message) || '所有渠道暂时不可用',
+            type: 'channel_pool_exhausted'
+          });
+          return;
+        }
+        res.status(502).json({
+          error: 'Proxy error: ' + ((error && error.message) || 'unknown error'),
+          type: 'proxy_error'
+        });
+      }
+    });
+
+    proxyApp.use(async (req, res) => {
+      try {
+        await handle(req, res);
       } catch (error) {
         req.__releaseChannel?.();
         console.error('Channel allocation error:', error);
@@ -369,54 +398,6 @@ async function startProxyServer(options = {}) {
             type: 'channel_pool_exhausted'
           });
         }
-      }
-    });
-
-    // 代理响应只负责维护传输健康状态；实时日志和 usage 来自 CLI 原生日志。
-    proxy.on('proxyRes', (proxyRes, req, res) => {
-      prepareProxyResponse(proxyRes, res);
-      const metadata = requestMetadata.get(req);
-      if (!metadata) return;
-
-      if (res.writableEnded || res.destroyed) {
-        requestMetadata.delete(req);
-        return;
-      }
-
-      res.on('close', () => requestMetadata.delete(req));
-      res.on('error', (err) => {
-        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Response error:', err);
-        recordFailure(metadata.channelId, 'claude', err);
-        requestMetadata.delete(req);
-      });
-
-      const statusCode = Number(proxyRes.statusCode) || 200;
-      proxyRes.on('end', () => {
-        if (statusCode >= 400) {
-          recordFailure(metadata.channelId, 'claude', new Error(`Claude upstream HTTP ${statusCode}`));
-        } else {
-          recordSuccess(metadata.channelId, 'claude');
-        }
-        requestMetadata.delete(req);
-      });
-      proxyRes.on('error', (err) => {
-        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Proxy response error:', err);
-        recordFailure(metadata.channelId, 'claude', err);
-        requestMetadata.delete(req);
-      });
-    });
-
-    proxy.on('error', (err, req, res) => {
-      console.error('Proxy error:', err);
-      // 记录请求失败（用于健康检查）
-      if (req && req.selectedChannel && req.selectedChannel.id) {
-        recordFailure(req.selectedChannel.id, 'claude', err);
-      }
-      if (res && !res.headersSent) {
-        res.status(502).json({
-          error: 'Proxy error: ' + err.message,
-          type: 'proxy_error'
-        });
       }
     });
 

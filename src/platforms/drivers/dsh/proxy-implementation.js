@@ -1,7 +1,6 @@
 'use strict';
 
 const express = require('express');
-const httpProxy = require('http-proxy');
 const http = require('http');
 const chalk = require('chalk');
 const { broadcastSchedulerState } = require('../../../server/websocket-server');
@@ -21,6 +20,7 @@ const { persistProxyRequestSnapshot } = require('../../../server/services/reques
 const { redirectModel, resolveTargetUrl, isChatCompletionsPath, ensureOpenAiStreamUsage } = require('../../../shared/proxy-utils');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('../../../server/services/proxy-runtime');
 const { bindProxyRequest, prepareProxyResponse } = require('../../../shared/proxy-transport');
+const { createFailoverProxy } = require('../../../shared/proxy-failover');
 const { attachServerShutdownHandling, expediteServerShutdown, PROXY_IDLE_TIMEOUT_MS } = require('../../../server/services/server-shutdown');
 
 let proxyServer = null;
@@ -40,18 +40,6 @@ function shouldParseJson(req) {
 
 function openAiChannels() {
   return getEnabledChannels().filter(channel => channel.providerApi === 'openai-completions');
-}
-
-function releaseOnce(channel) {
-  let released = false;
-  return () => {
-    if (released) return;
-    released = true;
-    if (channel?.id) {
-      releaseChannel(channel.id, 'dsh');
-      broadcastSchedulerState('dsh', getSchedulerState('dsh'));
-    }
-  };
 }
 
 async function startDshProxyServer(options = {}) {
@@ -77,35 +65,54 @@ async function startDshProxyServer(options = {}) {
   const config = loadConfig();
   const requestedPort = Number(options.port ?? config.ports?.dshProxy ?? 20093);
   const app = express();
-  const proxy = httpProxy.createProxyServer({});
-
-  app.use((req, res, next) => shouldParseJson(req) ? jsonBodyParser(req, res, next) : next());
-  app.use(async (req, res) => {
-    let channel;
-    let release;
-    try {
-      channel = await allocateChannel({
-        source: 'dsh',
-        providerApi: 'openai-completions',
-        enableSessionBinding: false
-      });
-      req.selectedChannel = channel;
-      release = releaseOnce(channel);
-      req.__releaseChannel = release;
-      res.on('finish', release);
-      res.on('close', release);
-      res.on('error', release);
-      if (res.destroyed || res.writableEnded) { release(); return; }
+  const { handle } = createFailoverProxy({
+    source: 'dsh',
+    proxyOptions: {
+      changeOrigin: true,
+      proxyTimeout: PROXY_IDLE_TIMEOUT_MS,
+      timeout: 0
+    },
+    canRetry: shouldParseJson,
+    allocate: async ({ req, res, excludeChannelIds }) => {
+      const abortController = new AbortController();
+      const abortOnClose = () => abortController.abort();
+      res.once('close', abortOnClose);
+      try {
+        return await allocateChannel({
+          source: 'dsh',
+          providerApi: 'openai-completions',
+          enableSessionBinding: false,
+          excludeChannelIds: [...excludeChannelIds]
+        });
+      } finally {
+        res.removeListener('close', abortOnClose);
+      }
+    },
+    release: channelId => {
+      releaseChannel(channelId, 'dsh');
       broadcastSchedulerState('dsh', getSchedulerState('dsh'));
-
+    },
+    prepareAttempt: (req, res, channel) => {
       const apiKey = getEffectiveApiKey(channel);
       if (channel.authMode !== 'none' && !apiKey) {
-        release();
-        return res.status(401).json({
-          error: { message: 'DSH channel API key is not configured', type: 'authentication_error' }
+        throw Object.assign(new Error('DSH channel API key is not configured'), {
+          statusCode: 401,
+          payload: {
+            error: { message: 'DSH channel API key is not configured', type: 'authentication_error' }
+          }
         });
       }
       req.effectiveApiKey = apiKey;
+
+      if (!req.__dshSnapshotRecorded) {
+        req.__dshSnapshotRecorded = true;
+        persistProxyRequestSnapshot('dsh', {
+          timestamp: Date.now(),
+          source: 'dsh',
+          channel: channel.name,
+          request: { method: req.method, url: req.url, headers: req.headers, body: req.body || null }
+        });
+      }
 
       if (req.body?.model) {
         const originalModel = req.body.model;
@@ -119,87 +126,88 @@ async function startDshProxyServer(options = {}) {
         req.rawBody = Buffer.from(JSON.stringify(req.body));
       }
 
-      persistProxyRequestSnapshot('dsh', {
-        timestamp: Date.now(),
-        source: 'dsh',
-        channel: channel.name,
-        request: { method: req.method, url: req.url, headers: req.headers, body: req.body || null }
-      });
-
-      proxy.web(req, res, {
+      return {
         target: resolveTargetUrl(channel.baseUrl, req.url),
-        changeOrigin: true,
-        proxyTimeout: PROXY_IDLE_TIMEOUT_MS,
-        timeout: 0
-      }, error => {
-        release?.();
-        if (!error) return;
-        recordFailure(channel.id, 'dsh', error);
-        if (!res.headersSent) {
-          res.status(502).json({ error: { message: `Proxy error: ${error.message}`, type: 'proxy_error' } });
+        body: shouldParseJson(req) ? Buffer.from(JSON.stringify(req.body ?? {})) : null
+      };
+    },
+    onProxyReq: (proxyReq, req, res, channel) => {
+      bindProxyRequest(proxyReq, res);
+      if (!channel) return;
+      requestMetadata.set(req, {
+        channelId: channel.id,
+        channel: channel.name,
+        startTime: Date.now(),
+        requestModel: req.body?.model || ''
+      });
+      proxyReq.removeHeader('authorization');
+      if (req.effectiveApiKey) proxyReq.setHeader('authorization', `Bearer ${req.effectiveApiKey}`);
+      proxyReq.setHeader('content-type', 'application/json');
+    },
+    onFinalResponse: (proxyRes, req, res) => {
+      prepareProxyResponse(proxyRes, res);
+      const metadata = requestMetadata.get(req);
+      if (!metadata) return;
+      let completed = false;
+      const finish = error => {
+        if (completed) return;
+        completed = true;
+        requestMetadata.delete(req);
+        if (error || Number(proxyRes.statusCode) >= 400) {
+          recordFailure(metadata.channelId, 'dsh', error || new Error(`DSH upstream HTTP ${proxyRes.statusCode}`));
+        } else {
+          recordSuccess(metadata.channelId, 'dsh');
+        }
+      };
+      proxyRes.once('end', () => finish());
+      proxyRes.once('error', finish);
+      proxyRes.once('close', () => {
+        if (!completed) finish(new Error('DSH upstream response closed early'));
+      });
+      res?.once('close', () => requestMetadata.delete(req));
+    },
+    onRetry: ({ channel, statusCode, error }) => {
+      recordFailure(channel.id, 'dsh', error || new Error(`DSH upstream HTTP ${statusCode}`));
+    },
+    writeError: (res, statusCode, error) => {
+      if (res.headersSent) return;
+      if (statusCode === 401 && error?.payload) {
+        res.status(401).json(error.payload);
+        return;
+      }
+      if (statusCode === 503) {
+        res.status(503).json({
+          error: {
+            message: (error && error.message) || 'No DSH channel available',
+            type: 'channel_pool_exhausted'
+          }
+        });
+        return;
+      }
+      res.status(502).json({
+        error: {
+          message: 'Proxy error: ' + ((error && error.message) || 'unknown error'),
+          type: 'proxy_error'
         }
       });
+    }
+  });
+
+  app.use((req, res, next) => shouldParseJson(req) ? jsonBodyParser(req, res, next) : next());
+  app.use(async (req, res) => {
+    try {
+      await handle(req, res);
     } catch (error) {
-      release?.();
-      if (!res.headersSent) {
-        res.status(503).json({ error: { message: error.message || 'No DSH channel available', type: 'channel_pool_exhausted' } });
-      }
-    }
-  });
-
-  proxy.on('proxyReq', (proxyReq, req, res) => {
-    bindProxyRequest(proxyReq, res);
-    const channel = req.selectedChannel;
-    if (!channel) return;
-    const metadata = {
-      channelId: channel.id,
-      channel: channel.name,
-      startTime: Date.now(),
-      requestModel: req.body?.model || ''
-    };
-    requestMetadata.set(req, metadata);
-    proxyReq.removeHeader('authorization');
-    if (req.effectiveApiKey) proxyReq.setHeader('authorization', `Bearer ${req.effectiveApiKey}`);
-    proxyReq.setHeader('content-type', 'application/json');
-    if (shouldParseJson(req) && (req.rawBody || req.body)) {
-      const body = req.rawBody
-        ? (Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(req.rawBody))
-        : Buffer.from(JSON.stringify(req.body));
-      proxyReq.setHeader('Content-Length', body.length);
-      proxyReq.write(body);
-      proxyReq.end();
-    }
-  });
-
-  proxy.on('proxyRes', (proxyRes, req, res) => {
-    prepareProxyResponse(proxyRes, res);
-    const metadata = requestMetadata.get(req);
-    if (!metadata) return;
-    let completed = false;
-    const finish = error => {
-      if (completed) return;
-      completed = true;
-      requestMetadata.delete(req);
-      if (error || Number(proxyRes.statusCode) >= 400) {
-        recordFailure(metadata.channelId, 'dsh', error || new Error(`DSH upstream HTTP ${proxyRes.statusCode}`));
-      } else {
-        recordSuccess(metadata.channelId, 'dsh');
-      }
-    };
-    proxyRes.once('end', () => finish());
-    proxyRes.once('error', finish);
-    proxyRes.once('close', () => {
-      if (!completed) finish(new Error('DSH upstream response closed early'));
-    });
-    res?.once('close', () => requestMetadata.delete(req));
-  });
-
-  proxy.on('error', (error, req, res) => {
-    if (req?.selectedChannel) {
-      recordFailure(req.selectedChannel.id, 'dsh', error);
       req.__releaseChannel?.();
+      if (!res.headersSent) {
+        res.status(503).json({
+          error: {
+            message: error.message || 'No DSH channel available',
+            type: 'channel_pool_exhausted'
+          }
+        });
+      }
     }
-    if (res && !res.headersSent) res.status(502).json({ error: { message: `Proxy error: ${error.message}`, type: 'proxy_error' } });
   });
 
   const server = http.createServer(app);

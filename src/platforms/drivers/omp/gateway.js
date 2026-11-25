@@ -18,6 +18,7 @@ const { broadcastSchedulerState } = require('../../../server/websocket-server');
 const { attachServerShutdownHandling, expediteServerShutdown, PROXY_IDLE_TIMEOUT_MS } = require('../../../server/services/server-shutdown');
 const {
   resolveOmpGatewayRoute,
+  resolveOmpFallbackRoutes,
   channelSupportsOmpModel,
   normalizeOmpModelId
 } = require('./gateway-routing');
@@ -428,14 +429,19 @@ function createOmpGateway(options = {}) {
     const modelId = extractModelId(body, req.headers['content-type'], route.upstreamPath);
     const attemptedIds = [];
     let lastError = null;
+    // 主路由 + 一个备用路由：备用路由与主路由同 providerApi，请求体可原样重放。
+    // 没有其他分组时，第二次尝试仍在主路由内换渠道（保留既有组内重试）。
+    const fallbackRoute = resolveOmpFallbackRoutes(route, currentChannels(), gatewayDescriptor())[0] || route;
+    const targets = [route, fallbackRoute];
 
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < targets.length; attempt++) {
+      const target = targets[attempt];
       let channel;
       try {
-        channel = await allocateForRoute(route, attemptedIds, modelId, signal);
+        channel = await allocateForRoute(target, attemptedIds, modelId, signal);
       } catch (error) {
         lastError = error;
-        break;
+        continue;
       }
       if (signal?.aborted) {
         releaseAndBroadcast(channel.id);
@@ -445,14 +451,15 @@ function createOmpGateway(options = {}) {
       attemptedIds.push(channel.id);
 
       try {
-        const result = await forwardAttempt(req, route, channel, body, signal);
-        if (attempt === 0 && RETRYABLE_STATUS.has(result.statusCode)) {
+        const result = await forwardAttempt(req, target, channel, body, signal);
+        if (attempt < targets.length - 1 && RETRYABLE_STATUS.has(result.statusCode)) {
           result.response.destroy();
           result.release();
           if (!signal?.aborted) onFailure(channel.id, 'omp');
-          lastError = Object.assign(new Error(`OMP upstream returned HTTP ${result.statusCode}`), {
-            statusCode: result.statusCode
-          });
+          lastError = Object.assign(
+            new Error(`OMP upstream ${target.providerKey || target.routingGroup} returned HTTP ${result.statusCode}`),
+            { statusCode: result.statusCode }
+          );
           continue;
         }
 
@@ -499,7 +506,12 @@ function createOmpGateway(options = {}) {
       }
     }
 
-    throw lastError || new Error('No compatible OMP channel is available');
+    const failure = lastError || new Error('No compatible OMP channel is available');
+    const attempted = attemptedIds.length > 0 ? ` (attempted channels: ${attemptedIds.join(', ')})` : '';
+    throw Object.assign(
+      new Error(`${failure.message}${attempted} [provider: ${route.providerKey}]`),
+      { statusCode: failure.statusCode }
+    );
   }
 
   async function handleRequest(req, res) {
