@@ -330,8 +330,10 @@ CREATE TABLE IF NOT EXISTS session_message (
     ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_session_message_sid_ord
-  ON session_message(source, session_id, ordinal);
+-- (source, session_id, ordinal) is the table primary key: a second index on the
+-- same columns duplicated the b-tree (12.6 MB at 150k messages) and one insert
+-- per row for reads the primary key already answers.
+DROP INDEX IF EXISTS idx_session_message_sid_ord;
 
 CREATE INDEX IF NOT EXISTS idx_session_message_user_number
   ON session_message(source, session_id, user_message_number, ordinal);
@@ -2306,34 +2308,40 @@ function createSessionHistoryIndex(opts = {}) {
       && _sourceMessageCount(db, source) > ftsAcceleratorMinMessages;
     let candidates;
     if (useFtsAccelerator) {
+      // One MATCH, not two: the previous shape repeated the same FTS5 query in
+      // the CTE and in the outer SELECT, paying for the trigram scan twice
+      // (measured 2x on a 151k-message index). The matching rows are collected
+      // once in hit_rows and the session cap is applied over them; row set and
+      // order are unchanged so matchCount and the per-session slice stay exact.
       const ftsRows = db.prepare(`
-        WITH matched_sessions AS (
-          SELECT sm.source, sm.session_id, MAX(sf.updated_at) AS updated_at
+        WITH hit_rows AS (
+          SELECT sm.source, sm.session_id, sm.ordinal, sm.content, sm.role, sm.type, sm.timestamp,
+                 sm.rowid AS rid, sf.project_name, sf.project_display_name, sf.project_full_path,
+                 sf.file_path, sf.first_message, sf.updated_at
           FROM session_message_fts fts
           JOIN session_message sm ON sm.rowid = fts.rowid
           JOIN session_file sf ON sf.source = sm.source AND sf.session_id = sm.session_id
           WHERE sm.source = ? AND session_message_fts MATCH ?
           AND sm.role = 'user'
           ${projectName ? 'AND sf.project_name = ?' : ''}
-          GROUP BY sm.source, sm.session_id
-          ORDER BY updated_at DESC, sm.session_id ASC
+        ),
+        matched_sessions AS (
+          SELECT source, session_id, MAX(updated_at) AS updated_at
+          FROM hit_rows
+          GROUP BY source, session_id
+          ORDER BY updated_at DESC, session_id ASC
           LIMIT ?
         )
-        SELECT sm.source, sm.session_id, sm.ordinal, sm.content, sm.role, sm.type, sm.timestamp,
-               sf.project_name, sf.project_display_name, sf.project_full_path,
-               sf.file_path, sf.first_message, sf.updated_at
-        FROM session_message_fts fts
-        JOIN session_message sm ON sm.rowid = fts.rowid
-        JOIN matched_sessions ms ON ms.source = sm.source AND ms.session_id = sm.session_id
-        JOIN session_file sf ON sf.source = sm.source AND sf.session_id = sm.session_id
-        WHERE session_message_fts MATCH ?
-        AND sm.role = 'user'
-        ORDER BY ms.updated_at DESC, sm.ordinal ASC, sm.rowid ASC
+        SELECT h.source, h.session_id, h.ordinal, h.content, h.role, h.type, h.timestamp,
+               h.project_name, h.project_display_name, h.project_full_path,
+               h.file_path, h.first_message, h.updated_at
+        FROM hit_rows h
+        JOIN matched_sessions ms ON ms.source = h.source AND ms.session_id = h.session_id
+        ORDER BY ms.updated_at DESC, h.ordinal ASC, h.rid ASC
       `);
       const params = [source, _ftsQuote(needle)];
       if (projectName) params.push(projectName);
       params.push(resultLimit);
-      params.push(_ftsQuote(needle));
       candidates = ftsRows.all(...params);
       // An external-content FTS index can lag behind rows rewritten by a
       // parser migration. Never report "no results" from the accelerator alone.
