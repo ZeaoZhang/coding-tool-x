@@ -3133,8 +3133,6 @@ async function startOpenCodeProxyServer(options = {}) {
           });
         }
 
-        let bodyMutated = false;
-
         // 应用模型重定向（当 proxy 开启时）
         if (req.body && typeof req.body === 'object' && !Array.isArray(req.body) && req.body.model) {
           const originalModel = req.body.model;
@@ -3142,7 +3140,6 @@ async function startOpenCodeProxyServer(options = {}) {
 
           if (redirectedModel !== originalModel) {
             req.body.model = redirectedModel;
-            bodyMutated = true;
 
             // 将原始模型和重定向模型存入 metadata，用于日志记录
             const meta = requestMetadata.get(req);
@@ -3162,12 +3159,8 @@ async function startOpenCodeProxyServer(options = {}) {
           }
         }
 
-        if (shouldParseJson(req) && isChatCompletionsPath(req.url) && ensureOpenAiStreamUsage(req.body)) {
-          bodyMutated = true;
-        }
-
-        if (bodyMutated) {
-          req.rawBody = Buffer.from(JSON.stringify(req.body));
+        if (shouldParseJson(req) && isChatCompletionsPath(req.url)) {
+          ensureOpenAiStreamUsage(req.body);
         }
 
         // 网关代理自行写出响应；命中后由驱动负责释放渠道。
@@ -3278,23 +3271,6 @@ async function startOpenCodeProxyServer(options = {}) {
       }
     });
 
-    proxyApp.use(async (req, res) => {
-      try {
-        await handle(req, res);
-      } catch (error) {
-        req.__releaseChannel?.();
-        console.error('OpenCode channel allocation error:', error);
-        if (!res.headersSent) {
-          res.status(503).json({
-            error: {
-              message: error.message || 'No OpenCode channel available',
-              type: 'channel_pool_exhausted'
-            }
-          });
-        }
-      }
-    });
-
     // OpenCode 会先调用 /v1/models(or /models) 获取模型列表
     // 但很多第三方 OpenAI 兼容端点并不实现该接口（例如返回 404）。
     // 为保证 OpenCode 可用，这里优先返回本地聚合的模型列表。
@@ -3319,137 +3295,7 @@ async function startOpenCodeProxyServer(options = {}) {
 
     proxyApp.use(async (req, res) => {
       try {
-        const channel = await allocateChannel({ source: 'opencode', enableSessionBinding: false });
-        req.selectedChannel = channel;
-
-        const release = (() => {
-          let released = false;
-          return () => {
-            if (released) return;
-            released = true;
-            releaseChannel(channel.id, 'opencode');
-            broadcastSchedulerState('opencode', getSchedulerState('opencode'));
-          };
-        })();
-
-        req.__releaseChannel = release;
-        res.on('finish', release);
-        res.on('close', release);
-        res.on('error', release);
-
-        broadcastSchedulerState('opencode', getSchedulerState('opencode'));
-
-        if (res.destroyed || res.writableEnded) { release(); return; }
-
-        // 检查 API key 是否有效
-        const effectiveKey = await getEffectiveApiKey(channel);
-        if (res.destroyed || res.writableEnded) { release(); return; }
-        if (!effectiveKey) {
-          release();
-          return res.status(401).json({
-            error: {
-              message: 'API key not configured or expired. Please update your channel key.',
-              type: 'authentication_error'
-            }
-          });
-        }
-
-        // Store the effective key on the request for use in proxyReq handler
-        req.effectiveApiKey = effectiveKey;
-
-        // 记录请求快照到文件（由 CC_TOOL_LOG_REQUESTS 环境变量控制）
-        persistProxyRequestSnapshot('opencode', {
-          timestamp: Date.now(),
-          source: 'opencode',
-          channel: channel.name,
-          request: {
-            method: req.method,
-            url: req.url,
-            path: req.path,
-            headers: req.headers,
-            body: req.body || null
-          }
-        });
-
-        let bodyMutated = false;
-
-        // 应用模型重定向（当 proxy 开启时）
-        if (req.body && typeof req.body === 'object' && !Array.isArray(req.body) && req.body.model) {
-          const originalModel = req.body.model;
-          const redirectedModel = redirectModel(originalModel, channel);
-
-          if (redirectedModel !== originalModel) {
-            req.body.model = redirectedModel;
-            bodyMutated = true;
-
-            // 将原始模型和重定向模型存入 metadata，用于日志记录
-            const meta = requestMetadata.get(req);
-            if (meta) {
-              meta.originalModel = originalModel;
-              meta.redirectedModel = redirectedModel;
-              meta.requestModel = redirectedModel;
-            }
-
-            // 只在重定向规则变化时打印日志（避免每次请求都打印）
-            const cachedRedirects = printedRedirectCache.get(channel.id) || {};
-            if (cachedRedirects[originalModel] !== redirectedModel) {
-              cachedRedirects[originalModel] = redirectedModel;
-              printedRedirectCache.set(channel.id, cachedRedirects);
-              console.log(`[OpenCode Model Redirect] ${originalModel} → ${redirectedModel} (channel: ${channel.name})`);
-            }
-          }
-        }
-
-        if (shouldParseJson(req) && isChatCompletionsPath(req.url) && ensureOpenAiStreamUsage(req.body)) {
-          bodyMutated = true;
-        }
-
-        if (bodyMutated) {
-          req.rawBody = Buffer.from(JSON.stringify(req.body));
-        }
-
-        const gatewaySourceType = normalizeGatewaySourceType(channel);
-        if (gatewaySourceType === 'codex') {
-          const handled = await handleCodexGatewayRequest(req, res, channel, effectiveKey);
-          if (handled) {
-            return;
-          }
-        }
-        if (gatewaySourceType === 'claude') {
-          const handled = await handleClaudeGatewayRequest(req, res, channel, effectiveKey);
-          if (handled) {
-            return;
-          }
-        }
-        if (gatewaySourceType === 'gemini') {
-          const handled = await handleGeminiGatewayRequest(req, res, channel, effectiveKey);
-          if (handled) {
-            return;
-          }
-        }
-
-        const target = resolveOpenCodeTarget(channel.baseUrl, req.url);
-
-        proxy.web(req, res, {
-          target,
-          changeOrigin: true,
-          proxyTimeout: PROXY_IDLE_TIMEOUT_MS,  // Allow long reasoning gaps without an unbounded upstream wait
-          timeout: 0            // The upstream timeout bounds idle waits; streaming clients may pause
-        }, (err) => {
-          release();
-          if (err) {
-            recordFailure(channel.id, 'opencode', err);
-            console.error('OpenCode proxy error:', err);
-            if (res && !res.headersSent) {
-              res.status(502).json({
-                error: {
-                  message: 'Proxy error: ' + err.message,
-                  type: 'proxy_error'
-                }
-              });
-            }
-          }
-        });
+        await handle(req, res);
       } catch (error) {
         req.__releaseChannel?.();
         console.error('OpenCode channel allocation error:', error);

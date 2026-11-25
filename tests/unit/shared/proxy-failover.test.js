@@ -234,6 +234,23 @@ test('reports a 502 when every attempt fails with a connection error', async () 
   expect(harness.releases).toEqual(['channel-1', 'channel-2']);
 });
 
+test('reports the channel failure when a non-retryable connection error ends the request', async () => {
+  const harness = createHarness({
+    script: [({ callback }) => callback(connectionError('ENOTFOUND'))]
+  });
+  const req = { method: 'POST', url: '/v1/messages', headers: { 'content-type': 'application/json' }, body: { model: 'm' } };
+  const res = createFakeRes();
+
+  await harness.failover.handle(req, res);
+
+  expect(harness.allocations).toHaveLength(1);
+  expect(res.statusCode).toBe(502);
+  // 终态失败也要进健康记录，否则坏渠道不会被降级
+  expect(harness.retries).toHaveLength(1);
+  expect(harness.retries[0]).toMatchObject({ attempt: 0, channel: { id: 'channel-1' } });
+  expect(harness.retries[0].error.code).toBe('ENOTFOUND');
+});
+
 test('forwards the last upstream response when the retry budget is exhausted', async () => {
   const harness = createHarness({
     script: [

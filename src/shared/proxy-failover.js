@@ -279,6 +279,9 @@ function createFailoverProxy(options = {}) {
           logRetry(channel, index, { error: outcome.error });
           continue;
         }
+        // 终态失败：即使不再重试，也要让驱动记下这次渠道失败（旧实现在
+        // proxy.web 回调里对每个错误都会记录）。
+        onRetry({ req, res, channel, attempt: index, error: outcome.error });
         fail(502, outcome.error, channel);
         return;
       }

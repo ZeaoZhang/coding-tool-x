@@ -143,8 +143,6 @@ async function startCodexProxyServer(options = {}) {
           });
         }
 
-        let bodyMutated = false;
-
         // 应用模型重定向（当 proxy 开启时）
         if (req.body && req.body.model) {
           const originalModel = req.body.model;
@@ -152,7 +150,6 @@ async function startCodexProxyServer(options = {}) {
 
           if (redirectedModel !== originalModel) {
             req.body.model = redirectedModel;
-            bodyMutated = true;
 
             // 将原始模型和重定向模型存入 metadata，用于日志记录
             const meta = requestMetadata.get(req);
@@ -172,12 +169,8 @@ async function startCodexProxyServer(options = {}) {
           }
         }
 
-        if (shouldParseJson(req) && isChatCompletionsPath(req.url) && ensureOpenAiStreamUsage(req.body)) {
-          bodyMutated = true;
-        }
-
-        if (bodyMutated) {
-          req.rawBody = Buffer.from(JSON.stringify(req.body));
+        if (shouldParseJson(req) && isChatCompletionsPath(req.url)) {
+          ensureOpenAiStreamUsage(req.body);
         }
 
         return {

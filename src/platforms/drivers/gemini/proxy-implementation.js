@@ -294,18 +294,9 @@ async function startGeminiProxyServer(options = {}) {
           }
         }
 
-        let bodyMutated = false;
-
-        if (isVertexAiV1Channel(channel) && stripVertexFunctionResponseIds(req.body)) {
-          bodyMutated = true;
-        }
-
         if (isVertexAiV1Channel(channel)) {
+          stripVertexFunctionResponseIds(req.body);
           req.url = buildVertexAiV1Path(channel.baseUrl, req.url);
-        }
-
-        if (bodyMutated) {
-          req.rawBody = Buffer.from(JSON.stringify(req.body));
         }
 
         return {

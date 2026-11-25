@@ -508,8 +508,11 @@ function createOmpGateway(options = {}) {
 
     const failure = lastError || new Error('No compatible OMP channel is available');
     const attempted = attemptedIds.length > 0 ? ` (attempted channels: ${attemptedIds.join(', ')})` : '';
+    // 可能已经试过备用分组，报出全部被尝试的 provider，而不是只有主路由
+    const providers = [...new Set(targets.map(target => target.providerKey).filter(Boolean))];
+    const scope = providers.length > 0 ? ` [providers: ${providers.join(' -> ')}]` : '';
     throw Object.assign(
-      new Error(`${failure.message}${attempted} [provider: ${route.providerKey}]`),
+      new Error(`${failure.message}${attempted}${scope}`),
       { statusCode: failure.statusCode }
     );
   }

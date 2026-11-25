@@ -264,8 +264,6 @@ async function startProxyServer(options = {}) {
 
           if (redirectedModel !== originalModel) {
             req.body.model = redirectedModel;
-            // 更新 rawBody 以匹配修改后的 body
-            req.rawBody = Buffer.from(JSON.stringify(req.body));
 
             // 将原始模型和重定向模型存入 metadata，用于日志记录
             const meta = requestMetadata.get(req);

@@ -82,6 +82,27 @@ function request(port) {
   });
 }
 
+function getModels(port) {
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      host: '127.0.0.1',
+      port,
+      method: 'GET',
+      path: '/v1/models',
+      headers: { authorization: 'Bearer client-key' }
+    }, (res) => {
+      const chunks = [];
+      res.on('data', chunk => chunks.push(chunk));
+      res.on('end', () => resolve({
+        statusCode: res.statusCode,
+        body: Buffer.concat(chunks).toString('utf8')
+      }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 beforeEach(async () => {
   originalModules = new Map();
   proxyEvents = {};
@@ -230,4 +251,20 @@ test('does not fail over on a non-retryable status', async () => {
   expect(response.statusCode).toBe(400);
   expect(channelIds).toEqual(['channel-a']);
   expect(scheduler.releaseChannel.mock.calls.map(call => call[0])).toEqual(['channel-a']);
+});
+
+test('serves the aggregated model list locally instead of proxying it', async () => {
+  const scheduler = require(CHANNEL_SCHEDULER_PATH);
+  const httpProxy = require(HTTP_PROXY_PATH);
+  const web = vi.fn();
+  httpProxy.createProxyServer.mockImplementation(() => ({ on: vi.fn(), web }));
+
+  const port = await getFreePort();
+  const started = await proxyImplementation.startOpenCodeProxyServer({ port });
+  const response = await getModels(started.port);
+
+  expect(response.statusCode).toBe(200);
+  expect(JSON.parse(response.body)).toEqual({ object: 'list', data: [] });
+  expect(scheduler.allocateChannel).not.toHaveBeenCalled();
+  expect(web).not.toHaveBeenCalled();
 });

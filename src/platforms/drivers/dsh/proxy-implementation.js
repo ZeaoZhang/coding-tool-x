@@ -122,10 +122,6 @@ async function startDshProxyServer(options = {}) {
       if (shouldParseJson(req) && isChatCompletionsPath(req.url)) {
         ensureOpenAiStreamUsage(req.body);
       }
-      if (shouldParseJson(req) && req.body) {
-        req.rawBody = Buffer.from(JSON.stringify(req.body));
-      }
-
       return {
         target: resolveTargetUrl(channel.baseUrl, req.url),
         body: shouldParseJson(req) ? Buffer.from(JSON.stringify(req.body ?? {})) : null
