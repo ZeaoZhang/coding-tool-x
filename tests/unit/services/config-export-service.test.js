@@ -895,4 +895,35 @@ describe('config-export-service import flows', () => {
     expect(result.results.markdownFiles.success).toBe(1);
     expect(result.results.markdownFiles.failed).toBe(1);
   });
+
+  test('importConfigs keeps the installed skill when archive files are invalid', async () => {
+    const service = require('../../../src/server/services/config-export-service');
+    const installDir = path.join(testDir, 'skills-install', 'omp');
+    const skillDir = path.join(installDir, 'damaged-skill');
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), 'original body', 'utf8');
+
+    const result = await service.importConfigs({
+      data: {
+        skillsByPlatform: {
+          omp: [{
+            platform: 'omp',
+            directory: 'damaged-skill',
+            name: 'Damaged Skill',
+            files: [
+              { path: 'SKILL.md', encoding: 'utf8', content: 'replacement body' },
+              { path: '../escape.md', encoding: 'utf8', content: 'outside' }
+            ]
+          }]
+        }
+      }
+    }, { overwrite: true });
+
+    expect(result.success).toBe(true);
+    expect(result.results.skills.failed).toBe(1);
+    expect(result.results.skills.success).toBe(0);
+    expect(fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8')).toBe('original body');
+    expect(fs.readdirSync(installDir).filter(name => name.startsWith('.import-'))).toEqual([]);
+    expect(fs.existsSync(path.join(installDir, 'escape.md'))).toBe(false);
+  });
 });

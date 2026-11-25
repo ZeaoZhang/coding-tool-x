@@ -5,6 +5,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const AdmZip = require('adm-zip');
 const toml = require('toml');
 const tomlStringify = require('@iarna/toml').stringify;
@@ -2185,41 +2186,67 @@ async function importConfigs(importData, options = {}) {
               continue;
             }
 
-            if (fs.existsSync(skillDir)) {
-              if (!overwrite) {
-                results.skills.skipped++;
-                continue;
-              }
-              fs.rmSync(skillDir, { recursive: true, force: true });
+            if (fs.existsSync(skillDir) && !overwrite) {
+              results.skills.skipped++;
+              continue;
             }
 
-            ensureDir(skillDir);
             const files = Array.isArray(skill.files) ? skill.files : [];
-            let failed = false;
+            if (files.length === 0) {
+              results.skills.failed++;
+              continue;
+            }
 
-            for (const file of files) {
-              const filePath = resolveSafePath(skillDir, file.path);
-              if (!filePath) {
-                failed = true;
-                break;
-              }
-              ensureDir(path.dirname(filePath));
-              try {
+            // Stage the whole skill first: a malformed archive must not destroy
+            // the installation that is already on disk.
+            const stagingDir = path.join(baseDir, `.import-${process.pid}-${crypto.randomUUID()}`);
+            let staged = true;
+            try {
+              ensureDir(stagingDir);
+              for (const file of files) {
+                const filePath = resolveSafePath(stagingDir, file.path);
+                if (!filePath) {
+                  staged = false;
+                  break;
+                }
+                ensureDir(path.dirname(filePath));
                 if (file.encoding === SKILL_FILE_ENCODING) {
                   fs.writeFileSync(filePath, Buffer.from(file.content || '', SKILL_FILE_ENCODING));
                 } else {
                   fs.writeFileSync(filePath, file.content || '', file.encoding || 'utf8');
                 }
-              } catch (err) {
-                failed = true;
-                break;
               }
+            } catch (err) {
+              console.error(`[ConfigImport] 读取技能 ${directory} 失败:`, err);
+              staged = false;
             }
 
-            if (failed || files.length === 0) {
+            if (!staged) {
+              fs.rmSync(stagingDir, { recursive: true, force: true });
               results.skills.failed++;
-            } else {
+              continue;
+            }
+
+            try {
+              ensureDir(path.dirname(skillDir));
+              if (fs.existsSync(skillDir)) {
+                const backupDir = `${skillDir}.import-backup-${crypto.randomUUID()}`;
+                fs.renameSync(skillDir, backupDir);
+                try {
+                  fs.renameSync(stagingDir, skillDir);
+                } catch (err) {
+                  fs.renameSync(backupDir, skillDir);
+                  throw err;
+                }
+                fs.rmSync(backupDir, { recursive: true, force: true });
+              } else {
+                fs.renameSync(stagingDir, skillDir);
+              }
               results.skills.success++;
+            } catch (err) {
+              console.error(`[ConfigImport] 替换技能 ${directory} 失败:`, err);
+              fs.rmSync(stagingDir, { recursive: true, force: true });
+              results.skills.failed++;
             }
           }
         }
