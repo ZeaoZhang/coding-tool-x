@@ -12,8 +12,15 @@ const { getPlatformContext } = require('../platform-context');
 const { loadConfig, saveConfig } = require('../../config/loader');
 const {
   readOmpModelRoleSettings,
-  updateOmpModelRoleSettings
+  updateOmpModelRoleSettings,
+  readOmpFallbackChainsForUi,
+  updateOmpFallbackChainsForUi
 } = require('../../platforms/drivers/omp/model-role-settings');
+const {
+  readPlatformChains,
+  writePlatformChains,
+  listPlatformModelOptions
+} = require('../../shared/model-fallback-store');
 const {
   MODEL_SCHEMA_VERSION,
   getPublicModelFieldSchema,
@@ -322,6 +329,105 @@ router.put('/omp-model-roles', (req, res) => {
   } catch (error) {
     console.error('Error saving OMP model roles:', error);
     const isValidationError = /^roles(?:\.| must be)/.test(error.message);
+    res.status(isValidationError ? 400 : 500).json({ error: error.message });
+  }
+});
+
+// ── 平台级「模型回退链」（Agent 面板配置；OMP 写它自己的 config.yml）──
+const FALLBACK_CONTROL_PLATFORMS = new Set(['claude', 'codex', 'gemini', 'opencode', 'dsh', 'omp']);
+
+function normalizeFallbackPlatform(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function readEnabledPlatformChannels(platform) {
+  const driver = getPlatformCatalog().driver(platform, 'channels');
+  const result = driver?.getEnabled?.();
+  if (!result || result.status !== 'ok') return [];
+  return Array.isArray(result.data)
+    ? result.data
+    : (Array.isArray(result.data?.channels) ? result.data.channels : []);
+}
+
+function assertFallbackChainsPayload(chains, channels) {
+  if (!Array.isArray(chains)) throw new Error('chains must be an array');
+  const byId = new Map(channels.map(channel => [channel.id, channel]));
+  for (const rule of chains) {
+    if (!rule || typeof rule !== 'object' || Array.isArray(rule)) {
+      throw new Error('chains[] must be an object');
+    }
+    const from = String(rule.from || '').trim();
+    if (!from) throw new Error('chains[].from must be a non-empty string');
+    if (from.length > 200) throw new Error('chains[].from must be 200 characters or fewer');
+    if (!Array.isArray(rule.targets) || rule.targets.length === 0) {
+      throw new Error(`chains.${from}.targets must be a non-empty array`);
+    }
+    if (rule.targets.length > 5) throw new Error(`chains.${from} supports at most 5 fallback models`);
+    for (const target of rule.targets) {
+      const channelId = String(target?.channelId || '').trim();
+      const model = String(target?.model || '').trim();
+      if (!channelId) throw new Error(`chains.${from} targets must include a channelId`);
+      if (!model) throw new Error(`chains.${from} targets must include a model`);
+      if (!byId.has(channelId)) throw new Error(`chains.${from} references a channel that is not enabled`);
+      const channel = byId.get(channelId);
+      const declared = [
+        ...(Array.isArray(channel.models) ? channel.models : []),
+        ...(Array.isArray(channel.allowedModels) ? channel.allowedModels : []),
+        channel.model
+      ].map(item => String(typeof item === 'string' ? item : (item?.id || item?.name || '')).trim()).filter(Boolean);
+      if (declared.length > 0 && !declared.includes(model)) {
+        throw new Error(`chains.${from} model "${model}" is not declared by channel "${channel.name || channelId}"`);
+      }
+    }
+  }
+}
+
+router.get('/model-fallback-chains', (req, res) => {
+  const platform = normalizeFallbackPlatform(req.query?.platform);
+  if (!FALLBACK_CONTROL_PLATFORMS.has(platform)) {
+    return res.status(400).json({ error: `platform must be one of ${[...FALLBACK_CONTROL_PLATFORMS].join(', ')}` });
+  }
+  try {
+    if (platform === 'omp') {
+      return res.json({ success: true, platform, ...readOmpFallbackChainsForUi() });
+    }
+    const channels = readEnabledPlatformChannels(platform);
+    res.json({
+      success: true,
+      platform,
+      chains: readPlatformChains(platform),
+      modelOptions: listPlatformModelOptions(channels)
+    });
+  } catch (error) {
+    console.error('Error getting model fallback chains:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.put('/model-fallback-chains', (req, res) => {
+  const platform = normalizeFallbackPlatform(req.body?.platform || req.query?.platform);
+  if (!FALLBACK_CONTROL_PLATFORMS.has(platform)) {
+    return res.status(400).json({ error: `platform must be one of ${[...FALLBACK_CONTROL_PLATFORMS].join(', ')}` });
+  }
+  const { chains } = req.body || {};
+  if (!Array.isArray(chains)) {
+    return res.status(400).json({ error: 'chains must be an array' });
+  }
+  try {
+    const channels = readEnabledPlatformChannels(platform);
+    assertFallbackChainsPayload(chains, channels);
+    if (platform === 'omp') {
+      return res.json({ success: true, platform, ...updateOmpFallbackChainsForUi(chains) });
+    }
+    res.json({
+      success: true,
+      platform,
+      chains: writePlatformChains(platform, chains),
+      modelOptions: listPlatformModelOptions(channels)
+    });
+  } catch (error) {
+    console.error('Error saving model fallback chains:', error);
+    const isValidationError = /^chains(\.|\[\]| must be| )/.test(error.message);
     res.status(isValidationError ? 400 : 500).json({ error: error.message });
   }
 });

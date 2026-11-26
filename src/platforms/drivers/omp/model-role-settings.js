@@ -224,6 +224,168 @@ function updateOmpModelRoleSettings(input) {
   return readOmpModelRoleSettings();
 }
 
+function readOmpFallbackChainSettings() {
+  const settings = readOmpSettingsStrict();
+  const fallbackChains = isPlainObject(settings?.retry?.fallbackChains) ? settings.retry.fallbackChains : {};
+  const chains = Object.entries(fallbackChains).map(([trigger, value]) => ({
+    trigger,
+    models: (Array.isArray(value) ? value : [value])
+      .map(item => (typeof item === 'string' ? item.trim() : ''))
+      .filter(Boolean)
+  }));
+
+  const modelsConfig = readYamlFile(getOmpPaths().modelsYml, {});
+  const modelOptions = collectModelOptions(modelsConfig, readEnabledOmpChannels());
+  const optionSet = new Set(modelOptions);
+  const unavailableChains = {};
+  chains.forEach((chain) => {
+    const missing = chain.models.filter((model) => {
+      const parsed = parseModelRoleSelector(model);
+      return parsed.model && !optionSet.has(parsed.model);
+    });
+    if (missing.length > 0) unavailableChains[chain.trigger] = missing;
+  });
+
+  return { chains, modelOptions, unavailableChains };
+}
+
+function updateOmpFallbackChainSettings(input) {
+  if (!Array.isArray(input)) {
+    throw new Error('chains must be an array');
+  }
+
+  const settings = readOmpSettingsStrict();
+  const retry = isPlainObject(settings.retry) ? { ...settings.retry } : {};
+  const currentChains = isPlainObject(retry.fallbackChains) ? retry.fallbackChains : {};
+  const modelOptions = new Set(collectModelOptions(
+    readYamlFile(getOmpPaths().modelsYml, {}),
+    readEnabledOmpChannels()
+  ));
+
+  const nextChains = {};
+  const seenTriggers = new Set();
+  for (const item of input) {
+    if (!isPlainObject(item)) {
+      throw new Error('chains[] must be an object');
+    }
+
+    const trigger = String(item.trigger || '').trim();
+    if (!trigger) {
+      throw new Error('chains[].trigger must be a non-empty string');
+    }
+    if (trigger.length > 200) {
+      throw new Error('chains[].trigger must be 200 characters or fewer');
+    }
+    if (seenTriggers.has(trigger)) {
+      throw new Error(`chains.${trigger} is duplicated`);
+    }
+    seenTriggers.add(trigger);
+
+    const models = (Array.isArray(item.models) ? item.models : [])
+      .map(model => String(model || '').trim())
+      .filter(Boolean);
+    if (models.length > 10) {
+      throw new Error(`chains.${trigger} supports at most 10 fallback models`);
+    }
+
+    const currentChain = Array.isArray(currentChains[trigger])
+      ? currentChains[trigger]
+      : [currentChains[trigger]].filter(Boolean);
+    for (const model of models) {
+      const parsed = parseModelRoleSelector(model);
+      if (!parsed.model) {
+        throw new Error(`chains.${trigger} must include a model selector`);
+      }
+      if (!modelOptions.has(parsed.model) && !currentChain.includes(model)) {
+        throw new Error(`chains.${trigger} must use a model from an enabled OMP channel`);
+      }
+    }
+
+    if (models.length > 0) nextChains[trigger] = models;
+  }
+
+  if (Object.keys(nextChains).length > 0) retry.fallbackChains = nextChains;
+  else delete retry.fallbackChains;
+
+  if (Object.keys(retry).length > 0) settings.retry = retry;
+  else delete settings.retry;
+
+  writeOmpSettingsAtomic(settings);
+  return readOmpFallbackChainSettings();
+}
+
+// ── 统一 UI 形状：与其它平台一致 { from, targets: [{ channelId, model }] } ──
+function splitModelRef(ref) {
+  const raw = String(ref || '').trim();
+  const slash = raw.indexOf('/');
+  if (slash <= 0) return { providerId: raw, model: '' };
+  return { providerId: raw.slice(0, slash), model: raw.slice(slash + 1) };
+}
+
+function findChannelByProviderId(channels, providerId) {
+  const target = normalizeProviderId(providerId);
+  return channels.find(channel => normalizeProviderId(getManagedProviderId(channel)) === target) || null;
+}
+
+function refToUiTarget(channels, ref) {
+  const { providerId, model } = splitModelRef(ref);
+  const channel = findChannelByProviderId(channels, providerId);
+  return channel
+    ? { channelId: channel.id, model }
+    : { channelId: `provider:${normalizeProviderId(providerId)}`, model };
+}
+
+function uiTargetToRef(channels, target) {
+  const model = String(target?.model || '').trim();
+  const channelId = String(target?.channelId || '').trim();
+  const channel = channels.find(item => item.id === channelId);
+  if (channel) return `${normalizeProviderId(getManagedProviderId(channel))}/${model}`;
+  if (channelId.startsWith('provider:')) return `${channelId.slice('provider:'.length)}/${model}`;
+  return `${normalizeProviderId(channelId)}/${model}`;
+}
+
+function describeUiTarget(channels, target) {
+  const channel = channels.find(item => item.id === target.channelId);
+  if (channel) return channel.name || channel.id;
+  const raw = String(target.channelId || '');
+  return raw.startsWith('provider:') ? raw.slice('provider:'.length) : raw;
+}
+
+/** 给 UI 的读：把原生 provider/model 链映射成与其它平台相同的形状 */
+function readOmpFallbackChainsForUi() {
+  const native = readOmpFallbackChainSettings();
+  const channels = readEnabledOmpChannels();
+  const chains = native.chains.map(chain => ({
+    from: chain.trigger,
+    targets: chain.models.map(model => refToUiTarget(channels, model))
+  }));
+  const modelOptions = [];
+  const seen = new Set();
+  for (const ref of native.modelOptions) {
+    const target = refToUiTarget(channels, ref);
+    const key = `${target.channelId}\u0000${target.model}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    modelOptions.push({ ...target, channelName: describeUiTarget(channels, target) });
+  }
+  return { chains, modelOptions, unavailableChains: native.unavailableChains };
+}
+
+/** 给 UI 的写：把统一形状还原成 OMP 原生的 { trigger, models[] } */
+function updateOmpFallbackChainsForUi(rules) {
+  const channels = readEnabledOmpChannels();
+  const nativeChains = (Array.isArray(rules) ? rules : [])
+    .map(rule => ({
+      trigger: String(rule?.from || '').trim(),
+      models: (Array.isArray(rule?.targets) ? rule.targets : [])
+        .map(target => uiTargetToRef(channels, target))
+        .filter(Boolean)
+    }))
+    .filter(chain => chain.trigger && chain.models.length > 0);
+  updateOmpFallbackChainSettings(nativeChains);
+  return readOmpFallbackChainsForUi();
+}
+
 module.exports = {
   OMP_MODEL_ROLE_KEYS,
   OMP_THINKING_LEVELS,
@@ -231,5 +393,9 @@ module.exports = {
   readEnabledOmpChannels,
   parseModelRoleSelector,
   readOmpModelRoleSettings,
-  updateOmpModelRoleSettings
+  updateOmpModelRoleSettings,
+  readOmpFallbackChainSettings,
+  updateOmpFallbackChainSettings,
+  readOmpFallbackChainsForUi,
+  updateOmpFallbackChainsForUi
 };

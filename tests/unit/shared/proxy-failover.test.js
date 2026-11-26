@@ -71,7 +71,14 @@ function createHarness(options = {}) {
     on: (event, listener) => { proxyEvents[event] = listener; },
     web: (req, res, webOptions, callback) => {
       const step = (options.script || [])[attemptedWebCalls.length];
-      attemptedWebCalls.push({ req, res, options: webOptions });
+      // req 在重试时会被改写，按调用时刻快照渠道与模型
+      attemptedWebCalls.push({
+        req,
+        res,
+        options: webOptions,
+        channelId: req.selectedChannel && req.selectedChannel.id,
+        model: req.body && req.body.model
+      });
       if (!step) throw new Error('unexpected proxy.web call');
       step({
         req,
@@ -98,8 +105,12 @@ function createHarness(options = {}) {
     createProxyServer: () => proxy,
     canRetry: options.canRetry || (() => true),
     maxAttempts: options.maxAttempts,
-    allocate: async ({ excludeChannelIds, attempt }) => {
-      allocations.push({ excludeChannelIds: [...excludeChannelIds], attempt });
+    resolveModelFallbackTargets: options.resolveModelFallbackTargets,
+    allocate: async ({ excludeChannelIds, preferredChannelId = null, attempt }) => {
+      allocations.push({ excludeChannelIds: [...excludeChannelIds], preferredChannelId, attempt });
+      if (preferredChannelId) {
+        return channels.find(channel => channel.id === preferredChannelId) || null;
+      }
       return channels.find(channel => !excludeChannelIds.includes(channel.id)) || null;
     },
     release: channelId => releases.push(channelId),
@@ -318,4 +329,139 @@ test('restores the request snapshot before every attempt and clears the attempt 
   expect(res.body).toBe('{"model":"original"}');
   expect(req.__failoverAttempt).toBeNull();
   expect(req.__releaseChannel).toBeInstanceOf(Function);
+});
+
+function createProxyResWithLength(statusCode, body) {
+  const proxyRes = Readable.from(body ? [Buffer.from(body)] : []);
+  proxyRes.statusCode = statusCode;
+  proxyRes.headers = {
+    'content-type': 'application/json',
+    'content-length': String(Buffer.byteLength(body || ''))
+  };
+  return proxyRes;
+}
+
+function modelFallbackChannels() {
+  return [
+    { id: 'channel-1', name: 'primary', models: ['glm-4.6'] },
+    { id: 'channel-2', name: 'fallback one', models: ['qwen-max'] },
+    { id: 'channel-3', name: 'fallback two', models: ['deepseek-v4'] }
+  ];
+}
+
+// 平台级链路：测试里用显式解析器代替 config.json
+function platformResolver(model, targets) {
+  return (channel, requested) => (requested === model ? targets : []);
+}
+
+test('routes to the configured fallback channel and rewrites the model when it is not declared', async () => {
+  const harness = createHarness({
+    channels: modelFallbackChannels(),
+    resolveModelFallbackTargets: platformResolver('claude-opus-4-1', [{ channelId: 'channel-2', model: 'qwen-max' }]),
+    script: [({ respond }) => respond(createProxyRes(200, '{"ok":true}'))]
+  });
+  const req = { method: 'POST', url: '/v1/messages', headers: { 'content-type': 'application/json' }, body: { model: 'claude-opus-4-1' } };
+  const res = createFakeRes();
+
+  await harness.failover.handle(req, res);
+
+  // 主渠道未声明该模型 → 不发上游，直接换到配置的渠道 + 模型
+  expect(harness.webCalls).toHaveLength(1);
+  expect(harness.webCalls[0].channelId).toBe('channel-2');
+  expect(harness.webCalls[0].model).toBe('qwen-max');
+  expect(harness.allocations[1]).toMatchObject({ preferredChannelId: 'channel-2' });
+  expect(harness.releases).toEqual(['channel-1', 'channel-2']);
+  expect(res.statusCode).toBe(200);
+});
+
+test('falls back to the configured channel + model when upstream reports the model does not exist', async () => {
+  const channels = [
+    { id: 'channel-1', models: ['glm-4.6'] },
+    { id: 'channel-2', models: ['qwen-max'] }
+  ];
+  const harness = createHarness({
+    channels,
+    resolveModelFallbackTargets: platformResolver('glm-4.6', [{ channelId: 'channel-2', model: 'qwen-max' }]),
+    script: [
+      ({ respond }) => respond(createProxyResWithLength(404, '{"error":{"message":"model glm-4.6 not found"}}')),
+      ({ respond }) => respond(createProxyRes(200, '{"ok":true}'))
+    ]
+  });
+  const req = { method: 'POST', url: '/v1/messages', headers: { 'content-type': 'application/json' }, body: { model: 'glm-4.6' } };
+  const res = createFakeRes();
+
+  await harness.failover.handle(req, res);
+
+  expect(harness.webCalls).toHaveLength(2);
+  expect(harness.webCalls[0].channelId).toBe('channel-1');
+  expect(harness.webCalls[0].model).toBe('glm-4.6');
+  expect(harness.webCalls[1].channelId).toBe('channel-2');
+  expect(harness.webCalls[1].model).toBe('qwen-max');
+  expect(harness.allocations[1]).toMatchObject({ preferredChannelId: 'channel-2' });
+  expect(res.statusCode).toBe(200);
+  expect(res.body).toBe('{"ok":true}');
+});
+
+test('detects model-unavailable responses that arrive chunked (no content-length)', async () => {
+  const channels = [
+    { id: 'channel-1', models: ['glm-4.6'] },
+    { id: 'channel-2', models: ['qwen-max'] }
+  ];
+  const harness = createHarness({
+    channels,
+    resolveModelFallbackTargets: platformResolver('glm-4.6', [{ channelId: 'channel-2', model: 'qwen-max' }]),
+    script: [
+      // createProxyRes 不带 content-length，模拟 chunked 上游
+      ({ respond }) => respond(createProxyRes(404, '{"error":{"message":"model glm-4.6 not found"}}')),
+      ({ respond }) => respond(createProxyRes(200, '{"ok":true}'))
+    ]
+  });
+  const req = { method: 'POST', url: '/v1/messages', headers: { 'content-type': 'application/json' }, body: { model: 'glm-4.6' } };
+  const res = createFakeRes();
+
+  await harness.failover.handle(req, res);
+
+  expect(harness.webCalls).toHaveLength(2);
+  expect(harness.webCalls[1].channelId).toBe('channel-2');
+  expect(harness.webCalls[1].model).toBe('qwen-max');
+  expect(res.statusCode).toBe(200);
+});
+
+test('forwards an unrelated 400 without consuming a fallback target', async () => {
+  const harness = createHarness({
+    channels: modelFallbackChannels(),
+    resolveModelFallbackTargets: platformResolver('glm-4.6', [{ channelId: 'channel-2', model: 'qwen-max' }]),
+    script: [({ respond }) => respond(createProxyResWithLength(400, '{"error":{"message":"max_tokens is required"}}'))]
+  });
+  const req = { method: 'POST', url: '/v1/messages', headers: { 'content-type': 'application/json' }, body: { model: 'glm-4.6' } };
+  const res = createFakeRes();
+
+  await harness.failover.handle(req, res);
+
+  expect(harness.webCalls).toHaveLength(1);
+  expect(harness.allocations).toHaveLength(1);
+  expect(res.statusCode).toBe(400);
+  expect(res.body).toBe('{"error":{"message":"max_tokens is required"}}');
+});
+
+test('uses the platform-provided target resolver when channels carry no rules', async () => {
+  const harness = createHarness({
+    channels: [
+      { id: 'channel-1', models: ['glm-4.6'] },
+      { id: 'channel-2', models: ['qwen-max'] }
+    ],
+    resolveModelFallbackTargets: (channel, model) => (
+      model === 'claude-opus-4-1' ? [{ channelId: 'channel-2', model: 'qwen-max' }] : []
+    ),
+    script: [({ respond }) => respond(createProxyRes(200, '{"ok":true}'))]
+  });
+  const req = { method: 'POST', url: '/v1/messages', headers: { 'content-type': 'application/json' }, body: { model: 'claude-opus-4-1' } };
+  const res = createFakeRes();
+
+  await harness.failover.handle(req, res);
+
+  expect(harness.webCalls).toHaveLength(1);
+  expect(harness.webCalls[0].channelId).toBe('channel-2');
+  expect(harness.webCalls[0].model).toBe('qwen-max');
+  expect(harness.allocations[1]).toMatchObject({ preferredChannelId: 'channel-2' });
 });

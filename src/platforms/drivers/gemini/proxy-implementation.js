@@ -8,12 +8,14 @@ const { loadConfig } = require('../../../config/loader');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('../../../server/services/proxy-runtime');
 const {
   getEffectiveApiKey,
+  getEnabledChannels,
   getGeminiProxyExcludedChannelIds = () => []
 } = require('./channels-implementation');
 const { persistProxyRequestSnapshot } = require('../../../server/services/request-logger');
 const { redirectModel: redirectModelBase, resolveTargetUrl } = require('../../../shared/proxy-utils');
 const { bindProxyRequest, prepareProxyResponse } = require('../../../shared/proxy-transport');
 const { createFailoverProxy } = require('../../../shared/proxy-failover');
+const { resolvePlatformFallbackTargets } = require('../../../shared/model-fallback-store');
 const { attachServerShutdownHandling, expediteServerShutdown, PROXY_IDLE_TIMEOUT_MS } = require('../../../server/services/server-shutdown');
 
 let proxyServer = null;
@@ -46,6 +48,20 @@ function redirectModel(originalModel, channel) {
 function shouldParseJson(req) {
   const contentType = req.headers['content-type'] || '';
   return req.method === 'POST' && contentType.includes('application/json');
+}
+
+// Gemini 的模型名在 URL 里（/models/<id>:generateContent），回退时改写 URL
+function readUrlModel(req) {
+  const match = String(req?.url || '').match(/\/models\/([\w.-]+)/);
+  return match ? match[1] : '';
+}
+
+function writeUrlModel(req, model) {
+  const target = String(model || '').trim();
+  if (!target) return;
+  const current = readUrlModel(req);
+  if (!current || current === target) return;
+  req.url = req.url.replace(`/models/${current}`, `/models/${target}`);
 }
 
 function isVertexAiV1Channel(channel) {
@@ -204,13 +220,16 @@ async function startGeminiProxyServer(options = {}) {
 
     const { handle } = createFailoverProxy({
       source: 'gemini',
+      readModel: readUrlModel,
+      writeModel: writeUrlModel,
+      resolveModelFallbackTargets: (channel, model) => resolvePlatformFallbackTargets('gemini', model, getEnabledChannels()),
       proxyOptions: {
         changeOrigin: true,
         proxyTimeout: PROXY_IDLE_TIMEOUT_MS,  // Allow long reasoning gaps without an unbounded upstream wait
         timeout: 0            // The upstream timeout bounds idle waits; streaming clients may pause
       },
       canRetry: shouldParseJson,
-      allocate: async ({ req, res, excludeChannelIds }) => {
+      allocate: async ({ req, res, excludeChannelIds, preferredChannelId }) => {
         const abortController = new AbortController();
         const abortOnClose = () => abortController.abort();
         res.once('close', abortOnClose);
@@ -219,7 +238,8 @@ async function startGeminiProxyServer(options = {}) {
             source: 'gemini',
             signal: abortController.signal,
             enableSessionBinding: false,
-            excludeChannelIds: [...getGeminiProxyExcludedChannelIds(), ...excludeChannelIds]
+            excludeChannelIds: [...getGeminiProxyExcludedChannelIds(), ...excludeChannelIds],
+            candidateIds: preferredChannelId ? [preferredChannelId] : undefined
           });
         } finally {
           res.removeListener('close', abortOnClose);

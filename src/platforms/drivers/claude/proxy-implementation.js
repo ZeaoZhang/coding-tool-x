@@ -13,6 +13,7 @@ const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRunt
 const eventBus = require('../../../plugins/event-bus');
 const {
   getEffectiveApiKey,
+  getAllChannels,
   getClaudeProxyExcludedChannelIds = () => []
 } = require('./channels-implementation');
 const {
@@ -25,6 +26,7 @@ const { redirectModel, normalizeGatewaySourceType } = require('../../../shared/p
 const { handleClaudeOpenAiGatewayRequest } = require('./openai-gateway');
 const { bindProxyRequest, prepareProxyResponse } = require('../../../shared/proxy-transport');
 const { createFailoverProxy } = require('../../../shared/proxy-failover');
+const { resolvePlatformFallbackTargets } = require('../../../shared/model-fallback-store');
 const { attachServerShutdownHandling, expediteServerShutdown, PROXY_IDLE_TIMEOUT_MS } = require('../../../server/services/server-shutdown');
 
 let proxyServer = null;
@@ -198,7 +200,9 @@ async function startProxyServer(options = {}) {
         timeout: 0            // The upstream timeout bounds idle waits; streaming clients may pause
       },
       canRetry: shouldParseJson,
-      allocate: async ({ req, res, excludeChannelIds }) => {
+      // 平台级回退链（Agent 面板配置），命中后换到该渠道并改写 model
+      resolveModelFallbackTargets: (channel, model) => resolvePlatformFallbackTargets('claude', model, getAllChannels()),
+      allocate: async ({ req, res, excludeChannelIds, preferredChannelId }) => {
         const sessionId = extractSessionId(req);
         req.sessionId = sessionId || null;
         const config = loadConfig();
@@ -212,7 +216,8 @@ async function startProxyServer(options = {}) {
             sessionId,
             signal: abortController.signal,
             enableSessionBinding,
-            excludeChannelIds: [...getClaudeProxyExcludedChannelIds(), ...excludeChannelIds]
+            excludeChannelIds: [...getClaudeProxyExcludedChannelIds(), ...excludeChannelIds],
+            candidateIds: preferredChannelId ? [preferredChannelId] : undefined
           });
           // 广播调度状态（请求开始）
           broadcastSchedulerState('claude', getSchedulerState('claude'));

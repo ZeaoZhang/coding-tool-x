@@ -23,6 +23,7 @@ const {
 } = require('../../../shared/proxy-utils');
 const { bindProxyRequest, prepareProxyResponse } = require('../../../shared/proxy-transport');
 const { createFailoverProxy } = require('../../../shared/proxy-failover');
+const { resolvePlatformFallbackTargets } = require('../../../shared/model-fallback-store');
 const { attachServerShutdownHandling, expediteServerShutdown, PROXY_IDLE_TIMEOUT_MS } = require('../../../server/services/server-shutdown');
 const { buildCodexTargetUrl, createCodexRequest } = require('../codex/wire');
 const { createClaudeRequest, buildClaudeTargetUrl, buildClaudeCountTokensTargetUrl, buildClaudeCountTokensHeaders } = require('../claude/wire');
@@ -3076,7 +3077,8 @@ async function startOpenCodeProxyServer(options = {}) {
         timeout: 0            // The upstream timeout bounds idle waits; streaming clients may pause
       },
       canRetry: shouldParseJson,
-      allocate: async ({ req, res, excludeChannelIds }) => {
+      resolveModelFallbackTargets: (channel, model) => resolvePlatformFallbackTargets('opencode', model, getEnabledChannels()),
+      allocate: async ({ req, res, excludeChannelIds, preferredChannelId }) => {
         const abortController = new AbortController();
         const abortOnClose = () => abortController.abort();
         res.once('close', abortOnClose);
@@ -3085,7 +3087,8 @@ async function startOpenCodeProxyServer(options = {}) {
             source: 'opencode',
             enableSessionBinding: false,
             signal: abortController.signal,
-            excludeChannelIds: [...excludeChannelIds]
+            excludeChannelIds: [...excludeChannelIds],
+            candidateIds: preferredChannelId ? [preferredChannelId] : undefined
           });
           broadcastSchedulerState('opencode', getSchedulerState('opencode'));
           return channel;
