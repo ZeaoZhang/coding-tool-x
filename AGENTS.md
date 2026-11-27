@@ -17,6 +17,20 @@ Keep this managed block so 'trellis update' can refresh the instructions.
 
 <!-- TRELLIS:END -->
 
+## Branching & releases
+
+`develop` is the mainline and the only integration target.
+
+- It is the GitHub default branch (`origin/HEAD -> origin/develop`). Every feature, fix, perf, refactor, docs and chore PR targets `develop`.
+- `main` is a frozen legacy line (last commit 2026-09-04, ~491 commits behind `develop` and diverged). Do not open PRs against it and do not merge it back into `develop`.
+- Never commit or push to `develop` directly. Cut a topic branch from the current `origin/develop` (`feat/…`, `fix/…`, `perf/…`, `refactor/…`, `docs/…`, `chore/…`), push it, then open a PR into `develop`.
+- Merge only when the PR reports `MERGEABLE` / `CLEAN` and the relevant checks pass locally:
+  - backend/CLI: `npm run test:unit`
+  - web UI (`src/web/**`): `npm run test:unit` inside `src/web`
+- Merge with a merge commit (`gh pr merge <number> --merge`) so branch history is preserved; delete the source branch only when the author asks.
+- When PR A depends on an unmerged PR B, open A with `--base` pointing at B's branch and merge B first; GitHub retargets A to `develop` automatically.
+- Never revert, skip or re-pin existing tests to make a change pass. Update an expectation only when the contract itself changed on purpose.
+
 ## Platform UI reuse rules
 
 - The existing frontend and backend CLI workflow is the complete baseline. Adding a new CLI should require only platform configuration and the necessary Driver adapter; do not reimplement an existing CLI page, component, panel, lifecycle, or API flow.
