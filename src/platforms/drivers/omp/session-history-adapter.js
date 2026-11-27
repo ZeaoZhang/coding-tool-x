@@ -134,6 +134,34 @@ function convertOmpEntry(entry = {}, index = 0) {
     timestamp: entry.timestamp || message.timestamp || null
   };
 
+  const toolCalls = [];
+  if (Array.isArray(message.content)) {
+    for (const block of message.content) {
+      if (!block || block.type !== 'toolCall') continue;
+      let args = block.arguments;
+      if (typeof args === 'string') {
+        try { args = JSON.parse(args); } catch (_) { args = {}; }
+      }
+      toolCalls.push({
+        id: block.id || null,
+        name: block.name || 'unknown',
+        args: args && typeof args === 'object' ? args : {}
+      });
+    }
+  }
+  if (message.toolCall && typeof message.toolCall === 'object') {
+    let args = message.toolCall.arguments;
+    if (typeof args === 'string') {
+      try { args = JSON.parse(args); } catch (_) { args = {}; }
+    }
+    toolCalls.push({
+      id: message.toolCall.id || null,
+      name: message.toolCall.name || message.toolName || 'unknown',
+      args: args && typeof args === 'object' ? args : {}
+    });
+  }
+  if (toolCalls.length > 0) result.toolCalls = toolCalls;
+
   if (type === 'assistant') {
     if (role !== 'assistant') {
       result.subtype = role;
@@ -286,7 +314,9 @@ async function parse(descriptor) {
       model: pm.model || model || null,
       provider: pm.provider || provider || null,
       userMessageNumber: null,
-      extraJson: null
+      extraJson: Array.isArray(pm.toolCalls) && pm.toolCalls.length > 0
+        ? JSON.stringify({ toolCalls: pm.toolCalls })
+        : null
     };
     if (msg.role === 'user') {
       userMessageNumber++;

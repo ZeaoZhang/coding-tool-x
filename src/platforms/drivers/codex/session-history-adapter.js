@@ -121,6 +121,18 @@ async function parse(descriptor) {
     }
 
     const isUser = msg.role === 'user' || msg.role === 'human';
+    let toolCallArgs = msg.arguments;
+    if (typeof toolCallArgs === 'string') {
+      try { toolCallArgs = JSON.parse(toolCallArgs); } catch (_) { toolCallArgs = {}; }
+    }
+    const toolCalls = msg.role === 'tool_call'
+      ? [{
+        id: msg.callId || null,
+        name: msg.name || 'unknown',
+        args: toolCallArgs && typeof toolCallArgs === 'object' ? toolCallArgs : {},
+        turnId: msg.turnId || null
+      }]
+      : [];
     return {
       messageId: msg.id || `codex-${nativeSessionId}-${idx}`,
       role: msg.role || 'unknown',
@@ -131,7 +143,7 @@ async function parse(descriptor) {
       model: msg.model || (meta ? meta.model : null) || null,
       provider: null,
       userMessageNumber: isUser ? (msg.userMessageNumber != null ? msg.userMessageNumber : idx + 1) : null,
-      extraJson: null
+      extraJson: toolCalls.length > 0 ? JSON.stringify({ toolCalls }) : null
     };
   });
 

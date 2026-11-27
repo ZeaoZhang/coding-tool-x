@@ -122,6 +122,15 @@ function normalizeNativeCliLogs(value, fallback = DEFAULT_CONFIG.nativeCliLogs) 
   };
 }
 
+function normalizeSkillUsage(value, fallback = DEFAULT_CONFIG.skillUsage) {
+  const fallbackDays = Number.isInteger(fallback?.staleDays) ? fallback.staleDays : 30;
+  const input = isPlainObject(value) ? value.staleDays : value;
+  const days = Number.parseInt(input, 10);
+  return {
+    staleDays: Number.isInteger(days) && days >= 1 && days <= 365 ? days : fallbackDays
+  };
+}
+
 function normalizeConfigForSave(config = {}) {
   const normalized = { ...config };
   if (isDefaultProjectsDir(normalized.projectsDir)) {
@@ -135,6 +144,9 @@ function normalizeConfigForSave(config = {}) {
   );
   if (Object.prototype.hasOwnProperty.call(normalized, 'nativeCliLogs')) {
     normalized.nativeCliLogs = normalizeNativeCliLogs(normalized.nativeCliLogs);
+  }
+  if (Object.prototype.hasOwnProperty.call(normalized, 'skillUsage')) {
+    normalized.skillUsage = normalizeSkillUsage(normalized.skillUsage);
   }
   // Model pricing is maintained only in modelMetadataOverrides.
   delete normalized.pricing;
@@ -208,6 +220,10 @@ function loadConfig() {
         userConfig.nativeCliLogs,
         DEFAULT_CONFIG.nativeCliLogs
       );
+      config.skillUsage = normalizeSkillUsage(
+        userConfig.skillUsage,
+        DEFAULT_CONFIG.skillUsage
+      );
 
       // 确保有 currentProject，使用 defaultProject 作为 currentProject
       if (!config.currentProject && config.defaultProject) {
@@ -224,7 +240,8 @@ function loadConfig() {
     ...DEFAULT_CONFIG,
     projectsDir: resolveClaudeProjectsDir(),
     currentProject: DEFAULT_CONFIG.defaultProject,
-    nativeCliLogs: normalizeNativeCliLogs(DEFAULT_CONFIG.nativeCliLogs)
+    nativeCliLogs: normalizeNativeCliLogs(DEFAULT_CONFIG.nativeCliLogs),
+    skillUsage: normalizeSkillUsage(DEFAULT_CONFIG.skillUsage)
   };
   eventBus.emitSync('config:loaded', { config: defaultConfig });
   return defaultConfig;

@@ -30,6 +30,9 @@ const DEFAULT_CONFIG = {
     enabled: true,
     intervalSeconds: 5
   },
+  skillUsage: {
+    staleDays: 30
+  },
   modelDiscovery: {
     useV1ModelsEndpoint: false
   },

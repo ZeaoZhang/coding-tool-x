@@ -13,7 +13,8 @@ vi.mock('../../api/skills', () => ({
   getSkills: api.getSkills,
   refreshSkills: api.refreshSkills,
   getSkillRefreshTask: api.getSkillRefreshTask,
-  toggleSkill: api.toggleSkill
+  toggleSkill: api.toggleSkill,
+  invalidateSkillSessionCache: vi.fn()
 }))
 
 vi.mock('../../api/project-config', () => ({

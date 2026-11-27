@@ -78,6 +78,10 @@
         <span class="asset-summary-label">待审批</span>
         <span class="asset-summary-value">{{ pendingCount }}</span>
       </span>
+      <span class="asset-summary-item">
+        <span class="asset-summary-label">近 {{ staleDays }} 天未使用</span>
+        <span class="asset-summary-value">{{ staleCount }}</span>
+      </span>
     </div>
 
     <!-- 搜索筛选 -->
@@ -116,6 +120,7 @@
             :toggling="!!togglingKeys[skill.controlKey || skill.key]"
             :panel-scope="props.scope"
             :can-toggle="canToggle"
+            :stale-days="staleDays"
             @click="handleCardClick"
             @toggle="handleToggle"
             @approve="handleApprove"
@@ -167,11 +172,11 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { NButton, NIcon, NInput, NSelect, NSpin, NEmpty, NPagination, useMessage } from 'naive-ui'
 import { ArrowBackOutline, AddOutline, GitBranchOutline, RefreshOutline, SearchOutline, ExtensionPuzzleOutline, InformationCircleOutline, CloudDownloadOutline, SettingsOutline } from '@vicons/ionicons5'
-import { getSkills, refreshSkills, getSkillRefreshTask, toggleSkill, setSkillTrust } from '../api/skills'
+import { getSkills, refreshSkills, getSkillRefreshTask, toggleSkill, setSkillTrust, invalidateSkillSessionCache } from '../api/skills'
 import { getProjectSkills, setProjectSkillEnabled } from '../api/project-config'
 import { importFromClaude } from '../api/config-registry'
 import SkillCard from './SkillCard.vue'
@@ -205,6 +210,9 @@ const loading = ref(false)
 const skills = ref([])
 const searchQuery = ref('')
 const filterStatus = ref('all')
+const usagePolicy = ref(null)
+const staleDays = computed(() => Number(usagePolicy.value?.staleDays) || 30)
+const staleCount = computed(() => skills.value.filter(s => s.usage?.state === 'stale').length)
 const showRepoManager = ref(false)
 const showCreateModal = ref(false)
 const showDetailDrawer = ref(false)
@@ -268,12 +276,13 @@ const currentPlatformLabel = computed(() => {
   return platform.label || platform.title || 'Claude Code'
 })
 
-const filterOptions = [
+const filterOptions = computed(() => [
   { label: '全部', value: 'all' },
   { label: '已启用', value: 'enabled' },
   { label: '已关闭', value: 'disabled' },
-  { label: '待审批 / 需复审', value: 'pending' }
-]
+  { label: '待审批 / 需复审', value: 'pending' },
+  { label: `近 ${staleDays.value} 天未使用`, value: 'stale' }
+])
 
 const enabledCount = computed(() => skills.value.filter(s => s.enabled).length)
 const refreshStatusText = computed(() => {
@@ -296,6 +305,7 @@ const filteredSkills = computed(() => {
   if (filterStatus.value === 'enabled') result = result.filter(s => s.enabled)
   else if (filterStatus.value === 'disabled') result = result.filter(s => !s.enabled)
   else if (filterStatus.value === 'pending') result = result.filter(s => ['pending', 'needs_review'].includes(s.trust))
+  else if (filterStatus.value === 'stale') result = result.filter(s => s.usage?.state === 'stale')
   if (searchQuery.value.trim()) {
     const q = searchQuery.value.toLowerCase()
     result = result.filter(s => s.name?.toLowerCase().includes(q) || s.description?.toLowerCase().includes(q))
@@ -382,6 +392,7 @@ async function scanLocalSkills({ notifyError = true } = {}) {
     if (requestId !== loadRequestId.value || platform !== currentPlatform.value) return false
 
     skills.value = loadedSkills
+    usagePolicy.value = skillsRes?.usagePolicy || null
     refreshTask.value = skillsRes.refresh || null
     return true
   } catch (err) {
@@ -575,11 +586,22 @@ function handleCardClick(skill) {
   showDetailDrawer.value = true
 }
 
+function handleUsagePolicyChange() {
+  invalidateSkillSessionCache(currentPlatform.value)
+  scanLocalSkills({ notifyError: false })
+}
+
 onMounted(() => {
+  invalidateSkillSessionCache(currentPlatform.value)
+  window.addEventListener('skill-usage-policy-changed', handleUsagePolicyChange)
   // 抽屉模式下仅在打开时加载，避免应用启动时触发网络依赖
   if (!props.inDrawer || props.drawerVisible) {
     refreshForPlatform()
   }
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('skill-usage-policy-changed', handleUsagePolicyChange)
 })
 
 watch(() => props.drawerVisible, (val) => {

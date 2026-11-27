@@ -11,6 +11,7 @@ const { api, message } = vi.hoisted(() => ({
     refreshSkills: vi.fn(),
     getSkillRefreshTask: vi.fn(),
     toggleSkill: vi.fn(),
+    invalidateSkillSessionCache: vi.fn(),
     getOmpSkillSettings: vi.fn(),
     updateOmpSkillSettings: vi.fn()
   },

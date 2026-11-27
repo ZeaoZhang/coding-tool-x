@@ -6,7 +6,8 @@ const api = vi.hoisted(() => ({
   addSkillRepo: vi.fn(),
   removeSkillRepo: vi.fn(),
   toggleSkillRepo: vi.fn(),
-  updateSkillRepoAuth: vi.fn()
+  updateSkillRepoAuth: vi.fn(),
+  invalidateSkillSessionCache: vi.fn()
 }))
 
 vi.mock('../../api/skills', () => api)

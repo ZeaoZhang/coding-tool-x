@@ -10,7 +10,7 @@
   "sortOrder": 10,
   "modelConfig": { "catalogKey": "claude" },
   "channelModelType": "claude",
-  "sessionIndex": { "parserVersion": 2, "projectsDirConfigKey": "projectsDir" },
+  "sessionIndex": { "parserVersion": 3, "projectsDirConfigKey": "projectsDir" },
   "auth": {
     "modes": ["api_key", "oauth", "none"],
     "oauth": { "adapter": "claude", "policy": "single-enabled", "quota": "claude" }

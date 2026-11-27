@@ -302,7 +302,14 @@ class ProjectConfigService {
       inherited,
       path: description.canonicalRoot,
       platform: key,
-      ...(scanResult.refresh ? { refresh: scanResult.refresh } : {})
+      ...(scanResult.refresh ? { refresh: scanResult.refresh } : {}),
+      usagePolicy: (() => {
+        try {
+          return require('./skill-usage-service').getSharedUsageService().getUsagePolicy();
+        } catch (_) {
+          return null;
+        }
+      })()
     };
   }
 

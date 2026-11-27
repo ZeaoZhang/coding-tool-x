@@ -440,7 +440,8 @@ router.get('/advanced', (req, res) => {
       dshChannelProfile: normalizeDshChannelProfile(config.dshChannelProfile),
       ...dshProfileSummary,
       modelDiscovery,
-      nativeCliLogs: normalizeNativeCliLogs(config.nativeCliLogs)
+      nativeCliLogs: normalizeNativeCliLogs(config.nativeCliLogs),
+      skillUsage: config.skillUsage || { staleDays: 30 }
     });
   } catch (error) {
     console.error('[Config API] Failed to get advanced config:', error);
@@ -462,9 +463,11 @@ router.post('/advanced', (req, res) => {
       enableSessionBinding,
       dshChannelProfile,
       modelDiscovery,
-      nativeCliLogs
+      nativeCliLogs,
+      skillUsage
     } = body;
     const hasNativeCliLogs = Object.prototype.hasOwnProperty.call(body, 'nativeCliLogs');
+    const hasSkillUsage = Object.prototype.hasOwnProperty.call(body, 'skillUsage');
 
     // 验证端口
     if (ports) {
@@ -509,6 +512,16 @@ router.post('/advanced', (req, res) => {
       return res.status(400).json({ error: 'dshChannelProfile must be one of auto, desktop, web, tui' });
     }
 
+    let normalizedSkillUsage = null;
+    if (hasSkillUsage) {
+      const rawDays = skillUsage && typeof skillUsage === 'object' ? skillUsage.staleDays : skillUsage;
+      const days = Number(rawDays);
+      if (!Number.isInteger(days) || days < 1 || days > 365) {
+        return res.status(400).json({ error: 'skillUsage.staleDays must be an integer between 1-365' });
+      }
+      normalizedSkillUsage = { staleDays: days };
+    }
+
     const config = loadConfig();
     const currentNativeCliLogs = normalizeNativeCliLogs(config.nativeCliLogs);
     const normalizedNativeCliLogs = hasNativeCliLogs
@@ -540,7 +553,8 @@ router.post('/advanced', (req, res) => {
         ? normalizeDshChannelProfile(dshChannelProfile)
         : normalizeDshChannelProfile(config.dshChannelProfile),
       modelDiscovery: normalizedModelDiscovery,
-      nativeCliLogs: normalizedNativeCliLogs
+      nativeCliLogs: normalizedNativeCliLogs,
+      ...(normalizedSkillUsage ? { skillUsage: normalizedSkillUsage } : {})
     };
 
     // 保存配置
@@ -555,7 +569,8 @@ router.post('/advanced', (req, res) => {
         enableSessionBinding: newConfig.enableSessionBinding,
         dshChannelProfile: newConfig.dshChannelProfile,
         modelDiscovery: newConfig.modelDiscovery,
-        nativeCliLogs: newConfig.nativeCliLogs
+        nativeCliLogs: newConfig.nativeCliLogs,
+        skillUsage: newConfig.skillUsage
       }
     });
   } catch (error) {

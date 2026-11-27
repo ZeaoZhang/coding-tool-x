@@ -279,6 +279,15 @@ const PLATFORM_CONFIG = {
   }
 };
 
+let _skillUsageService = null;
+
+function getSkillUsageService() {
+  if (!_skillUsageService) {
+    _skillUsageService = require('./skill-usage-service').getSharedUsageService();
+  }
+  return _skillUsageService;
+}
+
 class SkillService {
   constructor(
     platform = 'claude',
@@ -448,7 +457,7 @@ class SkillService {
       })
     ];
     return {
-      skills: skills.map(skill => this._sanitizeSkillListItem(skill)),
+      skills: this._applyUsage(skills.map(skill => this._sanitizeSkillListItem(skill))),
       refresh: this._refreshSnapshot({ ...options, scope })
     };
   }
@@ -458,6 +467,16 @@ class SkillService {
     delete sanitized.content;
     delete sanitized.fullContent;
     return sanitized;
+  }
+
+  _applyUsage(skills = []) {
+    if (!Array.isArray(skills) || skills.length === 0) return skills;
+    try {
+      return getSkillUsageService().getUsageForSkills(skills, { platform: this.platform });
+    } catch (error) {
+      console.error('[SkillService] Failed to attach usage:', error?.message || error);
+      return skills;
+    }
   }
 
   refreshOmpPaths() {
@@ -1442,7 +1461,7 @@ class SkillService {
     );
     this._saveSkillMetadataIndex();
     return {
-      skills: preparedSkills,
+      skills: this._applyUsage(preparedSkills),
       refresh: this._refreshSnapshot(normalizedOptions)
     };
   }

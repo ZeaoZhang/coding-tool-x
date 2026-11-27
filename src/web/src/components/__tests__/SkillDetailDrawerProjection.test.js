@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 const api = vi.hoisted(() => ({
   getSkillDetail: vi.fn(),
   toggleSkill: vi.fn(),
-  setSkillTrust: vi.fn()
+  setSkillTrust: vi.fn(),
+  invalidateSkillSessionCache: vi.fn()
 }))
 
 vi.mock('../../api/skills', () => api)

@@ -15,7 +15,8 @@ vi.mock('../../api/skills', () => ({
   getSkills: api.getSkills,
   refreshSkills: api.refreshSkills,
   getSkillRefreshTask: api.getSkillRefreshTask,
-  toggleSkill: api.toggleSkill
+  toggleSkill: api.toggleSkill,
+  invalidateSkillSessionCache: vi.fn()
 }))
 vi.mock('../../api/dsh-agent-presets', () => ({ getDshProfiles: api.getDshProfiles }))
 vi.mock('../../api/config-registry', () => ({ importFromClaude: api.importFromClaude }))

@@ -629,6 +629,25 @@
                       </n-input-number>
                     </div>
 
+                    <!-- 技能未使用判定 -->
+                    <div class="option-field">
+                      <div class="option-label">
+                        <n-text depth="2" style="font-size: 13px;">技能未使用判定天数</n-text>
+                        <n-text depth="3" style="font-size: 12px;">超过该天数且没有使用记录时，在技能列表中标记“近 N 天未使用”；不影响任何技能状态</n-text>
+                      </div>
+                      <n-input-number
+                        v-model:value="advancedSettings.skillUsage.staleDays"
+                        :min="1"
+                        :max="365"
+                        :step="1"
+                        style="width: 140px;"
+                      >
+                        <template #suffix>
+                          <n-text depth="3" style="font-size: 12px;">天</n-text>
+                        </template>
+                      </n-input-number>
+                    </div>
+
                     <!-- CLI 原生会话日志 -->
                     <div class="option-field">
                       <div class="option-label">
@@ -1286,7 +1305,13 @@ function cloneAdvancedSettings(settings = {}) {
     dshChannelProfile: ['auto', 'desktop', 'web', 'tui'].includes(settings.dshChannelProfile)
       ? settings.dshChannelProfile
       : 'auto',
-    nativeCliLogs: normalizeNativeCliLogs(settings.nativeCliLogs)
+    nativeCliLogs: normalizeNativeCliLogs(settings.nativeCliLogs),
+    skillUsage: {
+      staleDays: (() => {
+        const days = Number(settings.skillUsage?.staleDays)
+        return Number.isInteger(days) && days >= 1 && days <= 365 ? days : 30
+      })()
+    }
   }
 }
 
@@ -2039,6 +2064,7 @@ const portsChanged = computed(() => {
     advancedSettings.value.statsInterval !== originalAdvancedSettings.value.statsInterval ||
     advancedSettings.value.enableSessionBinding !== originalAdvancedSettings.value.enableSessionBinding ||
     advancedSettings.value.dshChannelProfile !== originalAdvancedSettings.value.dshChannelProfile ||
+    advancedSettings.value.skillUsage.staleDays !== originalAdvancedSettings.value.skillUsage.staleDays ||
     nativeCliLogsChanged
 })
 // 菜单项配置
@@ -2233,7 +2259,13 @@ async function handleSessionBindingChange(value) {
         statsInterval: advancedSettings.value.statsInterval,
         enableSessionBinding: value,
         dshChannelProfile: advancedSettings.value.dshChannelProfile,
-        nativeCliLogs: advancedSettings.value.nativeCliLogs
+        nativeCliLogs: advancedSettings.value.nativeCliLogs,
+        skillUsage: {
+          staleDays: Math.min(
+            365,
+            Math.max(1, Number(advancedSettings.value.skillUsage.staleDays) || 30)
+          )
+        }
       })
     })
     if (response.ok) {
@@ -2270,7 +2302,8 @@ async function loadPortsConfig() {
         statsInterval: data.statsInterval || 30,
         enableSessionBinding: data.enableSessionBinding !== false,
         dshChannelProfile: data.dshChannelProfile || 'auto',
-        nativeCliLogs: data.nativeCliLogs
+        nativeCliLogs: data.nativeCliLogs,
+        skillUsage: data.skillUsage
       })
       originalAdvancedSettings.value = cloneAdvancedSettings(advancedSettings.value)
       dshProfiles.value = Array.isArray(data.dshProfiles) ? data.dshProfiles : []
@@ -2457,7 +2490,13 @@ async function handleSavePorts() {
         statsInterval: advancedSettings.value.statsInterval,
         enableSessionBinding: advancedSettings.value.enableSessionBinding,
         dshChannelProfile: advancedSettings.value.dshChannelProfile,
-        nativeCliLogs: advancedSettings.value.nativeCliLogs
+        nativeCliLogs: advancedSettings.value.nativeCliLogs,
+        skillUsage: {
+          staleDays: Math.min(
+            365,
+            Math.max(1, Number(advancedSettings.value.skillUsage.staleDays) || 30)
+          )
+        }
       })
     })
 
@@ -2472,6 +2511,7 @@ async function handleSavePorts() {
           statsInterval: advancedSettings.value.statsInterval
         }
       }))
+      window.dispatchEvent(new CustomEvent('skill-usage-policy-changed'))
 
       message.success('配置已保存，端口修改需要重启服务器生效；DSH 渠道 profile 与 OMP 原生会话日志配置立即生效')
     } else {
