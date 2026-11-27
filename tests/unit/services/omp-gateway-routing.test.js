@@ -1,5 +1,6 @@
 const {
-  prepareManagedOmpChannels
+  prepareManagedOmpChannels,
+  resolveOmpFallbackRoutes
 } = require('../../../src/platforms/drivers/omp/gateway-routing');
 
 const PROVIDER_APIS = [
@@ -333,5 +334,41 @@ describe('OMP gateway routing', () => {
       id: 'unknown-api',
       reason: 'unsupported-provider-api'
     })]);
+  });
+});
+
+describe('resolveOmpFallbackRoutes', () => {
+  const gateway = { host: '127.0.0.1', port: 45001, secret: 'fallback-routing-secret' };
+  const base = {
+    providerKey: 'openai',
+    providerApi: 'openai-responses',
+    enabled: true,
+    models: [{ id: 'gpt-5' }],
+    model: 'gpt-5',
+    apiKey: 'key',
+    baseUrl: 'https://upstream.example.com/v1'
+  };
+  const channels = [
+    { ...base, id: 'a', name: 'A', routingGroup: 'group-a' },
+    { ...base, id: 'b1', name: 'B1', routingGroup: 'group-b', providerKey: 'azure' },
+    { ...base, id: 'b2', name: 'B2', routingGroup: 'group-b' },
+    { ...base, id: 'c', name: 'C', routingGroup: 'group-c', providerApi: 'anthropic-messages' }
+  ];
+
+  it('keeps only same-provider-api groups and prefers the same provider key', () => {
+    const routes = prepareManagedOmpChannels(channels, gateway).routes;
+    const primary = routes.find(route => route.routingGroup === 'group-a');
+    const fallbacks = resolveOmpFallbackRoutes(primary, channels, gateway);
+
+    expect(fallbacks).toHaveLength(2);
+    expect(fallbacks[0].routingGroup).toBe('group-b');
+    expect(fallbacks[0].providerKey).toBe('openai');
+    expect(fallbacks[1].providerKey).toBe('azure');
+    expect(fallbacks[0].upstreamPath).toBe(primary.upstreamPath);
+  });
+
+  it('returns no fallback when every other group speaks a different provider api', () => {
+    const primary = prepareManagedOmpChannels([channels[0]], gateway).routes[0];
+    expect(resolveOmpFallbackRoutes(primary, [channels[0]], gateway)).toEqual([]);
   });
 });

@@ -327,11 +327,37 @@ function resolveOmpGatewayRoute(pathname, channels, gateway) {
   };
 }
 
+/**
+ * 主路由失败后的备用路由（组间故障转移）。
+ * 只返回同 providerApi 的路由：请求体与 upstreamPath 可以原样重放，不做跨协议转换。
+ * 同一 providerKey 的路由优先，其余按 token 字典序稳定排序。
+ */
+function resolveOmpFallbackRoutes(primaryRoute, channels, gateway) {
+  if (!primaryRoute) return [];
+  const prepared = prepareManagedOmpChannels(channels, gateway);
+  const combined = route => {
+    const sameProvider = route.providerKey === primaryRoute.providerKey ? 0 : 1;
+    return [sameProvider, route.token];
+  };
+  return prepared.routes
+    .filter(route => route.token !== primaryRoute.token)
+    .filter(route => route.providerApi === primaryRoute.providerApi)
+    .sort((left, right) => {
+      const [leftProvider, leftToken] = combined(left);
+      const [rightProvider, rightToken] = combined(right);
+      if (leftProvider !== rightProvider) return leftProvider - rightProvider;
+      if (leftToken === rightToken) return 0;
+      return leftToken < rightToken ? -1 : 1;
+    })
+    .map(route => ({ ...route, upstreamPath: primaryRoute.upstreamPath }));
+}
+
 module.exports = {
   channelSupportsOmpModel,
   normalizeOmpModelId,
   prepareManagedOmpChannels,
   resolveOmpGatewayRoute,
+  resolveOmpFallbackRoutes,
   getRoutingGroup,
   getProviderKey,
   getProviderApi

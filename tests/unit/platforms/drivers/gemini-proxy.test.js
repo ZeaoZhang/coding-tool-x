@@ -224,3 +224,78 @@ test('excludes OAuth channels and injects the allocated API key into requests', 
   expect(proxyReq.removeHeader).toHaveBeenCalledWith('authorization');
   expect(proxyReq.end).toHaveBeenCalled();
 });
+
+function geminiFailoverFixture(statuses) {
+  const { Readable } = require('stream');
+  const channels = [
+    { id: 'channel-a', name: 'Channel A', baseUrl: 'https://a.example.com', apiKey: 'key-a', authMode: 'api_key', modelRedirects: [] },
+    { id: 'channel-b', name: 'Channel B', baseUrl: 'https://b.example.com', apiKey: 'key-b', authMode: 'api_key', modelRedirects: [] }
+  ];
+  const scheduler = require(CHANNEL_SCHEDULER_PATH);
+  const health = require(CHANNEL_HEALTH_PATH);
+  const allocations = [];
+  scheduler.allocateChannel.mockImplementation(async (options) => {
+    allocationOptions = options;
+    allocations.push(options);
+    return channels.find(item => !(options.excludeChannelIds || []).includes(item.id)) || null;
+  });
+
+  const targets = [];
+  const channelIds = [];
+  const written = [];
+  const httpProxy = require(HTTP_PROXY_PATH);
+  httpProxy.createProxyServer.mockImplementation(() => ({
+    on: (event, listener) => { proxyEvents[event] = listener; },
+    web: (req, res, options) => {
+      const index = targets.length;
+      targets.push(options.target);
+      channelIds.push(req.selectedChannel && req.selectedChannel.id);
+      const upstreamHeaders = {};
+      const chunks = [];
+      const proxyReq = {
+        removeHeader: name => { delete upstreamHeaders[name]; },
+        setHeader: (name, value) => { upstreamHeaders[String(name).toLowerCase()] = value; },
+        getHeader: name => upstreamHeaders[String(name).toLowerCase()],
+        once: () => {},
+        write: chunk => { chunks.push(Buffer.from(chunk)); },
+        end: () => { written.push(Buffer.concat(chunks).toString('utf8')); }
+      };
+      proxyEvents.proxyReq(proxyReq, req, res);
+      const statusCode = statuses[index];
+      const proxyRes = Readable.from([
+        Buffer.from(statusCode === 200 ? '{"ok":true}' : '{"error":"rate limited"}')
+      ]);
+      proxyRes.statusCode = statusCode;
+      proxyRes.headers = { 'content-type': 'application/json' };
+      proxyEvents.proxyRes(proxyRes, req, res);
+    }
+  }));
+
+  return { scheduler, health, allocations, targets, channelIds, written };
+}
+
+test('fails over to the next channel when the upstream returns a retryable status', async () => {
+  const { scheduler, health, allocations, channelIds, written } = geminiFailoverFixture([429, 200]);
+  const started = await geminiProxy.startGeminiProxyServer();
+  const response = await request(started.port);
+
+  expect(response.statusCode).toBe(200);
+  expect(response.body).toBe('{"ok":true}');
+  expect(channelIds).toEqual(['channel-a', 'channel-b']);
+  expect(allocations[1].excludeChannelIds).toEqual(['channel-a']);
+  expect(scheduler.releaseChannel.mock.calls.map(call => call[0])).toEqual(['channel-a', 'channel-b']);
+  expect(health.recordFailure).toHaveBeenCalledWith('channel-a', 'gemini', expect.any(Error));
+  expect(health.recordSuccess).toHaveBeenCalledWith('channel-b', 'gemini');
+  expect(written).toEqual([JSON.stringify({ contents: [] }), JSON.stringify({ contents: [] })]);
+});
+
+test('does not fail over on a non-retryable status', async () => {
+  const { scheduler, allocations, channelIds } = geminiFailoverFixture([400]);
+  const started = await geminiProxy.startGeminiProxyServer();
+  const response = await request(started.port);
+
+  expect(response.statusCode).toBe(400);
+  expect(channelIds).toEqual(['channel-a']);
+  expect(allocations).toHaveLength(1);
+  expect(scheduler.releaseChannel.mock.calls.map(call => call[0])).toEqual(['channel-a']);
+});

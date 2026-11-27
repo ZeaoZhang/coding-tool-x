@@ -1,5 +1,4 @@
 const express = require('express');
-const httpProxy = require('http-proxy');
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
@@ -23,6 +22,7 @@ const {
   ensureOpenAiStreamUsage
 } = require('../../../shared/proxy-utils');
 const { bindProxyRequest, prepareProxyResponse } = require('../../../shared/proxy-transport');
+const { createFailoverProxy } = require('../../../shared/proxy-failover');
 const { attachServerShutdownHandling, expediteServerShutdown, PROXY_IDLE_TIMEOUT_MS } = require('../../../server/services/server-shutdown');
 const { buildCodexTargetUrl, createCodexRequest } = require('../codex/wire');
 const { createClaudeRequest, buildClaudeTargetUrl, buildClaudeCountTokensTargetUrl, buildClaudeCountTokensHeaders } = require('../claude/wire');
@@ -3068,38 +3068,206 @@ async function startOpenCodeProxyServer(options = {}) {
       return next();
     });
 
-    const proxy = httpProxy.createProxyServer({});
+    const { handle } = createFailoverProxy({
+      source: 'opencode',
+      proxyOptions: {
+        changeOrigin: true,
+        proxyTimeout: PROXY_IDLE_TIMEOUT_MS,  // Allow long reasoning gaps without an unbounded upstream wait
+        timeout: 0            // The upstream timeout bounds idle waits; streaming clients may pause
+      },
+      canRetry: shouldParseJson,
+      allocate: async ({ req, res, excludeChannelIds }) => {
+        const abortController = new AbortController();
+        const abortOnClose = () => abortController.abort();
+        res.once('close', abortOnClose);
+        try {
+          const channel = await allocateChannel({
+            source: 'opencode',
+            enableSessionBinding: false,
+            signal: abortController.signal,
+            excludeChannelIds: [...excludeChannelIds]
+          });
+          broadcastSchedulerState('opencode', getSchedulerState('opencode'));
+          return channel;
+        } finally {
+          res.removeListener('close', abortOnClose);
+        }
+      },
+      release: channelId => {
+        releaseChannel(channelId, 'opencode');
+        broadcastSchedulerState('opencode', getSchedulerState('opencode'));
+      },
+      prepareAttempt: async (req, res, channel, releaseOnce) => {
+        // 检查 API key 是否有效
+        const effectiveKey = await getEffectiveApiKey(channel);
+        if (!effectiveKey) {
+          throw Object.assign(
+            new Error('API key not configured or expired. Please update your channel key.'),
+            {
+              statusCode: 401,
+              payload: {
+                error: {
+                  message: 'API key not configured or expired. Please update your channel key.',
+                  type: 'authentication_error'
+                }
+              }
+            }
+          );
+        }
+        req.effectiveApiKey = effectiveKey;
 
-    proxy.on('proxyReq', (proxyReq, req, res) => {
-      bindProxyRequest(proxyReq, res);
-      const activeChannel = req.selectedChannel;
-      if (!activeChannel) return;
+        // 记录请求快照到文件（由 CC_TOOL_LOG_REQUESTS 环境变量控制）
+        if (!req.__opencodeSnapshotRecorded) {
+          req.__opencodeSnapshotRecorded = true;
+          persistProxyRequestSnapshot('opencode', {
+            timestamp: Date.now(),
+            source: 'opencode',
+            channel: channel.name,
+            request: {
+              method: req.method,
+              url: req.url,
+              path: req.path,
+              headers: req.headers,
+              body: req.body || null
+            }
+          });
+        }
 
-      const requestId = `opencode-${Date.now()}-${Math.random()}`;
-      requestMetadata.set(req, {
-        id: requestId,
-        channel: activeChannel.name,
-        channelId: activeChannel.id,
-        startTime: Date.now(),
-        requestModel: req.body?.model || ''
-      });
+        // 应用模型重定向（当 proxy 开启时）
+        if (req.body && typeof req.body === 'object' && !Array.isArray(req.body) && req.body.model) {
+          const originalModel = req.body.model;
+          const redirectedModel = redirectModel(originalModel, channel);
 
-      proxyReq.removeHeader('authorization');
-      // Use pre-fetched effective key from async middleware
-      const effectiveKey = req.effectiveApiKey;
-      proxyReq.setHeader('authorization', `Bearer ${effectiveKey}`);
-      proxyReq.setHeader('openai-beta', 'responses=experimental');
-      if (!proxyReq.getHeader('content-type')) {
-        proxyReq.setHeader('content-type', 'application/json');
-      }
+          if (redirectedModel !== originalModel) {
+            req.body.model = redirectedModel;
 
-      if (shouldParseJson(req) && (req.rawBody || req.body)) {
-        const bodyBuffer = req.rawBody
-          ? Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(req.rawBody)
-          : Buffer.from(JSON.stringify(req.body));
-        proxyReq.setHeader('Content-Length', bodyBuffer.length);
-        proxyReq.write(bodyBuffer);
-        proxyReq.end();
+            // 将原始模型和重定向模型存入 metadata，用于日志记录
+            const meta = requestMetadata.get(req);
+            if (meta) {
+              meta.originalModel = originalModel;
+              meta.redirectedModel = redirectedModel;
+              meta.requestModel = redirectedModel;
+            }
+
+            // 只在重定向规则变化时打印日志（避免每次请求都打印）
+            const cachedRedirects = printedRedirectCache.get(channel.id) || {};
+            if (cachedRedirects[originalModel] !== redirectedModel) {
+              cachedRedirects[originalModel] = redirectedModel;
+              printedRedirectCache.set(channel.id, cachedRedirects);
+              console.log(`[OpenCode Model Redirect] ${originalModel} → ${redirectedModel} (channel: ${channel.name})`);
+            }
+          }
+        }
+
+        if (shouldParseJson(req) && isChatCompletionsPath(req.url)) {
+          ensureOpenAiStreamUsage(req.body);
+        }
+
+        // 网关代理自行写出响应；命中后由驱动负责释放渠道。
+        const gatewaySourceType = normalizeGatewaySourceType(channel);
+        if (gatewaySourceType === 'codex') {
+          res.once('finish', releaseOnce);
+          res.once('close', releaseOnce);
+          const handled = await handleCodexGatewayRequest(req, res, channel, effectiveKey);
+          if (handled) return { handled: true };
+        }
+        if (gatewaySourceType === 'claude') {
+          res.once('finish', releaseOnce);
+          res.once('close', releaseOnce);
+          const handled = await handleClaudeGatewayRequest(req, res, channel, effectiveKey);
+          if (handled) return { handled: true };
+        }
+        if (gatewaySourceType === 'gemini') {
+          res.once('finish', releaseOnce);
+          res.once('close', releaseOnce);
+          const handled = await handleGeminiGatewayRequest(req, res, channel, effectiveKey);
+          if (handled) return { handled: true };
+        }
+
+        return {
+          target: resolveOpenCodeTarget(channel.baseUrl, req.url),
+          body: shouldParseJson(req) ? Buffer.from(JSON.stringify(req.body ?? {})) : null
+        };
+      },
+      onProxyReq: (proxyReq, req, res, channel) => {
+        bindProxyRequest(proxyReq, res);
+        if (!channel) return;
+
+        const requestId = `opencode-${Date.now()}-${Math.random()}`;
+        requestMetadata.set(req, {
+          id: requestId,
+          channel: channel.name,
+          channelId: channel.id,
+          startTime: Date.now(),
+          requestModel: req.body?.model || ''
+        });
+
+        proxyReq.removeHeader('authorization');
+        // Use pre-fetched effective key from prepareAttempt
+        const effectiveKey = req.effectiveApiKey;
+        proxyReq.setHeader('authorization', `Bearer ${effectiveKey}`);
+        proxyReq.setHeader('openai-beta', 'responses=experimental');
+        if (!proxyReq.getHeader('content-type')) {
+          proxyReq.setHeader('content-type', 'application/json');
+        }
+      },
+      // 代理响应只负责维护传输健康状态；实时日志和 usage 来自 CLI 原生日志。
+      onFinalResponse: (proxyRes, req, res) => {
+        prepareProxyResponse(proxyRes, res);
+        const metadata = requestMetadata.get(req);
+        if (!metadata) return;
+
+        if (res.writableEnded || res.destroyed) {
+          requestMetadata.delete(req);
+          return;
+        }
+
+        res.on('close', () => requestMetadata.delete(req));
+        res.on('error', (err) => {
+          if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Response error:', err);
+          recordFailure(metadata.channelId, 'opencode', err);
+          requestMetadata.delete(req);
+        });
+
+        const statusCode = Number(proxyRes.statusCode) || 200;
+        proxyRes.on('end', () => {
+          if (statusCode >= 400) {
+            recordFailure(metadata.channelId, 'opencode', new Error(`OpenCode upstream HTTP ${statusCode}`));
+          } else {
+            recordSuccess(metadata.channelId, 'opencode');
+          }
+          requestMetadata.delete(req);
+        });
+        proxyRes.on('error', (err) => {
+          if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Proxy response error:', err);
+          recordFailure(metadata.channelId, 'opencode', err);
+          requestMetadata.delete(req);
+        });
+      },
+      onRetry: ({ channel, statusCode, error }) => {
+        recordFailure(channel.id, 'opencode', error || new Error(`OpenCode upstream HTTP ${statusCode}`));
+      },
+      writeError: (res, statusCode, error) => {
+        if (res.headersSent) return;
+        if (statusCode === 401 && error?.payload) {
+          res.status(401).json(error.payload);
+          return;
+        }
+        if (statusCode === 503) {
+          res.status(503).json({
+            error: {
+              message: (error && error.message) || 'No OpenCode channel available',
+              type: 'channel_pool_exhausted'
+            }
+          });
+          return;
+        }
+        res.status(502).json({
+          error: {
+            message: 'Proxy error: ' + ((error && error.message) || 'unknown error'),
+            type: 'proxy_error'
+          }
+        });
       }
     });
 
@@ -3127,137 +3295,7 @@ async function startOpenCodeProxyServer(options = {}) {
 
     proxyApp.use(async (req, res) => {
       try {
-        const channel = await allocateChannel({ source: 'opencode', enableSessionBinding: false });
-        req.selectedChannel = channel;
-
-        const release = (() => {
-          let released = false;
-          return () => {
-            if (released) return;
-            released = true;
-            releaseChannel(channel.id, 'opencode');
-            broadcastSchedulerState('opencode', getSchedulerState('opencode'));
-          };
-        })();
-
-        req.__releaseChannel = release;
-        res.on('finish', release);
-        res.on('close', release);
-        res.on('error', release);
-
-        broadcastSchedulerState('opencode', getSchedulerState('opencode'));
-
-        if (res.destroyed || res.writableEnded) { release(); return; }
-
-        // 检查 API key 是否有效
-        const effectiveKey = await getEffectiveApiKey(channel);
-        if (res.destroyed || res.writableEnded) { release(); return; }
-        if (!effectiveKey) {
-          release();
-          return res.status(401).json({
-            error: {
-              message: 'API key not configured or expired. Please update your channel key.',
-              type: 'authentication_error'
-            }
-          });
-        }
-
-        // Store the effective key on the request for use in proxyReq handler
-        req.effectiveApiKey = effectiveKey;
-
-        // 记录请求快照到文件（由 CC_TOOL_LOG_REQUESTS 环境变量控制）
-        persistProxyRequestSnapshot('opencode', {
-          timestamp: Date.now(),
-          source: 'opencode',
-          channel: channel.name,
-          request: {
-            method: req.method,
-            url: req.url,
-            path: req.path,
-            headers: req.headers,
-            body: req.body || null
-          }
-        });
-
-        let bodyMutated = false;
-
-        // 应用模型重定向（当 proxy 开启时）
-        if (req.body && typeof req.body === 'object' && !Array.isArray(req.body) && req.body.model) {
-          const originalModel = req.body.model;
-          const redirectedModel = redirectModel(originalModel, channel);
-
-          if (redirectedModel !== originalModel) {
-            req.body.model = redirectedModel;
-            bodyMutated = true;
-
-            // 将原始模型和重定向模型存入 metadata，用于日志记录
-            const meta = requestMetadata.get(req);
-            if (meta) {
-              meta.originalModel = originalModel;
-              meta.redirectedModel = redirectedModel;
-              meta.requestModel = redirectedModel;
-            }
-
-            // 只在重定向规则变化时打印日志（避免每次请求都打印）
-            const cachedRedirects = printedRedirectCache.get(channel.id) || {};
-            if (cachedRedirects[originalModel] !== redirectedModel) {
-              cachedRedirects[originalModel] = redirectedModel;
-              printedRedirectCache.set(channel.id, cachedRedirects);
-              console.log(`[OpenCode Model Redirect] ${originalModel} → ${redirectedModel} (channel: ${channel.name})`);
-            }
-          }
-        }
-
-        if (shouldParseJson(req) && isChatCompletionsPath(req.url) && ensureOpenAiStreamUsage(req.body)) {
-          bodyMutated = true;
-        }
-
-        if (bodyMutated) {
-          req.rawBody = Buffer.from(JSON.stringify(req.body));
-        }
-
-        const gatewaySourceType = normalizeGatewaySourceType(channel);
-        if (gatewaySourceType === 'codex') {
-          const handled = await handleCodexGatewayRequest(req, res, channel, effectiveKey);
-          if (handled) {
-            return;
-          }
-        }
-        if (gatewaySourceType === 'claude') {
-          const handled = await handleClaudeGatewayRequest(req, res, channel, effectiveKey);
-          if (handled) {
-            return;
-          }
-        }
-        if (gatewaySourceType === 'gemini') {
-          const handled = await handleGeminiGatewayRequest(req, res, channel, effectiveKey);
-          if (handled) {
-            return;
-          }
-        }
-
-        const target = resolveOpenCodeTarget(channel.baseUrl, req.url);
-
-        proxy.web(req, res, {
-          target,
-          changeOrigin: true,
-          proxyTimeout: PROXY_IDLE_TIMEOUT_MS,  // Allow long reasoning gaps without an unbounded upstream wait
-          timeout: 0            // The upstream timeout bounds idle waits; streaming clients may pause
-        }, (err) => {
-          release();
-          if (err) {
-            recordFailure(channel.id, 'opencode', err);
-            console.error('OpenCode proxy error:', err);
-            if (res && !res.headersSent) {
-              res.status(502).json({
-                error: {
-                  message: 'Proxy error: ' + err.message,
-                  type: 'proxy_error'
-                }
-              });
-            }
-          }
-        });
+        await handle(req, res);
       } catch (error) {
         req.__releaseChannel?.();
         console.error('OpenCode channel allocation error:', error);
@@ -3269,57 +3307,6 @@ async function startOpenCodeProxyServer(options = {}) {
             }
           });
         }
-      }
-    });
-
-    // 代理响应只负责维护传输健康状态；实时日志和 usage 来自 CLI 原生日志。
-    proxy.on('proxyRes', (proxyRes, req, res) => {
-      prepareProxyResponse(proxyRes, res);
-      const metadata = requestMetadata.get(req);
-      if (!metadata) return;
-
-      if (res.writableEnded || res.destroyed) {
-        requestMetadata.delete(req);
-        return;
-      }
-
-      res.on('close', () => requestMetadata.delete(req));
-      res.on('error', (err) => {
-        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Response error:', err);
-        recordFailure(metadata.channelId, 'opencode', err);
-        requestMetadata.delete(req);
-      });
-
-      const statusCode = Number(proxyRes.statusCode) || 200;
-      proxyRes.on('end', () => {
-        if (statusCode >= 400) {
-          recordFailure(metadata.channelId, 'opencode', new Error(`OpenCode upstream HTTP ${statusCode}`));
-        } else {
-          recordSuccess(metadata.channelId, 'opencode');
-        }
-        requestMetadata.delete(req);
-      });
-      proxyRes.on('error', (err) => {
-        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Proxy response error:', err);
-        recordFailure(metadata.channelId, 'opencode', err);
-        requestMetadata.delete(req);
-      });
-    });
-
-    // 处理代理错误
-    proxy.on('error', (err, req, res) => {
-      console.error('OpenCode proxy error:', err);
-      if (req && req.selectedChannel) {
-        recordFailure(req.selectedChannel.id, 'opencode', err);
-        req.__releaseChannel?.();
-      }
-      if (res && !res.headersSent) {
-        res.status(502).json({
-          error: {
-            message: 'Proxy error: ' + err.message,
-            type: 'proxy_error'
-          }
-        });
       }
     });
 

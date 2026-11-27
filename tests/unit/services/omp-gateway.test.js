@@ -830,4 +830,165 @@ describe('OMP gateway data plane', () => {
       await close(upstream);
     }
   });
+
+  it('fails over to a same-provider routing group and replays the request unchanged', async () => {
+    const upstreamA = [];
+    const upstreamB = [];
+    const firstUpstream = http.createServer((req, res) => {
+      const chunks = [];
+      req.on('data', chunk => chunks.push(chunk));
+      req.on('end', () => {
+        upstreamA.push({ url: req.url, body: Buffer.concat(chunks).toString('utf8') });
+        res.writeHead(503, { 'content-type': 'application/json' });
+        res.end('{"error":"group a busy"}');
+      });
+    });
+    const secondUpstream = http.createServer((req, res) => {
+      const chunks = [];
+      req.on('data', chunk => chunks.push(chunk));
+      req.on('end', () => {
+        upstreamB.push({ url: req.url, body: Buffer.concat(chunks).toString('utf8') });
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('{"channel":"group-b"}');
+      });
+    });
+    const firstPort = await listen(firstUpstream);
+    const secondPort = await listen(secondUpstream);
+    const base = {
+      providerKey: 'openai',
+      providerApi: 'openai-responses',
+      apiKey: 'upstream-key',
+      enabled: true,
+      models: [{ id: 'gpt-5' }],
+      model: 'gpt-5'
+    };
+    const channels = [
+      { ...base, id: 'group-a-channel', name: 'Group A', routingGroup: 'group-a', baseUrl: `http://127.0.0.1:${firstPort}/v1` },
+      { ...base, id: 'group-b-channel', name: 'Group B', routingGroup: 'group-b', baseUrl: `http://127.0.0.1:${secondPort}/v1` }
+    ];
+    const allocateChannel = vi.fn(async (options) => {
+      return channels.find(channel => options.candidateIds.includes(channel.id)
+        && !options.excludeChannelIds.includes(channel.id)) || null;
+    });
+    const releaseChannel = vi.fn();
+    const recordSuccess = vi.fn();
+    const recordFailure = vi.fn();
+    const secret = 'fallback-gateway-secret';
+    const gateway = createOmpGateway({
+      getChannels: () => channels,
+      allocateChannel,
+      releaseChannel,
+      recordSuccess,
+      recordFailure
+    });
+
+    try {
+      const status = await gateway.start({ port: 0, secret });
+      const prepared = prepareManagedOmpChannels(channels, { host: '127.0.0.1', port: status.port, secret });
+      const primaryRoute = prepared.routes.find(route => route.channelIds.includes('group-a-channel'));
+      expect(primaryRoute).toBeTruthy();
+
+      const response = await request({
+        port: status.port,
+        path: `/omp/${primaryRoute.token}/responses?model=gpt-5`,
+        headers: {
+          authorization: `Bearer ${primaryRoute.capability}`,
+          'content-type': 'application/json'
+        },
+        body: Buffer.from('{"model":"gpt-5","input":"hello"}')
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.body.toString()).toBe('{"channel":"group-b"}');
+      expect(upstreamA).toEqual([{ url: '/v1/responses?model=gpt-5', body: '{"model":"gpt-5","input":"hello"}' }]);
+      expect(upstreamB).toEqual([{ url: '/v1/responses?model=gpt-5', body: '{"model":"gpt-5","input":"hello"}' }]);
+      expect(allocateChannel).toHaveBeenCalledTimes(2);
+      expect(allocateChannel).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        candidateIds: ['group-b-channel'],
+        excludeChannelIds: ['group-a-channel']
+      }));
+      expect(releaseChannel.mock.calls).toEqual([
+        ['group-a-channel', 'omp'],
+        ['group-b-channel', 'omp']
+      ]);
+      expect(recordFailure).toHaveBeenCalledWith('group-a-channel', 'omp');
+    } finally {
+      await gateway.stop();
+      await close(firstUpstream);
+      await close(secondUpstream);
+    }
+  });
+
+  it('does not fall back to a routing group with a different provider api', async () => {
+    const upstreamA = [];
+    const upstreamB = [];
+    const makeUpstream = (sink, statusCode, payload) => http.createServer((req, res) => {
+      const chunks = [];
+      req.on('data', chunk => chunks.push(chunk));
+      req.on('end', () => {
+        sink.push({ url: req.url, body: Buffer.concat(chunks).toString('utf8') });
+        res.writeHead(statusCode, { 'content-type': 'application/json' });
+        res.end(payload);
+      });
+    });
+    const firstServer = makeUpstream(upstreamA, 503, '{"error":"primary busy"}');
+    const secondServer = makeUpstream(upstreamA, 200, '{"channel":"primary-two"}');
+    const incompatibleServer = makeUpstream(upstreamB, 200, '{"channel":"incompatible"}');
+    const firstPort = await listen(firstServer);
+    const secondPort = await listen(secondServer);
+    const incompatiblePort = await listen(incompatibleServer);
+    const base = {
+      providerKey: 'openai',
+      apiKey: 'upstream-key',
+      enabled: true,
+      models: [{ id: 'gpt-5' }],
+      model: 'gpt-5'
+    };
+    const channels = [
+      { ...base, id: 'primary-one', name: 'Primary One', routingGroup: 'primary', providerApi: 'openai-responses', baseUrl: `http://127.0.0.1:${firstPort}/v1` },
+      { ...base, id: 'primary-two', name: 'Primary Two', routingGroup: 'primary', providerApi: 'openai-responses', baseUrl: `http://127.0.0.1:${secondPort}/v1` },
+      { ...base, id: 'incompatible', name: 'Incompatible', routingGroup: 'other', providerApi: 'anthropic-messages', baseUrl: `http://127.0.0.1:${incompatiblePort}/v1` }
+    ];
+    const allocateChannel = vi.fn(async (options) => {
+      return channels.find(channel => options.candidateIds.includes(channel.id)
+        && !options.excludeChannelIds.includes(channel.id)) || null;
+    });
+    const secret = 'fallback-provider-api-secret';
+    const gateway = createOmpGateway({
+      getChannels: () => channels,
+      allocateChannel,
+      releaseChannel: vi.fn(),
+      recordSuccess: vi.fn(),
+      recordFailure: vi.fn()
+    });
+
+    try {
+      const status = await gateway.start({ port: 0, secret });
+      const prepared = prepareManagedOmpChannels(channels, { host: '127.0.0.1', port: status.port, secret });
+      const primaryRoute = prepared.routes.find(route => route.routingGroup === 'primary');
+
+      const response = await request({
+        port: status.port,
+        path: `/omp/${primaryRoute.token}/responses`,
+        headers: {
+          authorization: `Bearer ${primaryRoute.capability}`,
+          'content-type': 'application/json'
+        },
+        body: Buffer.from('{"model":"gpt-5"}')
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.body.toString()).toBe('{"channel":"primary-two"}');
+      expect(upstreamB).toEqual([]);
+      expect(allocateChannel).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        candidateIds: ['primary-one', 'primary-two'],
+        excludeChannelIds: ['primary-one']
+      }));
+    } finally {
+      await gateway.stop();
+      await close(firstServer);
+      await close(secondServer);
+      await close(incompatibleServer);
+    }
+  });
 });

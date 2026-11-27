@@ -1,5 +1,4 @@
 const express = require('express');
-const httpProxy = require('http-proxy');
 const http = require('http');
 const chalk = require('chalk');
 const { broadcastSchedulerState } = require('../../../server/websocket-server');
@@ -14,6 +13,7 @@ const {
 const { persistProxyRequestSnapshot } = require('../../../server/services/request-logger');
 const { redirectModel: redirectModelBase, resolveTargetUrl } = require('../../../shared/proxy-utils');
 const { bindProxyRequest, prepareProxyResponse } = require('../../../shared/proxy-transport');
+const { createFailoverProxy } = require('../../../shared/proxy-failover');
 const { attachServerShutdownHandling, expediteServerShutdown, PROXY_IDLE_TIMEOUT_MS } = require('../../../server/services/server-shutdown');
 
 let proxyServer = null;
@@ -202,108 +202,67 @@ async function startGeminiProxyServer(options = {}) {
       return next();
     });
 
-    const proxy = httpProxy.createProxyServer({});
-
-    proxy.on('proxyReq', (proxyReq, req, res) => {
-      bindProxyRequest(proxyReq, res);
-      const activeChannel = req.selectedChannel;
-      if (!activeChannel) return;
-
-      const requestId = `gemini-${Date.now()}-${Math.random()}`;
-      let modelFromUrl = '';
-      const urlMatch = req.url.match(/\/models\/([\w.-]+):/);
-      if (urlMatch) {
-        modelFromUrl = urlMatch[1];
-      }
-
-      requestMetadata.set(req, {
-        id: requestId,
-        channel: activeChannel.name,
-        channelId: activeChannel.id,
-        startTime: Date.now(),
-        modelFromUrl,
-        requestModel: modelFromUrl
-      });
-
-      proxyReq.removeHeader('authorization');
-      proxyReq.removeHeader('x-goog-api-key');
-      const effectiveKey = req.effectiveApiKey;
-      proxyReq.setHeader('authorization', `Bearer ${effectiveKey}`);
-      if (!proxyReq.getHeader('content-type')) {
-        proxyReq.setHeader('content-type', 'application/json');
-      }
-
-      if (shouldParseJson(req) && (req.rawBody || req.body)) {
-        const bodyBuffer = req.rawBody
-          ? Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(req.rawBody)
-          : Buffer.from(JSON.stringify(req.body));
-        proxyReq.setHeader('Content-Length', bodyBuffer.length);
-        proxyReq.write(bodyBuffer);
-        proxyReq.end();
-      }
-    });
-
-    proxyApp.use(async (req, res) => {
-      try {
+    const { handle } = createFailoverProxy({
+      source: 'gemini',
+      proxyOptions: {
+        changeOrigin: true,
+        proxyTimeout: PROXY_IDLE_TIMEOUT_MS,  // Allow long reasoning gaps without an unbounded upstream wait
+        timeout: 0            // The upstream timeout bounds idle waits; streaming clients may pause
+      },
+      canRetry: shouldParseJson,
+      allocate: async ({ req, res, excludeChannelIds }) => {
         const abortController = new AbortController();
         const abortOnClose = () => abortController.abort();
         res.once('close', abortOnClose);
-        let channel;
         try {
-          channel = await allocateChannel({
+          return await allocateChannel({
             source: 'gemini',
             signal: abortController.signal,
             enableSessionBinding: false,
-            excludeChannelIds: getGeminiProxyExcludedChannelIds()
+            excludeChannelIds: [...getGeminiProxyExcludedChannelIds(), ...excludeChannelIds]
           });
         } finally {
           res.removeListener('close', abortOnClose);
         }
-        req.selectedChannel = channel;
-
-        const release = (() => {
-          let released = false;
-          return () => {
-            if (released) return;
-            released = true;
-            releaseChannel(channel.id, 'gemini');
-            broadcastSchedulerState('gemini', getSchedulerState('gemini'));
-          };
-        })();
-
-        req.__releaseChannel = release;
-        res.on('finish', release);
-        res.on('close', release);
-        res.on('error', release);
-        if (res.destroyed || res.writableEnded) { release(); return; }
-
+      },
+      release: channelId => {
+        releaseChannel(channelId, 'gemini');
         broadcastSchedulerState('gemini', getSchedulerState('gemini'));
-
+      },
+      prepareAttempt: (req, res, channel) => {
         const effectiveKey = getEffectiveApiKey(channel);
         if (!effectiveKey) {
-          release();
-          return res.status(401).json({
-            error: {
-              message: 'API key not configured or expired. Please update your channel key.',
-              type: 'authentication_error'
+          throw Object.assign(
+            new Error('API key not configured or expired. Please update your channel key.'),
+            {
+              statusCode: 401,
+              payload: {
+                error: {
+                  message: 'API key not configured or expired. Please update your channel key.',
+                  type: 'authentication_error'
+                }
+              }
             }
-          });
+          );
         }
         req.effectiveApiKey = effectiveKey;
 
         // 记录请求快照到文件（由 CC_TOOL_LOG_REQUESTS 环境变量控制）
-        persistProxyRequestSnapshot('gemini', {
-          timestamp: Date.now(),
-          source: 'gemini',
-          channel: channel.name,
-          request: {
-            method: req.method,
-            url: req.url,
-            path: req.path,
-            headers: req.headers,
-            body: req.body || null
-          }
-        });
+        if (!req.__geminiSnapshotRecorded) {
+          req.__geminiSnapshotRecorded = true;
+          persistProxyRequestSnapshot('gemini', {
+            timestamp: Date.now(),
+            source: 'gemini',
+            channel: channel.name,
+            request: {
+              method: req.method,
+              url: req.url,
+              path: req.path,
+              headers: req.headers,
+              body: req.body || null
+            }
+          });
+        }
 
         // 从 URL 中提取模型名称并应用重定向
         // URL 格式: /models/gemini-2.5-pro:generateContent 或 /v1/models/gemini-2.5-pro:generateContent
@@ -335,42 +294,107 @@ async function startGeminiProxyServer(options = {}) {
           }
         }
 
-        let bodyMutated = false;
-
-        if (isVertexAiV1Channel(channel) && stripVertexFunctionResponseIds(req.body)) {
-          bodyMutated = true;
-        }
-
         if (isVertexAiV1Channel(channel)) {
+          stripVertexFunctionResponseIds(req.body);
           req.url = buildVertexAiV1Path(channel.baseUrl, req.url);
         }
 
-        if (bodyMutated) {
-          req.rawBody = Buffer.from(JSON.stringify(req.body));
+        return {
+          target: resolveGeminiTarget(channel.baseUrl, req.url),
+          body: shouldParseJson(req) ? Buffer.from(JSON.stringify(req.body ?? {})) : null
+        };
+      },
+      onProxyReq: (proxyReq, req, res, channel) => {
+        bindProxyRequest(proxyReq, res);
+        if (!channel) return;
+
+        const requestId = `gemini-${Date.now()}-${Math.random()}`;
+        let modelFromUrl = '';
+        const urlMatch = req.url.match(/\/models\/([\w.-]+):/);
+        if (urlMatch) {
+          modelFromUrl = urlMatch[1];
         }
 
-        const target = resolveGeminiTarget(channel.baseUrl, req.url);
+        requestMetadata.set(req, {
+          id: requestId,
+          channel: channel.name,
+          channelId: channel.id,
+          startTime: Date.now(),
+          modelFromUrl,
+          requestModel: modelFromUrl
+        });
 
-        proxy.web(req, res, {
-          target,
-          changeOrigin: true,
-          proxyTimeout: PROXY_IDLE_TIMEOUT_MS,  // Allow long reasoning gaps without an unbounded upstream wait
-          timeout: 0            // The upstream timeout bounds idle waits; streaming clients may pause
-        }, (err) => {
-          release();
-          if (err) {
-            recordFailure(channel.id, 'gemini', err);
-            console.error('Gemini proxy error:', err);
-            if (res && !res.headersSent) {
-              res.status(502).json({
-                error: {
-                  message: 'Proxy error: ' + err.message,
-                  type: 'proxy_error'
-                }
-              });
+        proxyReq.removeHeader('authorization');
+        proxyReq.removeHeader('x-goog-api-key');
+        const effectiveKey = req.effectiveApiKey;
+        proxyReq.setHeader('authorization', `Bearer ${effectiveKey}`);
+        if (!proxyReq.getHeader('content-type')) {
+          proxyReq.setHeader('content-type', 'application/json');
+        }
+      },
+      // 代理响应只负责维护传输健康状态；实时日志和 usage 来自 CLI 原生日志。
+      onFinalResponse: (proxyRes, req, res) => {
+        prepareProxyResponse(proxyRes, res);
+        const metadata = requestMetadata.get(req);
+        if (!metadata) return;
+
+        if (res.writableEnded || res.destroyed) {
+          requestMetadata.delete(req);
+          return;
+        }
+
+        res.on('close', () => requestMetadata.delete(req));
+        res.on('error', (err) => {
+          if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Response error:', err);
+          recordFailure(metadata.channelId, 'gemini', err);
+          requestMetadata.delete(req);
+        });
+
+        const upstreamStatusCode = Number(proxyRes.statusCode) || 200;
+        proxyRes.on('end', () => {
+          if (isHttpErrorStatus(upstreamStatusCode)) {
+            recordFailure(metadata.channelId, 'gemini', new Error(`Gemini upstream HTTP ${upstreamStatusCode}`));
+          } else {
+            recordSuccess(metadata.channelId, 'gemini');
+          }
+          requestMetadata.delete(req);
+        });
+        proxyRes.on('error', (err) => {
+          if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Proxy response error:', err);
+          recordFailure(metadata.channelId, 'gemini', err);
+          requestMetadata.delete(req);
+        });
+      },
+      onRetry: ({ channel, statusCode, error }) => {
+        recordFailure(channel.id, 'gemini', error || new Error(`Gemini upstream HTTP ${statusCode}`));
+      },
+      writeError: (res, statusCode, error) => {
+        if (res.headersSent) return;
+        if (statusCode === 401 && error?.payload) {
+          res.status(401).json(error.payload);
+          return;
+        }
+        if (statusCode === 503) {
+          res.status(503).json({
+            error: {
+              message: (error && error.message) || 'No Gemini channel available',
+              type: 'channel_pool_exhausted'
             }
+          });
+          return;
+        }
+        res.status(502).json({
+          error: {
+            message: 'Proxy error: ' + ((error && error.message) || 'unknown error'),
+            type: 'proxy_error'
           }
         });
+      }
+    });
+
+    proxyApp.use(async (req, res) => {
+      try {
+        await handle(req, res);
       } catch (error) {
         req.__releaseChannel?.();
         console.error('Gemini channel allocation error:', error);
@@ -385,56 +409,6 @@ async function startGeminiProxyServer(options = {}) {
       }
     });
 
-    // 代理响应只负责维护传输健康状态；实时日志和 usage 来自 CLI 原生日志。
-    proxy.on('proxyRes', (proxyRes, req, res) => {
-      prepareProxyResponse(proxyRes, res);
-      const metadata = requestMetadata.get(req);
-      if (!metadata) return;
-
-      if (res.writableEnded || res.destroyed) {
-        requestMetadata.delete(req);
-        return;
-      }
-
-      res.on('close', () => requestMetadata.delete(req));
-      res.on('error', (err) => {
-        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Response error:', err);
-        recordFailure(metadata.channelId, 'gemini', err);
-        requestMetadata.delete(req);
-      });
-
-      const upstreamStatusCode = Number(proxyRes.statusCode) || 200;
-      proxyRes.on('end', () => {
-        if (isHttpErrorStatus(upstreamStatusCode)) {
-          recordFailure(metadata.channelId, 'gemini', new Error(`Gemini upstream HTTP ${upstreamStatusCode}`));
-        } else {
-          recordSuccess(metadata.channelId, 'gemini');
-        }
-        requestMetadata.delete(req);
-      });
-      proxyRes.on('error', (err) => {
-        if (err.code !== 'EPIPE' && err.code !== 'ECONNRESET') console.error('Proxy response error:', err);
-        recordFailure(metadata.channelId, 'gemini', err);
-        requestMetadata.delete(req);
-      });
-    });
-
-    // 处理代理错误
-    proxy.on('error', (err, req, res) => {
-      console.error('Gemini proxy error:', err);
-      if (req && req.selectedChannel) {
-        recordFailure(req.selectedChannel.id, 'gemini', err);
-        req.__releaseChannel?.();
-      }
-      if (res && !res.headersSent) {
-        res.status(502).json({
-          error: {
-            message: 'Proxy error: ' + err.message,
-            type: 'proxy_error'
-          }
-        });
-      }
-    });
 
     // 启动服务器
     proxyServer = http.createServer(proxyApp);
