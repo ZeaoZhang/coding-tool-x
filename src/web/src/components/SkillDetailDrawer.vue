@@ -42,6 +42,14 @@
 
               <AssetPathField :path="skillPath" />
 
+              <div class="asset-detail-info-section" v-if="detail.usage">
+                <h3 class="asset-detail-section-title">使用情况</h3>
+                <div class="asset-detail-box">
+                  <code>{{ usageSummary }}</code>
+                </div>
+                <p class="asset-detail-description">仅统计本机 CLI 会话的使用，不包含远程、IDE 或网页端。</p>
+              </div>
+
               <div class="asset-detail-info-section" v-if="sourceLocation || sourceLink">
                 <h3 class="asset-detail-section-title">来源</h3>
                 <div class="asset-detail-box">
@@ -145,6 +153,23 @@ import {
 import { isProjectionUnsupported } from '../utils/skill-projection'
 
 const { drawerWidth } = useResponsiveDrawer(600)
+
+function formatUsageTime(value) {
+  const ms = Number(value)
+  return Number.isFinite(ms) && ms > 0 ? new Date(ms).toLocaleString() : '—'
+}
+
+const usageSummary = computed(() => {
+  const usage = detail.value?.usage
+  if (!usage) return ''
+  if (usage.state === 'unverified') return '该平台尚未观察到技能调用'
+  if (usage.state === 'unsupported') return '本平台暂不支持使用统计'
+  const parts = [`${usage.count} 轮使用`]
+  if (usage.lastUsedAt) parts.push(`最近 ${formatUsageTime(usage.lastUsedAt)}`)
+  if (usage.coverageStart) parts.push(`统计起点 ${formatUsageTime(usage.coverageStart)}`)
+  if (usage.coverageEnd) parts.push(`统计截至 ${formatUsageTime(usage.coverageEnd)}`)
+  return parts.join(' · ')
+})
 
 const props = defineProps({
   visible: {

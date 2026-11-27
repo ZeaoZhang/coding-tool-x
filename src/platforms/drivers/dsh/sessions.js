@@ -625,4 +625,49 @@ function createDriver(context = {}) {
   };
 }
 
-module.exports = { createDriver, projectNameFor, decodeArtifact, listArtifacts, textFromContent };
+function listUsageToolCalls(context = {}, { limit = 50, excludeSessionIds = [] } = {}) {
+  const excluded = new Set(excludeSessionIds);
+  const metas = listArtifacts(context, { includeEvents: false, includeFirstMessage: false })
+    .filter(artifact => !artifact.error)
+    .filter(artifact => {
+      const sessionId = artifact.header?.id || path.basename(artifact.sessionDir || '');
+      return !excluded.has(sessionId);
+    })
+    .sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0))
+    .slice(0, limit);
+  const sessions = [];
+  for (const meta of metas) {
+    let parsed;
+    try {
+      parsed = decodeArtifact(meta.filePath);
+    } catch (_) {
+      continue;
+    }
+    const calls = [];
+    for (const event of parsed.events || []) {
+      if (event?.type !== 'tool/call') continue;
+      const data = event.data || {};
+      let args = data.arguments;
+      if (typeof args === 'string') {
+        try { args = JSON.parse(args); } catch (_) { args = {}; }
+      }
+      calls.push({
+        id: data.callId || null,
+        name: data.name || 'unknown',
+        args: args && typeof args === 'object' ? args : {},
+        turnId: data.turn != null ? data.turn : null
+      });
+    }
+    sessions.push({
+      sessionId: parsed.header?.id || path.basename(meta.sessionDir || ''),
+      filePath: meta.filePath || '',
+      size: meta.size || 0,
+      mtimeMs: meta.mtimeMs || 0,
+      cwd: parsed.header?.cwd || null,
+      toolCalls: calls
+    });
+  }
+  return sessions;
+}
+
+module.exports = { createDriver, projectNameFor, decodeArtifact, listArtifacts, textFromContent, listUsageToolCalls };

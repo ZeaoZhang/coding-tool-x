@@ -10,7 +10,7 @@
   "sortOrder": 50,
   "modelConfig": { "catalogKey": "gemini" },
   "channelModelType": "gemini",
-  "sessionIndex": { "parserVersion": 2 },
+  "sessionIndex": { "parserVersion": 3 },
   "auth": {
     "modes": ["api_key", "oauth", "none"],
     "oauth": { "adapter": "gemini", "policy": "single-enabled", "quota": "gemini" }

@@ -338,6 +338,13 @@ async function startServer(port, host = '127.0.0.1', options = {}) {
     server.once('error', onError);
   });
   scheduleSessionHistoryMaintenance(PATHS.sessionHistoryIndex);
+  if (process.env.NODE_ENV !== 'test') {
+    try {
+      require('./services/skill-usage-service').startUsageScheduler();
+    } catch (error) {
+      console.error('[SkillUsage] Failed to start scheduler:', error?.message || error);
+    }
+  }
 
   console.log(`\n[START] Coding-Tool Web UI running at:`);
   const protocol = useHttps ? 'https' : 'http';

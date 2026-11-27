@@ -33,7 +33,10 @@ vi.mock('../../composables/useFavorites', () => ({
 vi.mock('../../composables/useDashboard', () => ({
   useDashboard: () => ({ dashboardData: ref({}), isLoading: ref(false), loadDashboard: vi.fn() })
 }))
-vi.mock('../../api/skills', () => ({ getSkills: vi.fn(async () => ({ success: true, skills: [] })) }))
+vi.mock('../../api/skills', () => ({
+  getSkills: vi.fn(async () => ({ success: true, skills: [] })),
+  invalidateSkillSessionCache: vi.fn()
+}))
 vi.mock('../../api/ui-config', () => ({ updateNestedUIConfig: vi.fn() }))
 vi.mock('../../api/env', () => ({ checkEnvConflicts: vi.fn(async () => ({ success: true, conflicts: [] })) }))
 vi.mock('../../api/security', () => ({ getSecurityStatus: vi.fn(), verifySecurityPassword: vi.fn() }))

@@ -8,7 +8,7 @@ function createDriver(context = {}) {
     ...context,
     platform: 'gemini',
     capability: 'sessions',
-    parserVersion: 2,
+    parserVersion: 3,
     servicePath: './gemini/sessions-implementation',
     localServicePath: '../platforms/drivers/gemini/sessions-implementation',
     adapterLocalPath: '../platforms/drivers/gemini/session-history-adapter',

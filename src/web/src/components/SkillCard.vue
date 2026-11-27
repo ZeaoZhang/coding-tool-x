@@ -17,12 +17,19 @@
             <n-tag v-if="skill.trust === 'needs_review'" type="warning" size="tiny" :bordered="false">需复审</n-tag>
             <n-tag v-if="skill.protected" type="default" size="tiny" :bordered="false">受保护</n-tag>
             <n-tag v-if="isProjectionUnsupported(skill)" type="warning" size="tiny" :bordered="false">不支持投影</n-tag>
+            <n-tag v-if="showUsageTag && skill.usage.state === 'stale'" type="default" size="tiny" :bordered="false">近 {{ staleDays }} 天未使用</n-tag>
+            <n-tag v-else-if="showUsageTag && skill.usage.state === 'pending'" type="default" size="tiny" :bordered="false">统计中</n-tag>
+            <n-tag v-else-if="showUsageTag && skill.usage.state === 'unverified'" type="default" size="tiny" :bordered="false">该平台尚未观察到技能调用</n-tag>
+            <n-tag v-else-if="showUsageTag && skill.usage.state === 'unsupported'" type="default" size="tiny" :bordered="false">本平台暂不支持使用统计</n-tag>
             <n-tag v-if="getSkillSourceTag(skill)" type="info" size="tiny" :bordered="false">{{ getSkillSourceTag(skill) }}</n-tag>
           </div>
         </div>
       </div>
       <div class="asset-description" v-if="skill.description">{{ truncate(skill.description, 120) }}</div>
       <div class="asset-meta">
+        <span v-if="skill.usage && skill.usage.state === 'used'" class="asset-meta-item">
+          涉及 {{ skill.usage.count }} 轮使用 · 最近 {{ formatUsageTime(skill.usage.lastUsedAt) }}
+        </span>
         <span class="asset-meta-item mono">{{ skill.directory }}</span>
         <span v-if="getSkillSourceLocation(skill)" class="asset-meta-item source-item" :title="getSkillSourceLocation(skill)">
           {{ getSkillSourceLocation(skill) }}
@@ -59,6 +66,7 @@
 
 <script setup>
 import { NTag, NButton, NSwitch } from 'naive-ui'
+import { computed } from 'vue'
 import {
   getSkillSourceLink,
   getSkillSourceLinkLabel,
@@ -67,14 +75,27 @@ import {
 } from '../utils/skill-source'
 import { isProjectionUnsupported } from '../utils/skill-projection'
 
-defineProps({
+const props = defineProps({
   skill: { type: Object, required: true },
   toggling: { type: Boolean, default: false },
   panelScope: { type: String, default: 'user' },
-  canToggle: { type: Boolean, default: true }
+  canToggle: { type: Boolean, default: true },
+  staleDays: { type: Number, default: 30 }
 })
 
 defineEmits(['click', 'toggle', 'approve'])
+
+const showUsageTag = computed(() => Boolean(
+  props.skill?.usage
+  && props.skill.enabled !== false
+  && (!props.skill.artifact || props.skill.artifact.state === 'ready')
+))
+
+function formatUsageTime(value) {
+  const ms = Number(value)
+  if (!Number.isFinite(ms) || ms <= 0) return ''
+  return new Date(ms).toLocaleString()
+}
 
 function truncate(text, len) {
   return text?.length > len ? text.slice(0, len) + '...' : text

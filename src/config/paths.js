@@ -52,6 +52,9 @@ const LEGACY_IMPORT_STATE_FILE = path.join(LEGACY_DIR, 'import-state.json');
 const LEGACY_STATS_DIR = path.join(LEGACY_DIR, 'stats');
 const CONTROL_MANIFEST_PATH = path.join(CONFIG_DIR, 'effective-control.json');
 const SKILL_ARTIFACTS_DIR = path.join(STORAGE_DIR, 'skill-artifacts');
+// Usage counts must survive cache clearing and transcript pruning, so the
+// ledger lives under storage/, not cache/.
+const SKILL_USAGE_DB_PATH = path.join(STORAGE_DIR, 'skill-usage.sqlite');
 const SKILL_REFRESH_TASKS_PATH = path.join(RUNTIME_DIR, 'skill-refresh-tasks.json');
 const PLUGIN_REFRESH_TASKS_PATH = path.join(RUNTIME_DIR, 'plugin-refresh-tasks.json');
 
@@ -416,6 +419,7 @@ const PATHS = {
   ompSessionOrder: path.join(CONFIG_DIR, 'omp-session-order.json'),
   effectiveControlManifest: CONTROL_MANIFEST_PATH,
   skillArtifacts: SKILL_ARTIFACTS_DIR,
+  skillUsageIndex: SKILL_USAGE_DB_PATH,
   skillRefreshTasks: SKILL_REFRESH_TASKS_PATH,
   pluginRefreshTasks: PLUGIN_REFRESH_TASKS_PATH,
 

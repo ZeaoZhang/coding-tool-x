@@ -2088,6 +2088,74 @@ function createSessionHistoryIndex(opts = {}) {
     };
   }
 
+  /**
+   * Skill usage ingest: session metadata for one source. The usage service
+   * compares these fields with its own cursor; no message content is read.
+   */
+  async function listUsageSessions(source) {
+    const db = _getDb();
+    const rows = db.prepare(`
+      SELECT session_id, file_path, size, mtime_ms, parser_version
+      FROM session_file
+      WHERE source = ?
+      ORDER BY updated_at DESC, session_id ASC
+    `).all(source);
+    return rows.map(row => ({
+      sessionId: row.session_id,
+      filePath: row.file_path,
+      size: Number(row.size) || 0,
+      mtimeMs: Number(row.mtime_ms) || 0,
+      parserVersion: Number(row.parser_version) || 0
+    }));
+  }
+
+  /**
+   * Skill usage ingest: the compact toolCall payloads persisted in extra_json.
+   * Returns nothing for user-content rows, so no message body is exposed.
+   */
+  function listToolCallMessages(source, sessionId) {
+    const db = _getDb();
+    const rows = db.prepare(`
+      SELECT
+        m.ordinal,
+        m.user_message_number,
+        m.timestamp,
+        m.extra_json,
+        (
+          SELECT MAX(u.user_message_number)
+          FROM session_message u
+          WHERE u.source = m.source
+            AND u.session_id = m.session_id
+            AND u.ordinal <= m.ordinal
+            AND u.role = 'user'
+        ) AS turn_number
+      FROM session_message m
+      WHERE m.source = ? AND m.session_id = ? AND m.extra_json IS NOT NULL
+      ORDER BY m.ordinal ASC
+    `).all(source, sessionId);
+    const messages = [];
+    for (const row of rows) {
+      let extra;
+      try {
+        extra = JSON.parse(row.extra_json);
+      } catch (_) {
+        continue;
+      }
+      const toolCalls = Array.isArray(extra?.toolCalls) ? extra.toolCalls : [];
+      if (toolCalls.length === 0) continue;
+      messages.push({
+        ordinal: Number(row.ordinal) || 0,
+        userMessageNumber: row.user_message_number != null
+          ? Number(row.user_message_number)
+          : null,
+        turnNumber: row.turn_number != null ? Number(row.turn_number) : null,
+        timestamp: row.timestamp != null ? Number(row.timestamp) : null,
+        toolCalls
+      });
+    }
+    return messages;
+  }
+
   async function getMessagePage(source, sessionId, options = {}) {
     if (!storeAssistantContent) {
       await ensureSummaryIndexed(source, {
@@ -2709,6 +2777,8 @@ function createSessionHistoryIndex(opts = {}) {
     getSessionStatus,
     getSessionOutline,
     getMessagePage,
+    listUsageSessions,
+    listToolCallMessages,
     readSessionMessagesPage,
     readSessionOutline,
     getRecentSessions,
@@ -2784,6 +2854,14 @@ async function getMessagePage(source, sessionId, options) {
   return _getDefaultIndex().getMessagePage(source, sessionId, options);
 }
 
+async function listUsageSessions(source) {
+  return _getDefaultIndex().listUsageSessions(source);
+}
+
+function listToolCallMessages(source, sessionId) {
+  return _getDefaultIndex().listToolCallMessages(source, sessionId);
+}
+
 async function getRecentSessions(source, limit, options) {
   return _getDefaultIndex().getRecentSessions(source, limit, options);
 }
@@ -2827,6 +2905,8 @@ module.exports = {
   getSessionStatus,
   getSessionOutline,
   getMessagePage,
+  listUsageSessions,
+  listToolCallMessages,
   getRecentSessions,
   searchSessions,
   invalidateSource,

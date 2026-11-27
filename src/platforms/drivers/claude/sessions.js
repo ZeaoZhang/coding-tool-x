@@ -8,7 +8,7 @@ function createDriver(context = {}) {
     ...context,
     platform: 'claude',
     capability: 'sessions',
-    parserVersion: 2,
+    parserVersion: 3,
     servicePath: './claude/sessions-implementation',
     localServicePath: '../platforms/drivers/claude/sessions-implementation',
     adapterLocalPath: '../platforms/drivers/claude/session-history-adapter',

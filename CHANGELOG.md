@@ -6,6 +6,7 @@
 
 ## [Unreleased]
 ### Added
+- **Skill 使用统计** - Skills 列表新增“涉及 N 轮使用 / 最近使用时间”，并按全局设置（默认 30 天）标记“近 N 天未使用”；数据来自本机 CLI 会话中已解析的工具调用，写入 `~/.cc-tool/storage/skill-usage.sqlite` 的只追加账本，删除会话记录或清理缓存不会让计数回退。无法解析的平台显示“本平台暂不支持使用统计”，从未观察到技能调用的平台显示“该平台尚未观察到技能调用”，不会把未知显示成 0；设置面板可调整判定天数。
 - **多渠道直连（OpenCode / DSH / OMP）** - 关闭动态切换后可以同时启用多个渠道：所有已启用渠道都会写入原生配置（OpenCode `provider`、DSH `llm-pi-ai.providers`、OMP `models.yml`），可直接在 CLI 中按渠道选择模型；“写入配置（应用）”只切换默认模型，禁用或删除渠道会移除对应 provider；停止动态切换时恢复全部已启用渠道而不是只保留一个。Claude、Codex、Gemini 的原生配置只能承载单个 provider，继续强制单渠道。
 - **OpenCode / DSH 模型 Metadata 配置** - 渠道面板新增模型定义编辑器，可为单个模型配置上下文窗口、推理能力/等级与输入类型；OpenCode 写入 `opencode.json` 的 `limit`/`reasoning`/`modalities`，DSH 写入 `settings.yaml` 的 `contextWindow`/`maxTokens`/`reasoningEfforts`/`input`，动态代理与原生配置同步同样保留这些字段。
 - **DSH / OpenCode 模型 Metadata 自动填充** - “自动获取 Metadata”按钮现在同样适用于 DSH 与 OpenCode：从 Models.dev 离线快照按已选模型补齐上下文窗口、最大输出、推理能力与输入类型，保留用户已有定义，且不会触发网络请求或模型探测。

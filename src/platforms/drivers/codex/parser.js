@@ -93,6 +93,26 @@ function extractMessages(lines) {
       return;
     }
 
+    if (line.type === 'event_msg') {
+      const payload = line.payload || {};
+      if (payload.type === 'exec_command_end') {
+        const entries = Array.isArray(payload.parsed_cmd) ? payload.parsed_cmd : [];
+        for (const entry of entries) {
+          if (!entry || entry.type !== 'read' || typeof entry.path !== 'string') continue;
+          messages.push({
+            role: 'tool_call',
+            name: 'read',
+            arguments: { file_path: entry.path },
+            callId: payload.call_id || null,
+            turnId: payload.turn_id || null,
+            timestamp: line.timestamp,
+            model: currentTurnModel || lastAssistantModel || null
+          });
+        }
+      }
+      return;
+    }
+
     if (line.type !== 'response_item') return;
 
     const payload = line.payload;

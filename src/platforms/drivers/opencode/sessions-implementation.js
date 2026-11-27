@@ -997,6 +997,49 @@ function getSessionLaunchCommand(sessionId, { fork = false, cwd } = {}) {
   };
 }
 
+function listUsageToolCalls({ limit = 50, excludeSessionIds = [] } = {}) {
+  const excluded = new Set(excludeSessionIds);
+  let sessions = [];
+  try {
+    sessions = _query(
+      'SELECT id, time_updated FROM session ORDER BY time_updated DESC'
+    ) || [];
+  } catch (_) {
+    return [];
+  }
+  sessions = sessions
+    .filter(session => !excluded.has(session.id))
+    .slice(0, limit);
+  return sessions.map(session => {
+    let parts = [];
+    try {
+      parts = getPartRowsBySessionId(session.id);
+    } catch (_) {
+      parts = [];
+    }
+    const toolCalls = [];
+    for (const part of parts) {
+      const data = parseJsonMaybe(part.data, null);
+      if (!data || data.type !== 'tool') continue;
+      const input = data.state && typeof data.state === 'object' ? data.state.input : null;
+      toolCalls.push({
+        id: part.id || null,
+        name: data.tool || data.name || 'unknown',
+        args: input && typeof input === 'object' ? input : (data.input || {}),
+        turnId: part.message_id || null
+      });
+    }
+    return {
+      sessionId: session.id,
+      filePath: `opencode://${session.id}`,
+      size: 0,
+      mtimeMs: Number(session.time_updated) || 0,
+      cwd: null,
+      toolCalls
+    };
+  });
+}
+
 module.exports = {
   configure,
   getOpenCodeDbPath,
@@ -1018,6 +1061,7 @@ module.exports = {
   saveProjectOrder,
   saveSessionOrder,
   getProjectAndSessionCounts,
+  listUsageToolCalls,
   _query,  // exposed for testing
   _openCodeDb // exposed for testing
 };

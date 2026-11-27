@@ -69,6 +69,7 @@ function getClaudeAssistantText(content) {
 
   const parts = [];
   let subtype = null;
+  const toolCalls = [];
   for (const item of _asContentBlocks(content)) {
     if (item?.type === 'text' && item.text) {
       parts.push(item.text);
@@ -78,6 +79,11 @@ function getClaudeAssistantText(content) {
       subtype = 'tool_use';
       const input = _formatJsonBlock(item.input, '{}');
       parts.push(`**[调用工具: ${item.name || 'unknown'}]**\n\`\`\`json\n${input}\n\`\`\``);
+      toolCalls.push({
+        id: item.id || null,
+        name: item.name || 'unknown',
+        args: item.input && typeof item.input === 'object' ? item.input : {}
+      });
     } else if (item?.type === 'tool_result') {
       subtype = subtype || 'tool_result';
       const resultContent = _formatJsonBlock(item.content, '');
@@ -90,7 +96,7 @@ function getClaudeAssistantText(content) {
     }
   }
 
-  return { content: parts.join('\n\n').trim(), subtype };
+  return { content: parts.join('\n\n').trim(), subtype, toolCalls };
 }
 
 /**
@@ -350,7 +356,9 @@ async function parse(descriptor) {
       model: recordModel || model || null,
       provider: recordProvider || provider || null,
       userMessageNumber: null,
-      extraJson: null
+      extraJson: assistant.toolCalls && assistant.toolCalls.length > 0
+        ? { toolCalls: assistant.toolCalls }
+        : null
     });
   }
 

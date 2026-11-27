@@ -18,6 +18,7 @@ const {
   updateOmpSkillSettings
 } = require('../../platforms/drivers/omp/skill-settings');
 const { getPlatformContext } = require('../platform-context');
+const { getSharedUsageService } = require('../services/skill-usage-service');
 
 const router = express.Router();
 const skillServices = new Map();
@@ -50,6 +51,24 @@ function getSkillService(req) {
     service: getSkillServiceForPlatform(resolution.platform),
     warning: resolution.warning
   };
+}
+
+function safeUsagePolicy() {
+  try {
+    return getSharedUsageService().getUsagePolicy();
+  } catch (error) {
+    console.error('[Skills API] Usage policy unavailable:', error?.message || error);
+    return null;
+  }
+}
+
+function attachSkillUsage(skills, platform) {
+  try {
+    return getSharedUsageService().getUsageForSkills(skills, { platform });
+  } catch (error) {
+    console.error('[Skills API] Usage lookup failed:', error?.message || error);
+    return skills;
+  }
 }
 
 function getControlService() {
@@ -184,6 +203,7 @@ router.get('/', async (req, res) => {
       platform,
       ...snapshot,
       total: skills.length,
+      usagePolicy: safeUsagePolicy(),
       ...(warning ? { warnings: [warning] } : {})
     });
   } catch (err) {
@@ -337,10 +357,11 @@ router.get('/detail/*', async (req, res) => {
         hasRepoHint ? repoHint : null,
         req.query.fullDirectory || ''
       );
+    const detail = attachSkillUsage([result], platform)[0] || result;
     res.json({
       success: true,
       platform,
-      ...result
+      ...detail
     });
   } catch (err) {
     console.error('[Skills API] Get skill detail error:', err);

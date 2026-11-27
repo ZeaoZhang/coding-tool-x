@@ -158,6 +158,7 @@ describe('GET /advanced', () => {
       enabled: true,
       intervalSeconds: 5
     });
+    expect(data.skillUsage).toEqual({ staleDays: 30 });
     expect(loadConfig).toHaveBeenCalled();
   });
 });
@@ -276,6 +277,32 @@ describe('POST /advanced', () => {
     handler(mockReq({ body: { maxLogs: 120 } }), res);
 
     expect(saveConfig.mock.calls[0][0].nativeCliLogs).toEqual(currentNativeCliLogs);
+  });
+
+  test('saves and returns the skill usage threshold', () => {
+    const handler = findHandler(router, 'post', '/advanced');
+    const res = mockRes();
+    handler(mockReq({ body: { skillUsage: { staleDays: 45 } } }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res._data.success).toBe(true);
+    expect(saveConfig.mock.calls[0][0].skillUsage).toEqual({ staleDays: 45 });
+    expect(res._data.config.skillUsage).toEqual({ staleDays: 45 });
+  });
+
+  test.each([
+    ['zero', 0],
+    ['above the maximum', 366],
+    ['non-integer', 1.5],
+    ['not a number', 'abc']
+  ])('returns 400 for %s skill usage days', (_label, staleDays) => {
+    const handler = findHandler(router, 'post', '/advanced');
+    const res = mockRes();
+    handler(mockReq({ body: { skillUsage: { staleDays } } }), res);
+
+    expect(res.statusCode).toBe(400);
+    expect(res._data.error).toContain('staleDays');
+    expect(saveConfig).not.toHaveBeenCalled();
   });
 
   test.each([

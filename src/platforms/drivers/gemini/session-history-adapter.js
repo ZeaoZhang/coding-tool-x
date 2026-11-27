@@ -142,6 +142,15 @@ function normalizeMessageRecord(record, provider = null, model = null) {
 
   const content = extractContentText(record.content || record.message || record.parts || '');
   const subtype = record.subtype || null;
+  const toolCalls = Array.isArray(record.toolCalls)
+    ? record.toolCalls
+      .filter(call => call && typeof call === 'object')
+      .map(call => ({
+        id: call.id || null,
+        name: call.name || 'unknown',
+        args: call.args && typeof call.args === 'object' ? call.args : {}
+      }))
+    : [];
 
   return {
     messageId: record.id || record.messageId || null,
@@ -154,7 +163,7 @@ function normalizeMessageRecord(record, provider = null, model = null) {
     provider: record.provider || provider || null,
     userMessageNumber: null, // filled later
     usage: record.tokens || record.usage || null,
-    extraJson: null
+    extraJson: toolCalls.length > 0 ? JSON.stringify({ toolCalls }) : null
   };
 }
 
