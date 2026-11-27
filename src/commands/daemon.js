@@ -17,6 +17,8 @@ const { filterEnabledPlatforms } = require('../server/services/active-platforms'
 const { createProxyControl } = require('./proxy-control');
 const PM2_APP_NAME = 'cc-tool';
 const STARTUP_LOG_FILE = 'cc-tool-out.log';
+const { resolveShutdownBudget } = require('../server/services/shutdown-budget');
+// 应用内的关闭预算在 PM2 进程里读取，必须随 env 透传，否则调小不会生效。
 const PM2_RUNTIME_ENV_KEYS = [
   'HOME',
   'USERPROFILE',
@@ -26,7 +28,9 @@ const PM2_RUNTIME_ENV_KEYS = [
   'OMP_CONFIG_DIR',
   'OMP_PROFILE',
   'PI_CODING_AGENT_DIR',
-  'OMP_CODING_AGENT_DIR'
+  'OMP_CODING_AGENT_DIR',
+  'CC_TOOL_STOP_DRAIN_MS',
+  'CC_TOOL_STOP_HARD_TIMEOUT_MS'
 ];
 const CURRENT_PM2_FORK_PATH = resolveCurrentPm2ForkPath();
 
@@ -523,9 +527,12 @@ function buildStartOptions(port, enableHost, enableHttps) {
     interpreter: 'node',
     windowsHide: true,
     autorestart: true,
-    // Let active OMP streams drain before PM2 forcibly terminates the process.
-    kill_timeout: 125000,
-    max_memory_restart: '500M',
+    // 关闭预算的次序由 resolveShutdownBudget 保证（drain < hardStop < killTimeout），
+    // PM2 只在这个上限之后才升级到 SIGKILL。
+    kill_timeout: resolveShutdownBudget().killTimeoutMs,
+    // 该进程常驻会话缓存并托管各代理子进程，实测工作集在 0.9G~1.5G；
+    // 500M 会让 PM2 每隔几分钟就重启一次，每次都要走一遍停机流程。
+    max_memory_restart: process.env.CC_TOOL_MAX_MEMORY_RESTART || '1500M',
     node_args: '--expose-gc',
     env,
     output: path.join(PATHS.logs, STARTUP_LOG_FILE),
@@ -711,6 +718,11 @@ async function handleStop() {
     const config = loadConfig();
 
     const existing = await getCCToolProcess();
+    if (existing) {
+      // 优雅退出期间 CLI 没有输出，容易被当成卡死；先告知预期耗时。
+      const { killTimeoutMs } = resolveShutdownBudget();
+      console.log(chalk.gray(`[INFO] 正在停止服务（等待在途请求排空，最长 ${Math.round(killTimeoutMs / 1000)} 秒）...`));
+    }
     const stopResult = await stopAllManagedInstances(existing, config);
     printStopResult(stopResult);
 

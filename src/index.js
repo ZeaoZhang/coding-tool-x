@@ -202,6 +202,15 @@ function validateCommandOptions(command, args, allowedOptions) {
 
 let processShutdownPromise = null;
 
+// 关闭时间预算按需解析：index.js 每次 CLI 调用都会加载，不能在这里把服务模块拉进来。
+let shutdownBudgetCache = null;
+function getShutdownBudget() {
+  if (!shutdownBudgetCache) {
+    shutdownBudgetCache = require('./server/services/shutdown-budget').resolveShutdownBudget();
+  }
+  return shutdownBudgetCache;
+}
+
 async function stopOwnedOmpGatewayBeforeExit() {
   try {
     const {
@@ -210,7 +219,7 @@ async function stopOwnedOmpGatewayBeforeExit() {
     } = require('./platforms/drivers/omp/proxy-implementation');
     if (getOmpProxyStatus().running) {
       const preserveManagedMode = process.argv.includes('--daemon');
-      await stopOmpProxyServer({ forceAfterMs: 120000, preserveManagedMode });
+      await stopOmpProxyServer({ forceAfterMs: getShutdownBudget().drainMs, preserveManagedMode });
     }
   } catch (error) {
     console.error(chalk.yellow(`[WARN]  OMP 动态网关退出清理失败: ${error.message}`));
@@ -220,6 +229,21 @@ async function stopOwnedOmpGatewayBeforeExit() {
 function shutdownProcess(code = 0, error = null) {
   if (processShutdownPromise) return processShutdownPromise;
   processShutdownPromise = (async () => {
+    // 排空之后的清理步骤（日志落盘、统计、SQLite 关闭）都是无超时 await，
+    // 一旦卡住就会拖到 PM2 的 kill_timeout 被 SIGKILL，表现为 `ctx stop` 卡死。
+    const { hardStopMs } = getShutdownBudget();
+    const shutdownWatchdog = require('./server/services/shutdown-budget').startShutdownWatchdog(
+      hardStopMs,
+      () => {
+        // process.exit 会丢弃缓冲中的异步 stderr，这里必须同步写，否则用户看不到原因。
+        try {
+          fs.writeSync(2, `\n[WARN]  退出清理超过 ${hardStopMs}ms 仍未完成，强制退出\n`);
+        } catch {
+          // stderr 不可用时直接退出
+        }
+        process.exit(code);
+      }
+    );
     try {
       require('./server/services/memory-reclaimer').stopMemoryReclaimer();
     } catch (memoryError) {
@@ -232,7 +256,7 @@ function shutdownProcess(code = 0, error = null) {
     }
     await Promise.all([
       stopOwnedOmpGatewayBeforeExit(),
-      require('./server/services/server-shutdown').drainProxyServers({ forceAfterMs: 120000 })
+      require('./server/services/server-shutdown').drainProxyServers({ forceAfterMs: getShutdownBudget().drainMs })
         .catch(drainError => console.error(`[WARN] Proxy drain failed: ${drainError.message}`))
     ]);
     eventBus.emitSync('cli:shutdown', {});
@@ -256,6 +280,7 @@ function shutdownProcess(code = 0, error = null) {
     if (error) {
       console.error(error);
     }
+    shutdownWatchdog.cancel();
     process.exit(code);
   })();
   return processShutdownPromise;

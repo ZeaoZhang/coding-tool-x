@@ -204,7 +204,7 @@ describe('daemon restart flow', () => {
     expect(pm2Mock.delete).toHaveBeenCalledWith('cc-tool', expect.any(Function));
     expect(pm2Mock.start).toHaveBeenCalledWith(expect.objectContaining({
       name: 'cc-tool',
-      kill_timeout: 125000
+      kill_timeout: 20000
     }), expect.any(Function));
     expect(pm2Mock.disconnect).toHaveBeenCalled();
   });
@@ -215,7 +215,50 @@ describe('daemon stop helpers', () => {
     expect(daemon._test.buildStartOptions(19999, true, false).args).toContain('--host');
   });
   test('allows PM2 enough time for graceful gateway shutdown', () => {
-    expect(daemon._test.buildStartOptions(19999, false, false).kill_timeout).toBe(125000);
+    expect(daemon._test.buildStartOptions(19999, false, false).kill_timeout).toBe(20000);
+  });
+
+  test('derives the PM2 kill timeout from the shutdown budget', () => {
+    const previous = process.env.CC_TOOL_STOP_HARD_TIMEOUT_MS;
+    try {
+      // hard stop 调大后，PM2 的 SIGKILL 门槛必须跟着后延，不能提前砍断清理
+      process.env.CC_TOOL_STOP_HARD_TIMEOUT_MS = '40000';
+      expect(daemon._test.buildStartOptions(19999, false, false).kill_timeout).toBe(45000);
+    } finally {
+      if (previous === undefined) delete process.env.CC_TOOL_STOP_HARD_TIMEOUT_MS;
+      else process.env.CC_TOOL_STOP_HARD_TIMEOUT_MS = previous;
+    }
+  });
+
+  test('keeps the memory restart cap adjustable', () => {
+    const previous = process.env.CC_TOOL_MAX_MEMORY_RESTART;
+    try {
+      expect(daemon._test.buildStartOptions(19999, false, false).max_memory_restart).toBe('1500M');
+      process.env.CC_TOOL_MAX_MEMORY_RESTART = '900M';
+      expect(daemon._test.buildStartOptions(19999, false, false).max_memory_restart).toBe('900M');
+    } finally {
+      if (previous === undefined) delete process.env.CC_TOOL_MAX_MEMORY_RESTART;
+      else process.env.CC_TOOL_MAX_MEMORY_RESTART = previous;
+    }
+  });
+
+  test('forwards shutdown budget overrides into the PM2 app', () => {
+    const previousDrain = process.env.CC_TOOL_STOP_DRAIN_MS;
+    const previousHardStop = process.env.CC_TOOL_STOP_HARD_TIMEOUT_MS;
+    try {
+      process.env.CC_TOOL_STOP_DRAIN_MS = '3000';
+      process.env.CC_TOOL_STOP_HARD_TIMEOUT_MS = '6000';
+
+      expect(daemon._test.buildStartOptions(19999, false, false).env).toMatchObject({
+        CC_TOOL_STOP_DRAIN_MS: '3000',
+        CC_TOOL_STOP_HARD_TIMEOUT_MS: '6000'
+      });
+    } finally {
+      if (previousDrain === undefined) delete process.env.CC_TOOL_STOP_DRAIN_MS;
+      else process.env.CC_TOOL_STOP_DRAIN_MS = previousDrain;
+      if (previousHardStop === undefined) delete process.env.CC_TOOL_STOP_HARD_TIMEOUT_MS;
+      else process.env.CC_TOOL_STOP_HARD_TIMEOUT_MS = previousHardStop;
+    }
   });
 
   test('explicitly hides the PM2-managed Node process on Windows', () => {
