@@ -99,6 +99,7 @@ beforeEach(async () => {
   });
   stub(CLAUDE_CHANNELS_PATH, {
     getEffectiveApiKey: vi.fn(() => 'upstream-key'),
+    getAllChannels: vi.fn(() => [claudeChannel]),
     getClaudeProxyExcludedChannelIds: vi.fn(() => excludedChannelIds)
   });
   stub(CHANNEL_SCHEDULER_PATH, {

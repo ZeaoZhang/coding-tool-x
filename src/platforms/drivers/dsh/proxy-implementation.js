@@ -21,6 +21,7 @@ const { redirectModel, resolveTargetUrl, isChatCompletionsPath, ensureOpenAiStre
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('../../../server/services/proxy-runtime');
 const { bindProxyRequest, prepareProxyResponse } = require('../../../shared/proxy-transport');
 const { createFailoverProxy } = require('../../../shared/proxy-failover');
+const { resolvePlatformFallbackTargets } = require('../../../shared/model-fallback-store');
 const { attachServerShutdownHandling, expediteServerShutdown, PROXY_IDLE_TIMEOUT_MS } = require('../../../server/services/server-shutdown');
 
 let proxyServer = null;
@@ -73,7 +74,8 @@ async function startDshProxyServer(options = {}) {
       timeout: 0
     },
     canRetry: shouldParseJson,
-    allocate: async ({ req, res, excludeChannelIds }) => {
+    resolveModelFallbackTargets: (channel, model) => resolvePlatformFallbackTargets('dsh', model, getEnabledChannels()),
+    allocate: async ({ req, res, excludeChannelIds, preferredChannelId }) => {
       const abortController = new AbortController();
       const abortOnClose = () => abortController.abort();
       res.once('close', abortOnClose);
@@ -82,7 +84,8 @@ async function startDshProxyServer(options = {}) {
           source: 'dsh',
           providerApi: 'openai-completions',
           enableSessionBinding: false,
-          excludeChannelIds: [...excludeChannelIds]
+          excludeChannelIds: [...excludeChannelIds],
+          candidateIds: preferredChannelId ? [preferredChannelId] : undefined
         });
       } finally {
         res.removeListener('close', abortOnClose);

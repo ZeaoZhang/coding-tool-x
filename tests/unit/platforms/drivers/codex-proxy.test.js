@@ -94,6 +94,7 @@ beforeEach(async () => {
   });
   stub(CODEX_CHANNELS_PATH, {
     getEffectiveApiKey: vi.fn(() => 'upstream-key'),
+    getEnabledChannels: vi.fn(() => [codexChannel]),
     getCodexProxyExcludedChannelIds: vi.fn(() => excludedChannelIds)
   });
   stub(CHANNEL_SCHEDULER_PATH, {

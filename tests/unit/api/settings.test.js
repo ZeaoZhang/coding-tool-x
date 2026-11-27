@@ -3,6 +3,11 @@
 const SETTINGS_API_PATH = require.resolve('../../../src/server/api/settings');
 const MODEL_METADATA_PATH = require.resolve('../../../src/config/model-metadata');
 const LOADER_PATH = require.resolve('../../../src/config/loader');
+const MODEL_ROLE_SETTINGS_PATH = require.resolve('../../../src/platforms/drivers/omp/model-role-settings');
+const FALLBACK_STORE_PATH = require.resolve('../../../src/shared/model-fallback-store');
+const PLATFORM_CATALOG_PATH = require.resolve('../../../src/server/services/platform-catalog');
+// 真实目录用于其余（模型元数据等）用例，只覆盖 driver() 以模拟渠道
+const REAL_PLATFORM_CATALOG = require('../../../src/server/services/platform-catalog');
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -37,11 +42,17 @@ const mockRes = () => {
 
 let modelMetaStub;
 let loaderStub;
+let modelRoleStub;
+let fallbackStoreStub;
+let platformCatalogStub;
 
 function loadRouter() {
   delete require.cache[SETTINGS_API_PATH];
   delete require.cache[MODEL_METADATA_PATH];
   delete require.cache[LOADER_PATH];
+  delete require.cache[MODEL_ROLE_SETTINGS_PATH];
+  delete require.cache[FALLBACK_STORE_PATH];
+  delete require.cache[PLATFORM_CATALOG_PATH];
 
   require.cache[MODEL_METADATA_PATH] = {
     id: MODEL_METADATA_PATH,
@@ -57,6 +68,27 @@ function loadRouter() {
     exports: loaderStub,
   };
 
+  require.cache[MODEL_ROLE_SETTINGS_PATH] = {
+    id: MODEL_ROLE_SETTINGS_PATH,
+    filename: MODEL_ROLE_SETTINGS_PATH,
+    loaded: true,
+    exports: modelRoleStub,
+  };
+
+  require.cache[FALLBACK_STORE_PATH] = {
+    id: FALLBACK_STORE_PATH,
+    filename: FALLBACK_STORE_PATH,
+    loaded: true,
+    exports: fallbackStoreStub,
+  };
+
+  require.cache[PLATFORM_CATALOG_PATH] = {
+    id: PLATFORM_CATALOG_PATH,
+    filename: PLATFORM_CATALOG_PATH,
+    loaded: true,
+    exports: platformCatalogStub,
+  };
+
   return require(SETTINGS_API_PATH);
 }
 
@@ -64,6 +96,36 @@ function loadRouter() {
 
 describe('settings API router', () => {
   beforeEach(() => {
+    modelRoleStub = {
+      readOmpModelRoleSettings: vi.fn(() => ({ roles: {}, modelOptions: [], unavailableRoles: {} })),
+      updateOmpModelRoleSettings: vi.fn(() => ({ roles: {}, modelOptions: [], unavailableRoles: {} })),
+      readOmpFallbackChainsForUi: vi.fn(() => ({ chains: [], modelOptions: [], unavailableChains: {} })),
+      updateOmpFallbackChainsForUi: vi.fn(() => ({ chains: [], modelOptions: [], unavailableChains: {} })),
+    };
+    fallbackStoreStub = {
+      readPlatformChains: vi.fn(() => []),
+      writePlatformChains: vi.fn((platform, chains) => chains),
+      listPlatformModelOptions: vi.fn(() => [
+        { channelId: 'a', channelName: 'A', model: 'glm-4.6' },
+        { channelId: 'b', channelName: 'B', model: 'qwen-max' },
+      ]),
+    };
+    platformCatalogStub = {
+      ...REAL_PLATFORM_CATALOG,
+      getPlatformCatalog: () => ({
+        ...REAL_PLATFORM_CATALOG.getPlatformCatalog(),
+        driver: () => ({
+          getEnabled: () => ({
+            status: 'ok',
+            data: [
+              { id: 'a', name: 'A', enabled: true, models: ['glm-4.6'] },
+              { id: 'b', name: 'B', enabled: true, models: ['qwen-max'] },
+            ],
+          }),
+        }),
+      }),
+    };
+
     modelMetaStub = {
       MODEL_METADATA: {
         'claude-3-opus': {
@@ -512,5 +574,165 @@ describe('settings API router', () => {
 
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res._data).toMatchObject({ error: 'read fail' });
+  });
+});
+
+describe('settings API router - omp fallback chains via the shared endpoint', () => {
+  beforeEach(() => {
+    modelRoleStub = {
+      readOmpModelRoleSettings: vi.fn(() => ({ roles: {}, modelOptions: [], unavailableRoles: {} })),
+      updateOmpModelRoleSettings: vi.fn(() => ({ roles: {}, modelOptions: [], unavailableRoles: {} })),
+      readOmpFallbackChainsForUi: vi.fn(() => ({
+        chains: [{ from: 'ctx-zhipu/glm-4.6', targets: [{ channelId: 'omp-channel', model: 'glm-4.5-air' }] }],
+        modelOptions: [{ channelId: 'omp-channel', channelName: 'Zhipu', model: 'glm-4.5-air' }],
+        unavailableChains: {}
+      })),
+      updateOmpFallbackChainsForUi: vi.fn(() => ({
+        chains: [{ from: 'ctx-zhipu/glm-4.6', targets: [{ channelId: 'omp-channel', model: 'glm-4.5-air' }] }],
+        modelOptions: [{ channelId: 'omp-channel', channelName: 'Zhipu', model: 'glm-4.5-air' }],
+        unavailableChains: {}
+      })),
+    };
+    fallbackStoreStub = { readPlatformChains: vi.fn(() => []), writePlatformChains: vi.fn(), listPlatformModelOptions: vi.fn(() => []) };
+    platformCatalogStub = {
+      ...REAL_PLATFORM_CATALOG,
+      getPlatformCatalog: () => ({
+        ...REAL_PLATFORM_CATALOG.getPlatformCatalog(),
+        driver: () => ({
+          getEnabled: () => ({
+            status: 'ok',
+            data: [{
+              id: 'omp-channel',
+              name: 'Zhipu',
+              enabled: true,
+              providerKey: 'zhipu',
+              models: [{ id: 'glm-4.5-air' }, { id: 'glm-4.6' }]
+            }]
+          })
+        })
+      })
+    };
+  });
+
+  it('GET /model-fallback-chains?platform=omp returns the unified shape', () => {
+    const router = loadRouter();
+    const res = mockRes();
+    findHandler(router, 'get', '/model-fallback-chains')(mockReq({ query: { platform: 'omp' } }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      success: true,
+      platform: 'omp',
+      chains: [{ from: 'ctx-zhipu/glm-4.6', targets: [{ channelId: 'omp-channel', model: 'glm-4.5-air' }] }]
+    }));
+  });
+
+  it('PUT /model-fallback-chains with platform=omp writes the native OMP chain', () => {
+    const router = loadRouter();
+    const res = mockRes();
+    const chains = [{ from: 'ctx-zhipu/glm-4.6', targets: [{ channelId: 'omp-channel', model: 'glm-4.5-air' }] }];
+
+    findHandler(router, 'put', '/model-fallback-chains')(mockReq({ body: { platform: 'omp', chains } }), res);
+
+    expect(modelRoleStub.updateOmpFallbackChainsForUi).toHaveBeenCalledWith(chains);
+    expect(fallbackStoreStub.writePlatformChains).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('the old /omp-fallback-chains endpoint is gone', () => {
+    const router = loadRouter();
+    expect(findHandler(router, 'get', '/omp-fallback-chains')).toBeNull();
+    expect(findHandler(router, 'put', '/omp-fallback-chains')).toBeNull();
+  });
+});
+
+describe('settings API router - platform model fallback chains', () => {
+  beforeEach(() => {
+    modelRoleStub = {
+      readOmpModelRoleSettings: vi.fn(() => ({ roles: {}, modelOptions: [], unavailableRoles: {} })),
+      updateOmpModelRoleSettings: vi.fn(() => ({ roles: {}, modelOptions: [], unavailableRoles: {} })),
+      readOmpFallbackChainsForUi: vi.fn(() => ({ chains: [], modelOptions: [], unavailableChains: {} })),
+      updateOmpFallbackChainsForUi: vi.fn(() => ({ chains: [], modelOptions: [], unavailableChains: {} })),
+    };
+    fallbackStoreStub = {
+      readPlatformChains: vi.fn(() => [{ from: 'glm-4.6', targets: [{ channelId: 'b', model: 'qwen-max' }] }]),
+      writePlatformChains: vi.fn((platform, chains) => chains),
+      listPlatformModelOptions: vi.fn(() => [
+        { channelId: 'a', channelName: 'A', model: 'glm-4.6' },
+        { channelId: 'b', channelName: 'B', model: 'qwen-max' },
+      ]),
+    };
+    platformCatalogStub = {
+      ...REAL_PLATFORM_CATALOG,
+      getPlatformCatalog: () => ({
+        ...REAL_PLATFORM_CATALOG.getPlatformCatalog(),
+        driver: () => ({
+          getEnabled: () => ({
+            status: 'ok',
+            data: [
+              { id: 'a', name: 'A', enabled: true, models: ['glm-4.6'] },
+              { id: 'b', name: 'B', enabled: true, models: ['qwen-max'] }
+            ]
+          })
+        })
+      })
+    };
+  });
+
+  it('GET /model-fallback-chains returns chains + channel/model options', () => {
+    const router = loadRouter();
+    const handler = findHandler(router, 'get', '/model-fallback-chains');
+    const res = mockRes();
+
+    handler(mockReq({ query: { platform: 'claude' } }), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      success: true,
+      platform: 'claude',
+      chains: [{ from: 'glm-4.6', targets: [{ channelId: 'b', model: 'qwen-max' }] }],
+      modelOptions: expect.arrayContaining([{ channelId: 'b', channelName: 'B', model: 'qwen-max' }])
+    }));
+  });
+
+  it('GET /model-fallback-chains rejects an unsupported platform', () => {
+    const router = loadRouter();
+    const res = mockRes();
+    findHandler(router, 'get', '/model-fallback-chains')(mockReq({ query: { platform: 'unknown' } }), res);
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('PUT /model-fallback-chains validates channel and declared model', () => {
+    const router = loadRouter();
+    const handler = findHandler(router, 'put', '/model-fallback-chains');
+
+    const unknownChannel = mockRes();
+    handler(mockReq({ body: { platform: 'claude', chains: [
+      { from: 'glm-4.6', targets: [{ channelId: 'ghost', model: 'x' }] }
+    ] } }), unknownChannel);
+    expect(unknownChannel.statusCode).toBe(400);
+
+    const undeclared = mockRes();
+    handler(mockReq({ body: { platform: 'claude', chains: [
+      { from: 'glm-4.6', targets: [{ channelId: 'b', model: 'not-declared' }] }
+    ] } }), undeclared);
+    expect(undeclared.statusCode).toBe(400);
+
+    const notArray = mockRes();
+    handler(mockReq({ body: { platform: 'claude', chains: { a: 1 } } }), notArray);
+    expect(notArray.statusCode).toBe(400);
+
+    expect(fallbackStoreStub.writePlatformChains).not.toHaveBeenCalled();
+  });
+
+  it('PUT /model-fallback-chains saves a valid chain', () => {
+    const router = loadRouter();
+    const res = mockRes();
+    const chains = [{ from: 'glm-4.6', targets: [{ channelId: 'b', model: 'qwen-max' }] }];
+
+    findHandler(router, 'put', '/model-fallback-chains')(mockReq({ body: { platform: 'claude', chains } }), res);
+
+    expect(fallbackStoreStub.writePlatformChains).toHaveBeenCalledWith('claude', chains);
+    expect(res.statusCode).toBe(200);
   });
 });

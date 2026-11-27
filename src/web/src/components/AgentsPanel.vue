@@ -104,6 +104,12 @@
       </div>
     </div>
 
+    <ModelFallbackChainsSection
+      v-if="supportsFallbackChains"
+      :key="`fallback-${currentPlatform}`"
+      :platform="currentPlatform"
+    />
+
     <!-- 统计栏 -->
     <div class="asset-summary">
       <span class="asset-summary-item">
@@ -207,7 +213,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, defineAsyncComponent } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   NButton, NInput, NSelect, NIcon, NSpin, NEmpty
@@ -227,6 +233,7 @@ import message from '../utils/message'
 import AgentCard from './AgentCard.vue'
 import AgentDetailDrawer from './AgentDetailDrawer.vue'
 import AgentFormModal from './AgentFormModal.vue'
+const ModelFallbackChainsSection = defineAsyncComponent(() => import('./channel/ModelFallbackChainsSection.vue'))
 import { getPlatformConfig } from '../config/platforms'
 import { usePlatformStore } from '../stores/platforms'
 import { useEnabledCliPlatforms } from '../composables/useEnabledCliPlatforms'
@@ -279,6 +286,8 @@ let detailRequestId = 0
 const { byCapability } = useEnabledCliPlatforms()
 const managedAgentPlatforms = computed(() => byCapability('agents').map(platform => platform.key))
 const supportsCurrentPlatform = computed(() => managedAgentPlatforms.value.includes(currentPlatform.value))
+// 回退链对"有代理能力"的平台都开放（claude/codex/gemini/opencode/dsh/omp）
+const supportsFallbackChains = computed(() => byCapability('proxy').map(platform => platform.key).includes(currentPlatform.value))
 
 const OMP_MODEL_ROLE_KEYS = [
   'default', 'smol', 'slow', 'plan', 'commit', 'vision', 'designer', 'task', 'advisor', 'tiny'

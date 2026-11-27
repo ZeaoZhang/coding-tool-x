@@ -6,7 +6,7 @@ const { allocateChannel, releaseChannel, getSchedulerState } = require('../../..
 const { recordSuccess, recordFailure } = require('../../../server/services/channel-health');
 const { loadConfig } = require('../../../config/loader');
 const { saveProxyStartTime, clearProxyStartTime, getProxyStartTime, getProxyRuntime } = require('../../../server/services/proxy-runtime');
-const { getEffectiveApiKey, getCodexProxyExcludedChannelIds } = require('./channels-implementation');
+const { getEffectiveApiKey, getEnabledChannels, getCodexProxyExcludedChannelIds } = require('./channels-implementation');
 const { persistProxyRequestSnapshot } = require('../../../server/services/request-logger');
 const {
   redirectModel,
@@ -16,6 +16,7 @@ const {
 } = require('../../../shared/proxy-utils');
 const { bindProxyRequest, prepareProxyResponse } = require('../../../shared/proxy-transport');
 const { createFailoverProxy } = require('../../../shared/proxy-failover');
+const { resolvePlatformFallbackTargets } = require('../../../shared/model-fallback-store');
 const { attachServerShutdownHandling, expediteServerShutdown, PROXY_IDLE_TIMEOUT_MS } = require('../../../server/services/server-shutdown');
 
 let proxyServer = null;
@@ -89,7 +90,8 @@ async function startCodexProxyServer(options = {}) {
         timeout: 0            // The upstream timeout bounds idle waits; streaming clients may pause
       },
       canRetry: shouldParseJson,
-      allocate: async ({ req, res, excludeChannelIds }) => {
+      resolveModelFallbackTargets: (channel, model) => resolvePlatformFallbackTargets('codex', model, getEnabledChannels()),
+      allocate: async ({ req, res, excludeChannelIds, preferredChannelId }) => {
         const abortController = new AbortController();
         const abortOnClose = () => abortController.abort();
         res.once('close', abortOnClose);
@@ -98,7 +100,8 @@ async function startCodexProxyServer(options = {}) {
             source: 'codex',
             signal: abortController.signal,
             enableSessionBinding: false,
-            excludeChannelIds: [...getCodexProxyExcludedChannelIds(), ...excludeChannelIds]
+            excludeChannelIds: [...getCodexProxyExcludedChannelIds(), ...excludeChannelIds],
+            candidateIds: preferredChannelId ? [preferredChannelId] : undefined
           });
         } finally {
           res.removeListener('close', abortOnClose);
